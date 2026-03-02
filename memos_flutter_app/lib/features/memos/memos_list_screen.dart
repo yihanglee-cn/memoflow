@@ -26,7 +26,6 @@ import '../../core/desktop_shortcuts.dart';
 import '../../core/desktop_tray_controller.dart';
 import '../../core/drawer_navigation.dart';
 import '../../core/location_launcher.dart';
-import '../../core/memo_relations.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
@@ -36,8 +35,7 @@ import '../../core/tags.dart';
 import '../../core/top_toast.dart';
 import '../../core/uid.dart';
 import '../../core/url.dart';
-import '../../data/api/server_api_profile.dart';
-import '../../data/db/app_database.dart';
+import '../../state/memos_list_controller.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/location_settings.dart';
@@ -50,20 +48,17 @@ import '../../data/location/location_geocoder.dart';
 import '../../data/location/device_location_service.dart';
 import '../../state/app_lock_provider.dart';
 import '../../features/home/app_drawer.dart';
-import '../../state/database_provider.dart';
 import '../../state/debug_screenshot_mode_provider.dart';
 import '../../state/local_library_provider.dart';
 import '../../state/local_library_scanner.dart';
 import '../../state/location_settings_provider.dart';
 import '../../state/logging_provider.dart';
-import '../../state/memo_timeline_provider.dart';
 import '../../state/memo_template_settings_provider.dart';
 import '../../state/memos_providers.dart';
 import '../../state/network_log_provider.dart';
 import '../../state/note_draft_provider.dart';
 import '../../state/preferences_provider.dart';
 import '../../state/reminder_providers.dart';
-import '../../state/reminder_scheduler.dart';
 import '../../state/reminder_settings_provider.dart';
 import '../../state/search_history_provider.dart';
 import '../../state/session_provider.dart';
@@ -115,125 +110,9 @@ enum _MemoSyncStatus { none, pending, failed }
 
 enum _MemoSortOption { createAsc, createDesc, updateAsc, updateDesc }
 
-class _OutboxMemoStatus {
-  const _OutboxMemoStatus({required this.pending, required this.failed});
-  const _OutboxMemoStatus.empty()
-    : pending = const <String>{},
-      failed = const <String>{};
-
-  final Set<String> pending;
-  final Set<String> failed;
-}
-
-final _outboxMemoStatusProvider = StreamProvider<_OutboxMemoStatus>((
-  ref,
-) async* {
-  final db = ref.watch(databaseProvider);
-
-  Future<_OutboxMemoStatus> load() async {
-    final sqlite = await db.db;
-    final rows = await sqlite.query(
-      'outbox',
-      columns: const ['type', 'payload', 'state'],
-      where: 'state IN (?, ?, ?, ?)',
-      whereArgs: const [
-        AppDatabase.outboxStatePending,
-        AppDatabase.outboxStateRunning,
-        AppDatabase.outboxStateRetry,
-        AppDatabase.outboxStateError,
-      ],
-      orderBy: 'id ASC',
-    );
-    final pending = <String>{};
-    final failed = <String>{};
-
-    for (final row in rows) {
-      final type = row['type'];
-      final payload = row['payload'];
-      final state = row['state'];
-      if (type is! String || payload is! String) continue;
-
-      final decoded = _decodeOutboxPayload(payload);
-      final uid = _extractOutboxMemoUid(type, decoded);
-      if (uid == null || uid.trim().isEmpty) continue;
-      final normalized = uid.trim();
-
-      final stateCode = switch (state) {
-        int v => v,
-        num v => v.toInt(),
-        String v => int.tryParse(v.trim()),
-        _ => null,
-      };
-      if (stateCode == AppDatabase.outboxStateError) {
-        failed.add(normalized);
-        pending.remove(normalized);
-      } else {
-        if (!failed.contains(normalized)) {
-          pending.add(normalized);
-        }
-      }
-    }
-
-    return _OutboxMemoStatus(pending: pending, failed: failed);
-  }
-
-  yield await load();
-  await for (final _ in db.changes) {
-    yield await load();
-  }
-});
-
-final _normalMemoCountProvider = StreamProvider<int>((ref) async* {
-  final db = ref.watch(databaseProvider);
-
-  Future<int> load() async {
-    final sqlite = await db.db;
-    final rows = await sqlite.rawQuery('''
-      SELECT COUNT(*) AS memo_count
-      FROM memos
-      WHERE state = 'NORMAL'
-    ''');
-    if (rows.isEmpty) return 0;
-    final raw = rows.first['memo_count'];
-    return switch (raw) {
-      int value => value,
-      num value => value.toInt(),
-      String value => int.tryParse(value.trim()) ?? 0,
-      _ => 0,
-    };
-  }
-
-  yield await load();
-  await for (final _ in db.changes) {
-    yield await load();
-  }
-});
-
-Map<String, dynamic> _decodeOutboxPayload(Object? raw) {
-  if (raw is! String || raw.trim().isEmpty) return <String, dynamic>{};
-  try {
-    final decoded = jsonDecode(raw);
-    if (decoded is Map) {
-      return decoded.cast<String, dynamic>();
-    }
-  } catch (_) {}
-  return <String, dynamic>{};
-}
-
-String? _extractOutboxMemoUid(String type, Map<String, dynamic> payload) {
-  return switch (type) {
-    'create_memo' ||
-    'update_memo' ||
-    'delete_memo' => payload['uid'] as String?,
-    'upload_attachment' ||
-    'delete_attachment' => payload['memo_uid'] as String?,
-    _ => null,
-  };
-}
-
 _MemoSyncStatus _resolveMemoSyncStatus(
   LocalMemo memo,
-  _OutboxMemoStatus status,
+  OutboxMemoStatus status,
 ) {
   final uid = memo.uid.trim();
   if (uid.isEmpty) return _MemoSyncStatus.none;
@@ -710,22 +589,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     return withoutHash.toLowerCase();
   }
 
-  String _apiVersionBandLabel(MemosVersionNumber? version) {
-    if (version == null) return '-';
-    if (version.major == 0 && version.minor >= 20 && version.minor < 30) {
-      return '0.2x';
-    }
-    return '${version.major}.${version.minor}x';
-  }
-
-  String _buildDebugApiVersionText(MemosVersionResolution? resolution) {
-    if (resolution == null) return 'API -';
-    final band = _apiVersionBandLabel(resolution.parsedVersion);
-    final effective = resolution.effectiveVersion.trim();
-    if (effective.isEmpty) return 'API $band';
-    return 'API $band ($effective)';
-  }
-
   void _selectTagFilter(String? tag) {
     setState(() => _activeTagFilter = _normalizeTag(tag));
   }
@@ -1069,73 +932,22 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     required String shortcutFilter,
     required QuickSearchKind? quickSearchKind,
   }) async {
-    try {
-      final db = ref.read(databaseProvider);
-      final allRows = await db.listMemosForExport(includeArchived: true);
-      var dbNormal = 0;
-      var dbArchived = 0;
-      for (final row in allRows) {
-        final state = (row['state'] as String? ?? '').trim().toUpperCase();
-        if (state == 'ARCHIVED') {
-          dbArchived++;
-        } else {
-          dbNormal++;
-        }
-      }
-      final tag = resolvedTag?.trim();
-      final normalizedSearch = searchQuery.trim();
-      final previewRows = await db.listMemos(
-        searchQuery: normalizedSearch.isEmpty ? null : normalizedSearch,
-        state: widget.state,
-        tag: (tag == null || tag.isEmpty) ? null : tag,
-        startTimeSec: startTimeSec,
-        endTimeSecExclusive: endTimeSecExclusive,
-        limit: 5,
-      );
-      final previewUids = previewRows
-          .map((row) => row['uid'])
-          .whereType<String>()
-          .toList(growable: false);
-      if (!mounted) return;
-      ref
-          .read(logManagerProvider)
-          .info(
-            'Memos list: empty_view_diagnostic',
-            context: <String, Object?>{
-              'queryKey': queryKey,
-              'state': widget.state,
-              'providerCount': providerCount,
-              'animatedCount': animatedCount,
-              'searchLength': normalizedSearch.length,
-              if (tag != null && tag.isNotEmpty) 'tag': tag,
-              'useShortcutFilter': useShortcutFilter,
-              if (shortcutFilter.trim().isNotEmpty)
-                'shortcutFilter': shortcutFilter.trim(),
-              'useQuickSearch': useQuickSearch,
-              if (quickSearchKind != null)
-                'quickSearchKind': quickSearchKind.name,
-              'useRemoteSearch': useRemoteSearch,
-              if (startTimeSec != null) 'startTimeSec': startTimeSec,
-              if (endTimeSecExclusive != null)
-                'endTimeSecExclusive': endTimeSecExclusive,
-              'dbTotal': allRows.length,
-              'dbNormal': dbNormal,
-              'dbArchived': dbArchived,
-              'dbPreviewCount': previewRows.length,
-              if (previewUids.isNotEmpty) 'dbPreviewUids': previewUids,
-            },
-          );
-    } catch (e, stackTrace) {
-      if (!mounted) return;
-      ref
-          .read(logManagerProvider)
-          .warn(
-            'Memos list: empty_view_diagnostic_failed',
-            error: e,
-            stackTrace: stackTrace,
-            context: <String, Object?>{'queryKey': queryKey},
-          );
-    }
+    if (!mounted) return;
+    await ref.read(memosListControllerProvider).logEmptyViewDiagnostics(
+          queryKey: queryKey,
+          state: widget.state,
+          providerCount: providerCount,
+          animatedCount: animatedCount,
+          searchQuery: searchQuery,
+          resolvedTag: resolvedTag,
+          useShortcutFilter: useShortcutFilter,
+          useQuickSearch: useQuickSearch,
+          useRemoteSearch: useRemoteSearch,
+          startTimeSec: startTimeSec,
+          endTimeSecExclusive: endTimeSecExclusive,
+          shortcutFilter: shortcutFilter,
+          quickSearchKind: quickSearchKind,
+        );
   }
 
   void _handleScroll() {
@@ -1596,34 +1408,15 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
       final uid = generateUid();
       final visibility = _resolveInlineComposeVisibility();
-      final db = ref.read(databaseProvider);
       final tags = extractTags(content);
 
-      await db.upsertMemo(
-        uid: uid,
-        content: content,
-        visibility: visibility,
-        pinned: false,
-        state: 'NORMAL',
-        createTimeSec: nowSec,
-        updateTimeSec: nowSec,
-        tags: tags,
-        attachments: const <Map<String, dynamic>>[],
-        location: null,
-        relationCount: 0,
-        syncState: 1,
-      );
-
-      await db.enqueueOutbox(
-        type: 'create_memo',
-        payload: {
-          'uid': uid,
-          'content': content,
-          'visibility': visibility,
-          'pinned': false,
-          'has_attachments': false,
-        },
-      );
+      await ref.read(memosListControllerProvider).createQuickInputMemo(
+            uid: uid,
+            content: content,
+            visibility: visibility,
+            nowSec: nowSec,
+            tags: tags,
+          );
 
       unawaited(ref.read(syncCoordinatorProvider.notifier).requestSync(const SyncRequest(kind: SyncRequestKind.memos, reason: SyncRequestReason.manual)));
       if (!mounted) return;
@@ -2870,8 +2663,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       _openSyncQueue();
       return;
     }
-    final db = ref.read(databaseProvider);
-    final retried = await db.retryOutboxErrors(memoUid: normalizedUid);
+    final retried =
+        await ref.read(memosListControllerProvider).retryOutboxErrors(
+              memoUid: normalizedUid,
+            );
     if (retried <= 0) {
       _openSyncQueue();
       return;
@@ -4179,7 +3974,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       final uid = generateUid();
       final tags = extractTags(content);
       final visibility = _currentInlineVisibility();
-      final db = ref.read(databaseProvider);
       final attachments = pendingAttachments
           .map((attachment) {
             final rawPath = attachment.filePath.trim();
@@ -4197,48 +3991,29 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             ).toJson();
           })
           .toList(growable: false);
+      final pendingUploads = pendingAttachments
+          .map(
+            (attachment) => MemosListPendingAttachment(
+              uid: attachment.uid,
+              filePath: attachment.filePath,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+            ),
+          )
+          .toList(growable: false);
 
-      await db.upsertMemo(
-        uid: uid,
-        content: content,
-        visibility: visibility,
-        pinned: false,
-        state: 'NORMAL',
-        createTimeSec: nowSec,
-        updateTimeSec: nowSec,
-        tags: tags,
-        attachments: attachments,
-        location: _inlineLocation,
-        relationCount: 0,
-        syncState: 1,
-      );
-
-      await db.enqueueOutbox(
-        type: 'create_memo',
-        payload: {
-          'uid': uid,
-          'content': content,
-          'visibility': visibility,
-          'pinned': false,
-          'has_attachments': hasAttachments,
-          if (_inlineLocation != null) 'location': _inlineLocation!.toJson(),
-          if (relations.isNotEmpty) 'relations': relations,
-        },
-      );
-
-      for (final attachment in pendingAttachments) {
-        await db.enqueueOutbox(
-          type: 'upload_attachment',
-          payload: {
-            'uid': attachment.uid,
-            'memo_uid': uid,
-            'file_path': attachment.filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.mimeType,
-            'file_size': attachment.size,
-          },
-        );
-      }
+      await ref.read(memosListControllerProvider).createInlineComposeMemo(
+            uid: uid,
+            content: content,
+            visibility: visibility,
+            nowSec: nowSec,
+            tags: tags,
+            attachments: attachments,
+            location: _inlineLocation,
+            relations: relations,
+            pendingAttachments: pendingUploads,
+          );
 
       unawaited(ref.read(syncCoordinatorProvider.notifier).requestSync(const SyncRequest(kind: SyncRequestKind.memos, reason: SyncRequestReason.manual)));
       _inlineComposeDraftTimer?.cancel();
@@ -4793,10 +4568,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       _autoScanInFlight = true;
       var bootstrapModeEnabled = false;
       try {
-        final db = ref.read(databaseProvider);
-        final existing = await db.listMemos(limit: 1);
+        final hasLocalMemos =
+            await ref.read(memosListControllerProvider).hasAnyLocalMemos();
         if (!mounted) return;
-        if (existing.isNotEmpty) return;
+        if (hasLocalMemos) return;
 
         final diskMemos = await scanner.fileSystem.listMemos();
         if (!mounted || diskMemos.isEmpty) return;
@@ -4964,20 +4739,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       return;
     }
     try {
-      final api = ref.read(memosApiProvider);
-      await api.ensureServerHintsLoaded();
-      final useLocalShortcuts =
-          api.usesLegacySearchFilterDialect ||
-          api.shortcutsSupportedHint == false;
-      final created = useLocalShortcuts
-          ? await ref
-                .read(localShortcutsRepositoryProvider)
-                .create(title: result.title, filter: result.filter)
-          : await api.createShortcut(
-              userName: account.user.name,
-              title: result.title,
-              filter: result.filter,
-            );
+      final created = await ref.read(memosListControllerProvider).createShortcut(
+            title: result.title,
+            filter: result.filter,
+          );
       ref.invalidate(shortcutsProvider);
       if (!mounted) return;
       setState(() {
@@ -5068,35 +4833,11 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     bool? pinned,
     String? state,
   }) async {
-    final now = DateTime.now();
-    final db = ref.read(databaseProvider);
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: memo.content,
-      visibility: memo.visibility,
-      pinned: pinned ?? memo.pinned,
-      state: state ?? memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: memo.tags,
-      attachments: memo.attachments
-          .map((a) => a.toJson())
-          .toList(growable: false),
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: 1,
-      lastError: null,
-    );
-
-    await db.enqueueOutbox(
-      type: 'update_memo',
-      payload: {
-        'uid': memo.uid,
-        if (pinned != null) 'pinned': pinned,
-        if (state != null) 'state': state,
-      },
-    );
+    await ref.read(memosListControllerProvider).updateMemo(
+          memo,
+          pinned: pinned,
+          state: state,
+        );
     unawaited(ref.read(syncCoordinatorProvider.notifier).requestSync(const SyncRequest(kind: SyncRequestKind.memos, reason: SyncRequestReason.manual)));
   }
 
@@ -5107,39 +4848,11 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     bool triggerSync = true,
   }) async {
     if (content == memo.content) return;
-    final updateTime = preserveUpdateTime ? memo.updateTime : DateTime.now();
-    final db = ref.read(databaseProvider);
-    final timelineService = ref.read(memoTimelineServiceProvider);
-    final tags = extractTags(content);
-
-    await timelineService.captureMemoVersion(memo);
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: content,
-      visibility: memo.visibility,
-      pinned: memo.pinned,
-      state: memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: tags,
-      attachments: memo.attachments
-          .map((a) => a.toJson())
-          .toList(growable: false),
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: 1,
-      lastError: null,
-    );
-
-    await db.enqueueOutbox(
-      type: 'update_memo',
-      payload: {
-        'uid': memo.uid,
-        'content': content,
-        'visibility': memo.visibility,
-      },
-    );
+    await ref.read(memosListControllerProvider).updateMemoContent(
+          memo,
+          content,
+          preserveUpdateTime: preserveUpdateTime,
+        );
     if (triggerSync) {
       unawaited(ref.read(syncCoordinatorProvider.notifier).requestSync(const SyncRequest(kind: SyncRequestKind.memos, reason: SyncRequestReason.manual)));
     }
@@ -5194,17 +4907,11 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         false;
     if (!confirmed) return;
 
-    final db = ref.read(databaseProvider);
-    final timelineService = ref.read(memoTimelineServiceProvider);
     try {
-      await timelineService.moveMemoToRecycleBin(memo);
-      _removeMemoWithAnimation(memo);
-      await db.deleteMemoByUid(memo.uid);
-      await db.enqueueOutbox(
-        type: 'delete_memo',
-        payload: {'uid': memo.uid, 'force': false},
-      );
-      await ref.read(reminderSchedulerProvider).rescheduleAll();
+      await ref.read(memosListControllerProvider).deleteMemo(
+            memo,
+            onMovedToRecycleBin: () => _removeMemoWithAnimation(memo),
+          );
       unawaited(ref.read(syncCoordinatorProvider.notifier).requestSync(const SyncRequest(kind: SyncRequestKind.memos, reason: SyncRequestReason.manual)));
     } catch (e) {
       if (!mounted) return;
@@ -5303,8 +5010,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final removed = _animatedMemos.removeAt(index);
     _pendingRemovedUids.add(removed.uid);
     final outboxStatus =
-        ref.read(_outboxMemoStatusProvider).valueOrNull ??
-        const _OutboxMemoStatus.empty();
+        ref.read(memosListOutboxStatusProvider).valueOrNull ??
+        const OutboxMemoStatus.empty();
 
     _listKey.currentState?.removeItem(
       index,
@@ -5497,7 +5204,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     required LocalMemo memo,
     required Animation<double> animation,
     required AppPreferences prefs,
-    required _OutboxMemoStatus outboxStatus,
+    required OutboxMemoStatus outboxStatus,
     required bool removing,
   }) {
     final curved = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
@@ -5534,7 +5241,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     BuildContext context,
     LocalMemo memo, {
     required AppPreferences prefs,
-    required _OutboxMemoStatus outboxStatus,
+    required OutboxMemoStatus outboxStatus,
     required bool removing,
   }) {
     final displayTime = memo.createTime.millisecondsSinceEpoch > 0
@@ -5780,8 +5487,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         .watch(syncQueueProgressTrackerProvider)
         .snapshot;
     final outboxStatus =
-        ref.watch(_outboxMemoStatusProvider).valueOrNull ??
-        const _OutboxMemoStatus.empty();
+        ref.watch(memosListOutboxStatusProvider).valueOrNull ??
+        const OutboxMemoStatus.empty();
     final searchHistory = ref.watch(searchHistoryProvider);
     final tagStats =
         ref.watch(tagStatsProvider).valueOrNull ?? const <TagStat>[];
@@ -5797,7 +5504,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final memosLoading = memosAsync.isLoading;
     final memosError = memosAsync.whenOrNull(error: (e, _) => e);
     final normalMemoCount =
-        ref.watch(_normalMemoCountProvider).valueOrNull ?? 0;
+        ref.watch(memosListNormalMemoCountProvider).valueOrNull ?? 0;
     final bootstrapImportedCount = _bootstrapImportTotal > 0
         ? normalMemoCount.clamp(0, _bootstrapImportTotal).toInt()
         : normalMemoCount;
@@ -5931,13 +5638,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         : false;
     final session = ref.watch(appSessionProvider).valueOrNull;
     final account = session?.currentAccount;
-    final apiVersionResolution = account == null
-        ? null
-        : MemosServerApiProfiles.resolve(
-            manualVersionOverride: account.serverVersionOverride,
-            detectedVersion: account.instanceProfile.version,
-          );
-    final debugApiVersionText = _buildDebugApiVersionText(apiVersionResolution);
+    final debugApiVersionText =
+        ref.watch(memosListDebugApiVersionTextProvider);
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = mediaQuery.padding.bottom;
     final screenWidth = mediaQuery.size.width;
@@ -6710,7 +6412,7 @@ class _TitleMenuDropdown extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final api = ref.watch(memosApiProvider);
+    final shortcutHints = ref.watch(memosListShortcutHintsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
     final border = isDark
@@ -6723,11 +6425,8 @@ class _TitleMenuDropdown extends ConsumerWidget {
     final dividerColor = border.withValues(alpha: 0.6);
 
     final shortcutsAsync = showShortcuts ? ref.watch(shortcutsProvider) : null;
-    final useLocalShortcuts =
-        api.usesLegacySearchFilterDialect ||
-        api.shortcutsSupportedHint == false;
-    final canCreateShortcut =
-        useLocalShortcuts || api.shortcutsSupportedHint != false;
+    final useLocalShortcuts = shortcutHints.useLocalShortcuts;
+    final canCreateShortcut = shortcutHints.canCreateShortcut;
     final items = <Widget>[];
 
     void addRow(Widget row) {
@@ -8545,55 +8244,23 @@ class _MemoRelationsSectionState extends ConsumerState<_MemoRelationsSection> {
     final uid = _normalizeMemoUid(rawName);
     if (uid.isEmpty || uid == widget.memoUid) return;
 
-    final db = ref.read(databaseProvider);
-    final row = await db.getMemoByUid(uid);
-    LocalMemo? memo = row == null ? null : LocalMemo.fromDb(row);
-
-    if (memo == null) {
-      final account = ref.read(appSessionProvider).valueOrNull?.currentAccount;
-      if (account != null) {
-        try {
-          final api = ref.read(memosApiProvider);
-          final remote = await api.getMemo(memoUid: uid);
-          final remoteUid = remote.uid.isNotEmpty ? remote.uid : uid;
-          await db.upsertMemo(
-            uid: remoteUid,
-            content: remote.content,
-            visibility: remote.visibility,
-            pinned: remote.pinned,
-            state: remote.state,
-            createTimeSec:
-                remote.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            updateTimeSec:
-                remote.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            tags: remote.tags,
-            attachments: remote.attachments
-                .map((a) => a.toJson())
-                .toList(growable: false),
-            location: remote.location,
-            relationCount: countReferenceRelations(
-              memoUid: remoteUid,
-              relations: remote.relations,
-            ),
-            syncState: 0,
-          );
-          final refreshed = await db.getMemoByUid(remoteUid);
-          if (refreshed != null) {
-            memo = LocalMemo.fromDb(refreshed);
-          }
-        } catch (e) {
-          if (!context.mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(context.t.strings.legacy.msg_failed_load_4(e: e)),
-            ),
-          );
-          return;
-        }
-      }
+    final result = await ref
+        .read(memosListControllerProvider)
+        .resolveMemoForOpen(uid: uid);
+    final error = result.error;
+    if (error != null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.t.strings.legacy.msg_failed_load_4(e: error),
+          ),
+        ),
+      );
+      return;
     }
 
-    if (memo == null) {
+    if (result.isNotFound) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -8603,10 +8270,11 @@ class _MemoRelationsSectionState extends ConsumerState<_MemoRelationsSection> {
       return;
     }
 
+    final memo = result.memo!;
     if (!context.mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => MemoDetailScreen(initialMemo: memo!),
+        builder: (_) => MemoDetailScreen(initialMemo: memo),
       ),
     );
   }
