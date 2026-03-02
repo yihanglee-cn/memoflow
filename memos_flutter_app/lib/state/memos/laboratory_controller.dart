@@ -55,30 +55,26 @@ class LaboratoryController {
     required LaboratoryVersion version,
     required String probeMemoNotice,
   }) async {
-    try {
-      final report = await const MemoApiProbeService().probeSingle(
-        baseUrl: account.baseUrl,
-        personalAccessToken: account.personalAccessToken,
-        version: version._value,
-        probeMemoNotice: probeMemoNotice,
-        deferCleanup: true,
-      );
-      final diagnostics = report.failures
-          .map((failure) => failure.toDiagnosticLine())
-          .join('\n');
-      final deferred = report.deferredCleanup;
-      return LaboratoryProbeResult(
-        passed: report.passed,
-        diagnostics: diagnostics,
-        cleanup: LaboratoryProbeCleanup(
-          hasPending: deferred.hasPending,
-          attachmentName: deferred.attachmentName,
-          memoUid: deferred.memoUid,
-        ),
-      );
-    } catch (_) {
-      return null;
-    }
+    final report = await const MemoApiProbeService().probeSingle(
+      baseUrl: account.baseUrl,
+      personalAccessToken: account.personalAccessToken,
+      version: version._value,
+      probeMemoNotice: probeMemoNotice,
+      deferCleanup: true,
+    );
+    final diagnostics = report.failures
+        .map((failure) => failure.toDiagnosticLine())
+        .join('\n');
+    final deferred = report.deferredCleanup;
+    return LaboratoryProbeResult(
+      passed: report.passed,
+      diagnostics: diagnostics,
+      cleanup: LaboratoryProbeCleanup(
+        hasPending: deferred.hasPending,
+        attachmentName: deferred.attachmentName,
+        memoUid: deferred.memoUid,
+      ),
+    );
   }
 
   Future<void> cleanupProbeArtifactsAfterSync({
