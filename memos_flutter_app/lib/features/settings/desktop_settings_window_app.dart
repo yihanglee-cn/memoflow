@@ -16,8 +16,10 @@ import '../../core/desktop_quick_input_channel.dart';
 import '../../core/top_toast.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/logging_provider.dart';
+import '../../state/local_library_provider.dart';
 import '../../state/preferences_provider.dart';
 import '../../state/session_provider.dart';
+import '../../data/models/local_library.dart';
 import '../stats/stats_screen.dart';
 import 'about_us_screen.dart';
 import 'account_security_screen.dart';
@@ -217,6 +219,9 @@ class DesktopSettingsWindowScreen extends StatefulWidget {
 class _DesktopSettingsWindowScreenState
     extends State<DesktopSettingsWindowScreen> {
   Future<bool>? _mainWindowChannelProbe;
+  ProviderSubscription<String?>? _sessionKeySub;
+  ProviderSubscription<List<LocalLibrary>>? _localLibrariesSub;
+  bool _workspaceListenersBound = false;
 
   @override
   void initState() {
@@ -225,12 +230,18 @@ class _DesktopSettingsWindowScreenState
     unawaited(_reloadSessionFromStorage());
     unawaited(_initializeWindowManager());
     unawaited(_notifyMainWindowVisibility(true));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _bindWorkspaceChangeListeners();
+    });
   }
 
   @override
   void dispose() {
     unawaited(_notifyMainWindowVisibility(false));
     DesktopMultiWindow.setMethodHandler(null);
+    _sessionKeySub?.close();
+    _localLibrariesSub?.close();
     super.dispose();
   }
 
@@ -250,6 +261,59 @@ class _DesktopSettingsWindowScreenState
       await _invokeMainWindowMethod(
         desktopSubWindowVisibilityMethod,
         <String, dynamic>{'visible': visible},
+      );
+    } catch (_) {}
+  }
+
+  void _bindWorkspaceChangeListeners() {
+    if (_workspaceListenersBound) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    _sessionKeySub = container.listen<String?>(
+      appSessionProvider.select((state) => state.valueOrNull?.currentKey),
+      (prev, next) {
+        if (prev == next) return;
+        unawaited(
+          _notifyMainWindowWorkspaceChanged(
+            reason: 'session_key',
+            currentKey: next,
+          ),
+        );
+      },
+    );
+    _localLibrariesSub = container.listen<List<LocalLibrary>>(
+      localLibrariesProvider,
+      (prev, next) {
+        if (_sameLocalLibraryKeys(prev, next)) return;
+        unawaited(
+          _notifyMainWindowWorkspaceChanged(reason: 'local_libraries'),
+        );
+      },
+    );
+    _workspaceListenersBound = true;
+  }
+
+  bool _sameLocalLibraryKeys(
+    List<LocalLibrary>? prev,
+    List<LocalLibrary> next,
+  ) {
+    if (prev == null) return false;
+    if (prev.length != next.length) return false;
+    final prevKeys = prev.map((l) => l.key).toList()..sort();
+    final nextKeys = next.map((l) => l.key).toList()..sort();
+    for (var i = 0; i < prevKeys.length; i++) {
+      if (prevKeys[i] != nextKeys[i]) return false;
+    }
+    return true;
+  }
+
+  Future<void> _notifyMainWindowWorkspaceChanged({
+    required String reason,
+    String? currentKey,
+  }) async {
+    try {
+      await _invokeMainWindowMethod(
+        desktopMainReloadWorkspaceMethod,
+        <String, dynamic>{'reason': reason, 'currentKey': currentKey},
       );
     } catch (_) {}
   }

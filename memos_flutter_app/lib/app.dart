@@ -896,6 +896,77 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
           navigator.pushNamedAndRemoveUntil('/', (route) => false);
         }
         return true;
+      case desktopMainReloadWorkspaceMethod:
+        final args = call.arguments;
+        final map = args is Map ? args.cast<Object?, Object?>() : null;
+        final hasKey = map != null && map.containsKey('currentKey');
+        final rawKey = map == null ? null : map['currentKey'];
+        final log = _bootstrapAdapter.readLogManager(ref);
+        var setKeyOk = true;
+        var reloadOk = true;
+        var keyEmpty = false;
+        var keyInvalidType = false;
+        if (hasKey) {
+          if (rawKey == null) {
+            keyEmpty = true;
+            try {
+              await _bootstrapAdapter.setCurrentSessionKey(ref, null);
+            } catch (error, stackTrace) {
+              setKeyOk = false;
+              log.error(
+                'Desktop workspace reload failed to clear session key',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            }
+          } else if (rawKey is String) {
+            final nextKey = rawKey.trim();
+            keyEmpty = nextKey.isEmpty;
+            try {
+              await _bootstrapAdapter.setCurrentSessionKey(
+                ref,
+                nextKey.isEmpty ? null : nextKey,
+              );
+            } catch (error, stackTrace) {
+              setKeyOk = false;
+              log.error(
+                'Desktop workspace reload failed to set session key',
+                error: error,
+                stackTrace: stackTrace,
+              );
+            }
+          } else {
+            keyInvalidType = true;
+            setKeyOk = false;
+            log.warn(
+              'Desktop workspace reload ignored non-string currentKey',
+              context: <String, Object?>{
+                'type': rawKey.runtimeType.toString(),
+              },
+            );
+          }
+        }
+        try {
+          await _bootstrapAdapter.reloadLocalLibrariesFromStorage(ref);
+        } catch (error, stackTrace) {
+          reloadOk = false;
+          log.error(
+            'Desktop workspace reload failed to refresh libraries',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+        log.info(
+          'Desktop workspace reload handled',
+          context: <String, Object?>{
+            'hasKey': hasKey,
+            'keyEmpty': keyEmpty,
+            'keyInvalidType': keyInvalidType,
+            'setKeyOk': setKeyOk,
+            'reloadOk': reloadOk,
+          },
+        );
+        return reloadOk && (!hasKey || setKeyOk);
       case desktopHomeShowLoadingOverlayMethod:
         _bootstrapAdapter.forceHomeLoadingOverlay(ref);
         return true;
