@@ -83,6 +83,8 @@ class _StartupScreenState extends State<StartupScreen>
     final sloganPadding = 48 * scale;
     final textGap = 6 * scale;
 
+    final logoTopOffset = logoSize * 2.5;
+
     return ColoredBox(
       color: backgroundColor,
       child: SafeArea(
@@ -90,7 +92,7 @@ class _StartupScreenState extends State<StartupScreen>
           fit: StackFit.expand,
           children: [
             Positioned(
-              top: logoSize,
+              top: logoTopOffset,
               left: 0,
               right: 0,
               child: Center(
