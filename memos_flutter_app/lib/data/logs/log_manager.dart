@@ -39,6 +39,7 @@ class LogManager {
   static const int maxErrorChars = 1200;
   static const int maxStackChars = 2000;
   static const int maxLineChars = 6000;
+  static const int _preInitBufferLimit = 200;
 
   final Duration _retention = const Duration(days: defaultRetentionDays);
   final int _maxFileBytes = defaultMaxFileBytes;
@@ -48,12 +49,14 @@ class LogManager {
   int _currentIndex = 0;
   bool _initialized = false;
   Future<void> _writeQueue = Future.value();
+  final List<String> _preInitBuffer = <String>[];
 
   Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     await _resolveLogDir();
     await _cleanupOldLogs();
+    _flushPreInitBuffer();
     await _logDeviceContext();
   }
 
@@ -142,10 +145,6 @@ class LogManager {
     StackTrace? stackTrace,
     Map<String, Object?>? context,
   }) {
-    if (!_initialized) {
-      unawaited(init());
-    }
-
     final line = _formatLogLine(
       level,
       message,
@@ -154,8 +153,12 @@ class LogManager {
       context: context,
     );
 
-    if (kDebugMode) {
+    if (kDebugMode || kProfileMode) {
       debugPrint(line);
+    }
+    if (!_initialized) {
+      _bufferPreInitLine(line);
+      return;
     }
     _enqueueWrite(line);
   }
@@ -451,6 +454,22 @@ class LogManager {
         );
       } catch (_) {}
     });
+  }
+
+  void _bufferPreInitLine(String line) {
+    if (_preInitBuffer.length >= _preInitBufferLimit) {
+      _preInitBuffer.removeAt(0);
+    }
+    _preInitBuffer.add(line);
+  }
+
+  void _flushPreInitBuffer() {
+    if (_preInitBuffer.isEmpty) return;
+    final pending = List<String>.from(_preInitBuffer);
+    _preInitBuffer.clear();
+    for (final line in pending) {
+      _enqueueWrite(line);
+    }
   }
 
   Future<File> _resolveLogFile() async {

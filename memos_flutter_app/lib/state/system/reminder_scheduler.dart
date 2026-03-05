@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -55,6 +56,7 @@ class ReminderScheduler {
       FlutterLocalNotificationsPlugin();
   ReminderTapHandler? _tapHandler;
   bool _initialized = false;
+  bool _initLogEmitted = false;
   Completer<void>? _initCompleter;
   DateTime? _lastRescheduleAt;
   int? _androidSdkInt;
@@ -112,11 +114,16 @@ class ReminderScheduler {
         );
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({String? caller}) async {
     if (_initialized) return;
     if (_initCompleter != null) return _initCompleter!.future;
 
     _initCompleter = Completer<void>();
+    final initContext = <String, Object?>{
+      if (caller != null && caller.trim().isNotEmpty) 'caller': caller,
+      if (kDebugMode && !_initLogEmitted) 'stack': StackTrace.current.toString(),
+    };
+    _initLogEmitted = true;
     if (!_supportsReminderNotifications) {
       _initialized = true;
       _logInfo(
@@ -147,7 +154,7 @@ class ReminderScheduler {
       return;
     }
 
-    _logInfo('init_start');
+    _logInfo('init_start', context: initContext);
     tz_data.initializeTimeZones();
     try {
       final timeZone = await FlutterTimezone.getLocalTimezone();
@@ -183,8 +190,8 @@ class ReminderScheduler {
     _initCompleter?.complete();
   }
 
-  Future<void> rescheduleAll({bool force = false}) async {
-    await initialize();
+  Future<void> rescheduleAll({bool force = false, String? caller}) async {
+    await initialize(caller: caller ?? 'reschedule_all');
     if (!_supportsReminderNotifications) return;
     _logInfo('reschedule_start', context: {'force': force});
 

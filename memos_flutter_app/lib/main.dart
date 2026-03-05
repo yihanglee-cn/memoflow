@@ -15,6 +15,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'application/desktop/desktop_tray_controller.dart';
 import 'core/debug_ephemeral_storage.dart';
+import 'core/startup_timing.dart';
 import 'data/logs/log_manager.dart';
 import 'core/desktop_quick_input_channel.dart';
 import 'features/desktop/quick_input/desktop_quick_input_window.dart';
@@ -36,13 +37,37 @@ void _initializeDesktopDatabaseFactory() {
   }
 }
 
+void _schedulePostFirstFrameInit() {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_postFirstFrameInit());
+  });
+}
+
+Future<void> _postFirstFrameInit() async {
+  try {
+    await LogManager.instance.init();
+  } catch (_) {}
+  try {
+    VideoPlayerMediaKit.ensureInitialized(windows: true, linux: false);
+  } catch (_) {}
+  try {
+    JustAudioMediaKit.ensureInitialized(windows: true, linux: false);
+  } catch (_) {}
+  try {
+    Cryptography.instance = FlutterCryptography();
+  } catch (_) {}
+}
+
 void main(List<String> args) {
+  StartupTiming.init();
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      StartupTiming.bindFirstFrameTiming();
       final isMultiWindow =
           !kIsWeb && args.isNotEmpty && args.first == 'multi_window';
       await prepareEphemeralDebugStorage(clearExisting: !isMultiWindow);
+      StartupTiming.markStep('debug_storage_ready');
 
       if (isMultiWindow) {
         final windowId = args.length > 1 ? int.tryParse(args[1]) ?? 0 : 0;
@@ -62,25 +87,25 @@ void main(List<String> args) {
         // fallback to the full main app in sub-window engines.
         if (type == null || type == desktopWindowTypeQuickInput) {
           _initializeDesktopDatabaseFactory();
-          Cryptography.instance = FlutterCryptography();
+          StartupTiming.markRunApp(target: 'desktop_quick_input');
           runApp(
             ProviderScope(
               child: DesktopQuickInputWindowApp(windowId: windowId),
             ),
           );
+          _schedulePostFirstFrameInit();
           return;
         }
         if (type == desktopWindowTypeSettings) {
           _initializeDesktopDatabaseFactory();
-          Cryptography.instance = FlutterCryptography();
+          StartupTiming.markRunApp(target: 'desktop_settings');
           runApp(
             ProviderScope(child: DesktopSettingsWindowApp(windowId: windowId)),
           );
+          _schedulePostFirstFrameInit();
           return;
         }
       }
-      VideoPlayerMediaKit.ensureInitialized(windows: true, linux: false);
-      JustAudioMediaKit.ensureInitialized(windows: true, linux: false);
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
         await windowManager.ensureInitialized();
         const options = WindowOptions(
@@ -101,7 +126,6 @@ void main(List<String> args) {
         await DesktopTrayController.instance.ensureInitialized();
       }
       _initializeDesktopDatabaseFactory();
-      Cryptography.instance = FlutterCryptography();
       FlutterError.onError = (details) {
         LogManager.instance.error(
           'Flutter error',
@@ -118,7 +142,9 @@ void main(List<String> args) {
         );
         return false;
       };
+      StartupTiming.markRunApp(target: 'main_app');
       runApp(const ProviderScope(child: App()));
+      _schedulePostFirstFrameInit();
     },
     (error, stackTrace) {
       LogManager.instance.error(

@@ -17,6 +17,7 @@ import 'application/updates/update_announcement_runner.dart';
 import 'application/widgets/stats_widget_updater.dart';
 import 'core/app_localization.dart';
 import 'core/app_theme.dart';
+import 'core/startup_timing.dart';
 import 'application/desktop/desktop_settings_window.dart';
 import 'core/font_loader.dart' as app_font;
 import 'core/memoflow_palette.dart';
@@ -60,6 +61,9 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
   ProviderSubscription<AsyncValue<AppSessionState>>? _sessionSub;
   ProviderSubscription<LocalLibrary?>? _localLibrarySub;
   AppLocale? _activeLocale;
+  bool _loggedAppInitState = false;
+  bool _loggedAppBuildStart = false;
+  bool _loggedAppBuildEnd = false;
 
   Future<void> _ensureFontLoaded(AppPreferences prefs) async {
     await _fontLoader.ensureLoaded(
@@ -88,6 +92,10 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    if (!_loggedAppInitState) {
+      _loggedAppInitState = true;
+      StartupTiming.markStep('app_init_state');
+    }
     _bootstrapAdapter = ref.read(appBootstrapAdapterProvider);
     _bootstrapController = AppBootstrapController(_bootstrapAdapter);
     _statsWidgetUpdater = StatsWidgetUpdater(
@@ -179,7 +187,10 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
     _bootstrapAdapter.readLogManager(ref);
     HomeWidgetService.setLaunchHandler(_startupCoordinator.handleWidgetLaunch);
     ShareHandlerService.setShareHandler(_startupCoordinator.handleShareLaunch);
-    unawaited(_startupCoordinator.loadPendingLaunchSources());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_startupCoordinator.loadPendingLaunchSources());
+    });
     _bootstrapController.bind(
       ref: ref,
       syncOrchestrator: _syncOrchestrator,
@@ -232,6 +243,10 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (!_loggedAppBuildStart) {
+      _loggedAppBuildStart = true;
+      StartupTiming.markStep('app_build_start');
+    }
     final prefs = _bootstrapAdapter.watchPreferences(ref);
     final prefsLoaded = _bootstrapAdapter.watchPreferencesLoaded(ref);
     final session = _bootstrapAdapter.watchSession(ref).valueOrNull;
@@ -270,7 +285,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       source: 'build',
     );
 
-    return TranslationProvider(
+    final app = TranslationProvider(
       child: MaterialApp(
         title: 'MemoFlow',
         debugShowCheckedModeBanner: !screenshotModeEnabled,
@@ -352,6 +367,11 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
         home: MainHomePage(key: _mainHomePageKey),
       ),
     );
+    if (!_loggedAppBuildEnd) {
+      _loggedAppBuildEnd = true;
+      StartupTiming.markStep('app_build_end');
+    }
+    return app;
   }
 
   @override

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/app/app_sync_orchestrator.dart';
@@ -27,6 +28,9 @@ class AppBootstrapController {
 
   String? _pendingThemeAccountKey;
   DateTime? _lastReminderRescheduleAt;
+  bool _firstFrameRendered = false;
+  bool _reminderRescheduleQueued = false;
+  bool _reminderRescheduleForce = false;
 
   void bind({
     required WidgetRef ref,
@@ -75,7 +79,11 @@ class AppBootstrapController {
 
     final reminderScheduler = _adapter.readReminderScheduler(ref);
     reminderScheduler.setTapHandler(reminderTapHandler);
-    unawaited(reminderScheduler.initialize());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _firstFrameRendered = true;
+      _flushQueuedReminderReschedule(reminderScheduler);
+      unawaited(reminderScheduler.initialize(caller: 'post_first_frame'));
+    });
     _reminderSettingsSubscription =
         _adapter.listenReminderSettings(ref, (prev, next) {
           _handleReminderSettingsChanged(
@@ -91,12 +99,20 @@ class AppBootstrapController {
           unawaited(applyDebugScreenshotMode(next));
         },
       );
-      unawaited(applyDebugScreenshotMode(_adapter.readDebugScreenshotMode(ref)));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(
+          applyDebugScreenshotMode(_adapter.readDebugScreenshotMode(ref)),
+        );
+      });
     }
 
     if (isDesktopShortcutEnabled()) {
-      unawaited(registerDesktopQuickInputHotKey(_adapter.readPreferences(ref)));
-      scheduleDesktopSubWindowPrewarm();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(
+          registerDesktopQuickInputHotKey(_adapter.readPreferences(ref)),
+        );
+        scheduleDesktopSubWindowPrewarm();
+      });
     }
   }
 
@@ -116,7 +132,10 @@ class AppBootstrapController {
       return;
     }
     _lastReminderRescheduleAt = now;
-    unawaited(_adapter.readReminderScheduler(ref).rescheduleAll());
+    _queueReminderReschedule(
+      reminderScheduler: _adapter.readReminderScheduler(ref),
+      reason: 'lifecycle_resume',
+    );
   }
 
   void _handleSessionChanged({
@@ -160,8 +179,10 @@ class AppBootstrapController {
         refreshCurrentUserBeforeSync: false,
         showFeedbackToast: false,
       );
-      unawaited(
-        _adapter.readReminderScheduler(ref).rescheduleAll(force: true),
+      _queueReminderReschedule(
+        reminderScheduler: _adapter.readReminderScheduler(ref),
+        force: true,
+        reason: 'session_changed',
       );
     }
     if (nextKey != null) {
@@ -238,7 +259,40 @@ class AppBootstrapController {
     required ReminderScheduler reminderScheduler,
   }) {
     if (!_adapter.readReminderSettingsLoaded(ref)) return;
-    unawaited(reminderScheduler.rescheduleAll());
+    _queueReminderReschedule(
+      reminderScheduler: reminderScheduler,
+      reason: 'reminder_settings_changed',
+    );
+  }
+
+  void _queueReminderReschedule({
+    required ReminderScheduler reminderScheduler,
+    bool force = false,
+    String? reason,
+  }) {
+    if (_firstFrameRendered) {
+      unawaited(
+        reminderScheduler.rescheduleAll(force: force, caller: reason),
+      );
+      return;
+    }
+    _reminderRescheduleQueued = true;
+    if (force) {
+      _reminderRescheduleForce = true;
+    }
+  }
+
+  void _flushQueuedReminderReschedule(ReminderScheduler reminderScheduler) {
+    if (!_reminderRescheduleQueued) return;
+    final force = _reminderRescheduleForce;
+    _reminderRescheduleQueued = false;
+    _reminderRescheduleForce = false;
+    unawaited(
+      reminderScheduler.rescheduleAll(
+        force: force,
+        caller: 'post_first_frame',
+      ),
+    );
   }
 
   bool _didSessionAuthContextChange({

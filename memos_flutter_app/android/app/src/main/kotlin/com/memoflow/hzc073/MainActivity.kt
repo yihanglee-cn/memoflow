@@ -11,8 +11,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.memoflow.hzc073.widgets.DailyReviewWidgetProvider
@@ -27,6 +29,7 @@ import java.io.File
 import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
+    private val startupTag = "StartupTiming"
     private val widgetChannelName = "memoflow/widgets"
     private var widgetChannel: MethodChannel? = null
     private var pendingWidgetAction: String? = null
@@ -39,22 +42,29 @@ class MainActivity : FlutterActivity() {
     private val ringtoneRequestCode = 1001
     private val settingsChannelName = "memoflow/system_settings"
     private var settingsChannel: MethodChannel? = null
-    private var isFlutterUiReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val splashScreen = installSplashScreen()
-        splashScreen.setKeepOnScreenCondition { !isFlutterUiReady }
+        logStartup("MainActivity.onCreate")
+        logStartup("android_splash_shown")
+        installSplashScreen()
         super.onCreate(savedInstanceState)
     }
 
     override fun onFlutterUiDisplayed() {
         super.onFlutterUiDisplayed()
-        isFlutterUiReady = true
+        logStartup("MainActivity.onFlutterUiDisplayed")
+        logStartup("android_splash_exit")
     }
 
     override fun onFlutterUiNoLongerDisplayed() {
         super.onFlutterUiNoLongerDisplayed()
-        isFlutterUiReady = false
+        logStartup("MainActivity.onFlutterUiNoLongerDisplayed")
+    }
+
+    private fun logStartup(event: String) {
+        val epochMs = System.currentTimeMillis()
+        val uptimeMs = SystemClock.uptimeMillis()
+        Log.i(startupTag, "$event epochMs=$epochMs uptimeMs=$uptimeMs")
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
