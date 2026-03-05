@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saf_stream/saf_stream.dart';
 
+import '../../application/attachments/attachment_preprocessor.dart';
 import '../../application/sync/local_library_scan_service.dart';
 import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
@@ -57,6 +58,7 @@ class LocalSyncController extends SyncControllerBase {
     required this.bridgeSettingsRepository,
     required this.syncStatusTracker,
     required this.syncQueueProgressTracker,
+    required this.attachmentPreprocessor,
   }) : super(const AsyncValue.data(null));
 
   final AppDatabase db;
@@ -65,6 +67,7 @@ class LocalSyncController extends SyncControllerBase {
   final MemoFlowBridgeSettingsRepository bridgeSettingsRepository;
   final SyncStatusTracker syncStatusTracker;
   final SyncQueueProgressTracker syncQueueProgressTracker;
+  final AttachmentPreprocessor attachmentPreprocessor;
   MemoFlowBridgeSettings _bridgeSettingsSnapshot =
       MemoFlowBridgeSettings.defaults;
   int _syncRunSeq = 0;
@@ -945,32 +948,42 @@ class LocalSyncController extends SyncControllerBase {
       throw const FormatException('upload_attachment missing fields');
     }
 
+    final processed = await attachmentPreprocessor.preprocess(
+      AttachmentPreprocessRequest(
+        filePath: filePath,
+        filename: filename,
+        mimeType: mimeType,
+      ),
+    );
     final archiveName = attachmentArchiveNameFromPayload(
       attachmentUid: uid,
-      filename: filename,
+      filename: processed.filename,
     );
     final privatePath = await attachmentStore.resolveAttachmentPath(
       memoUid,
       archiveName,
     );
-    await _copyToPrivate(filePath, privatePath);
+    await _copyToPrivate(processed.filePath, privatePath);
 
     await fileSystem.writeAttachmentFromFile(
       memoUid: memoUid,
       filename: archiveName,
       srcPath: privatePath,
-      mimeType: mimeType,
+      mimeType: processed.mimeType,
     );
 
     final size = File(privatePath).existsSync()
         ? File(privatePath).lengthSync()
-        : 0;
+        : processed.size;
     final attachment = Attachment(
       name: 'attachments/$uid',
-      filename: filename,
-      type: mimeType,
+      filename: processed.filename,
+      type: processed.mimeType,
       size: size,
       externalLink: Uri.file(privatePath).toString(),
+      width: processed.width,
+      height: processed.height,
+      hash: processed.hash,
     );
     await _upsertAttachment(memoUid, attachment);
 

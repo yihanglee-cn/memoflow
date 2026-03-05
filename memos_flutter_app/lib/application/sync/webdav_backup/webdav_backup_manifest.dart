@@ -74,6 +74,9 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
     if (normalized == _backupImageBedSnapshotPath) {
       return WebDavBackupConfigType.imageBedSettings;
     }
+    if (normalized == _backupImageCompressionSnapshotPath) {
+      return WebDavBackupConfigType.imageCompressionSettings;
+    }
     if (normalized == _backupLocationSnapshotPath) {
       return WebDavBackupConfigType.locationSettings;
     }
@@ -166,6 +169,20 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
         ),
       );
     }
+    if (types.contains(WebDavBackupConfigType.imageCompressionSettings) &&
+        snapshot != null) {
+      final payload = _wrapConfigPayload(
+        exportedAt: exportedAt,
+        data: snapshot.imageCompressionSettings.toJson(),
+      );
+      files.add(
+        _BackupConfigFile(
+          type: WebDavBackupConfigType.imageCompressionSettings,
+          path: _backupImageCompressionSnapshotPath,
+          bytes: _encodeJsonBytes(payload),
+        ),
+      );
+    }
     if (types.contains(WebDavBackupConfigType.locationSettings) &&
         snapshot != null) {
       final payload = _wrapConfigPayload(
@@ -244,6 +261,7 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
     AiSettings? aiSettings;
     ReminderSettings? reminderSettings;
     ImageBedSettings? imageBedSettings;
+    ImageCompressionSettings? imageCompressionSettings;
     LocationSettings? locationSettings;
     MemoTemplateSettings? templateSettings;
     AppLockSnapshot? appLockSnapshot;
@@ -317,6 +335,18 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
       }
     }
 
+    final imageCompressionBytes =
+        configBytes[WebDavBackupConfigType.imageCompressionSettings];
+    if (imageCompressionBytes != null) {
+      final envelope = readEnvelope(imageCompressionBytes);
+      final data = envelope == null ? null : readConfigData(envelope);
+      if (data != null) {
+        imageCompressionSettings = safeParse(
+          () => ImageCompressionSettings.fromJson(data),
+        );
+      }
+    }
+
     final locationBytes =
         configBytes[WebDavBackupConfigType.locationSettings];
     if (locationBytes != null) {
@@ -384,6 +414,7 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
       aiSettings: aiSettings,
       reminderSettings: reminderSettings,
       imageBedSettings: imageBedSettings,
+      imageCompressionSettings: imageCompressionSettings,
       locationSettings: locationSettings,
       templateSettings: templateSettings,
       appLockSnapshot: appLockSnapshot,
@@ -471,6 +502,9 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
     if (bundle.imageBedSettings != null) {
       types.add(WebDavBackupConfigType.imageBedSettings);
     }
+    if (bundle.imageCompressionSettings != null) {
+      types.add(WebDavBackupConfigType.imageCompressionSettings);
+    }
     if (bundle.locationSettings != null) {
       types.add(WebDavBackupConfigType.locationSettings);
     }
@@ -535,6 +569,12 @@ mixin _WebDavBackupManifestMixin on _WebDavBackupServiceBase {
             final imageBed = bundle.imageBedSettings;
             if (imageBed != null) {
               await _configAdapter!.applyImageBedSettings(imageBed);
+            }
+            break;
+          case WebDavBackupConfigType.imageCompressionSettings:
+            final settings = bundle.imageCompressionSettings;
+            if (settings != null) {
+              await _configAdapter!.applyImageCompressionSettings(settings);
             }
             break;
           case WebDavBackupConfigType.locationSettings:

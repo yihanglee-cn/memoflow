@@ -1600,6 +1600,8 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
         WebDavBackupConfigType.webdavSettings,
       if (bundle.imageBedSettings != null)
         WebDavBackupConfigType.imageBedSettings,
+      if (bundle.imageCompressionSettings != null)
+        WebDavBackupConfigType.imageCompressionSettings,
       if (bundle.appLockSnapshot != null) WebDavBackupConfigType.appLock,
       if (bundle.aiSettings != null) WebDavBackupConfigType.aiSettings,
     ];
@@ -1666,6 +1668,8 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
         context.t.strings.legacy.msg_restore_config_item_app_lock,
       WebDavBackupConfigType.aiSettings =>
         context.t.strings.legacy.msg_restore_config_item_ai,
+      WebDavBackupConfigType.imageCompressionSettings =>
+        context.t.strings.legacy.msg_restore_config_item_image_compression,
       _ => type.name,
     };
   }

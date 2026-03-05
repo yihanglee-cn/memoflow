@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 5505 (1101 per locale)
+/// Strings: 5570 (1114 per locale)
 ///
-/// Built on 2026-03-01 at 14:39 UTC
+/// Built on 2026-03-05 at 10:32 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -803,6 +803,16 @@ class _StringsStringsLegacyEn {
 	String get msg_date_range_2 => 'Date range';
 	String get msg_feedback => 'Feedback';
 	String get msg_image_bed_2 => 'Image Bed';
+	String get msg_image_compression => 'Image Compression';
+	String get msg_enable_image_compression => 'Enable image compression';
+	String get msg_image_compression_desc => 'Compress newly added image attachments before upload.';
+	String get msg_image_compression_scope => 'Only applies to newly added attachments.';
+	String get msg_max_side => 'Max side';
+	String get msg_quality => 'Quality';
+	String get msg_output_format => 'Output format';
+	String get msg_format_auto => 'Auto';
+	String get msg_format_jpeg => 'JPEG';
+	String get msg_format_webp => 'WebP';
 	String get msg_restoring => 'Restoring…';
 	String get msg_export => 'Export';
 	String get msg_enter_token_name => 'Please enter token name';
@@ -993,6 +1003,7 @@ class _StringsStringsLegacyEn {
 	String get msg_restore_config_confirm_hint => 'Select which sensitive settings to apply. Other settings will be restored automatically.';
 	String get msg_restore_config_item_webdav => 'WebDAV settings';
 	String get msg_restore_config_item_image_bed => 'Image bed settings';
+	String get msg_restore_config_item_image_compression => 'Image compression settings';
 	String get msg_restore_config_item_app_lock => 'App lock settings';
 	String get msg_restore_config_item_ai => 'AI settings';
 	String get msg_backup_plain_risk_title => 'Plaintext backup';
@@ -2214,6 +2225,16 @@ class _StringsStringsLegacyDe extends _StringsStringsLegacyEn {
 	@override String get msg_date_range_2 => 'Datumsbereich';
 	@override String get msg_feedback => 'Feedback';
 	@override String get msg_image_bed_2 => 'Bildspeicher';
+	@override String get msg_image_compression => 'Bildkomprimierung';
+	@override String get msg_enable_image_compression => 'Bildkomprimierung aktivieren';
+	@override String get msg_image_compression_desc => 'Neue Bildanhänge vor dem Upload komprimieren.';
+	@override String get msg_image_compression_scope => 'Gilt nur für neu hinzugefügte Anhänge.';
+	@override String get msg_max_side => 'Maximale Kante';
+	@override String get msg_quality => 'Qualität';
+	@override String get msg_output_format => 'Ausgabeformat';
+	@override String get msg_format_auto => 'Auto';
+	@override String get msg_format_jpeg => 'JPEG';
+	@override String get msg_format_webp => 'WebP';
 	@override String get msg_restoring => 'Wird wiederhergestellt…';
 	@override String get msg_export => 'Exportieren';
 	@override String get msg_enter_token_name => 'Bitte Token-Namen eingeben';
@@ -2404,6 +2425,7 @@ class _StringsStringsLegacyDe extends _StringsStringsLegacyEn {
 	@override String get msg_restore_config_confirm_hint => 'Wähle aus, welche sensiblen Einstellungen wiederhergestellt werden sollen. Sichere Einstellungen werden automatisch wiederhergestellt.';
 	@override String get msg_restore_config_item_webdav => 'WebDAV-Einstellungen';
 	@override String get msg_restore_config_item_image_bed => 'Image-Bed-Einstellungen';
+	@override String get msg_restore_config_item_image_compression => 'Bildkomprimierungs-Einstellungen';
 	@override String get msg_restore_config_item_app_lock => 'App-Sperre';
 	@override String get msg_restore_config_item_ai => 'KI-Einstellungen';
 	@override String get msg_backup_plain_risk_title => 'Unverschlüsselte Sicherung';
@@ -3625,6 +3647,16 @@ class _StringsStringsLegacyJa extends _StringsStringsLegacyEn {
 	@override String get msg_date_range_2 => '日付範囲';
 	@override String get msg_feedback => 'フィードバック';
 	@override String get msg_image_bed_2 => '画像ベッド';
+	@override String get msg_image_compression => '画像圧縮';
+	@override String get msg_enable_image_compression => '画像圧縮を有効にする';
+	@override String get msg_image_compression_desc => '新しく追加した画像添付をアップロード前に圧縮します。';
+	@override String get msg_image_compression_scope => '新しく追加した添付のみ対象です。';
+	@override String get msg_max_side => '最大辺';
+	@override String get msg_quality => '画質';
+	@override String get msg_output_format => '出力形式';
+	@override String get msg_format_auto => '自動';
+	@override String get msg_format_jpeg => 'JPEG';
+	@override String get msg_format_webp => 'WebP';
 	@override String get msg_restoring => '復元中…';
 	@override String get msg_export => 'エクスポート';
 	@override String get msg_enter_token_name => 'トークン名を入力してください';
@@ -3815,6 +3847,7 @@ class _StringsStringsLegacyJa extends _StringsStringsLegacyEn {
 	@override String get msg_restore_config_confirm_hint => '復元する機密設定を選択してください。安全な設定は自動で復元されます。';
 	@override String get msg_restore_config_item_webdav => 'WebDAV 設定';
 	@override String get msg_restore_config_item_image_bed => '画像ベッド設定';
+	@override String get msg_restore_config_item_image_compression => '画像圧縮設定';
 	@override String get msg_restore_config_item_app_lock => 'アプリロック設定';
 	@override String get msg_restore_config_item_ai => 'AI 設定';
 	@override String get msg_backup_plain_risk_title => '平文バックアップ';
@@ -5036,6 +5069,16 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override String get msg_date_range_2 => '日期范围';
 	@override String get msg_feedback => '反馈';
 	@override String get msg_image_bed_2 => '图床';
+	@override String get msg_image_compression => '图片压缩';
+	@override String get msg_enable_image_compression => '启用图片压缩';
+	@override String get msg_image_compression_desc => '在上传前压缩新添加的图片附件。';
+	@override String get msg_image_compression_scope => '仅对新添加的附件生效。';
+	@override String get msg_max_side => '最长边';
+	@override String get msg_quality => '质量';
+	@override String get msg_output_format => '输出格式';
+	@override String get msg_format_auto => '自动';
+	@override String get msg_format_jpeg => 'JPEG';
+	@override String get msg_format_webp => 'WebP';
 	@override String get msg_restoring => '恢复中…';
 	@override String get msg_export => '导出';
 	@override String get msg_enter_token_name => '请输入 Token 名称';
@@ -5226,6 +5269,7 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override String get msg_restore_config_confirm_hint => '请选择要恢复的敏感配置，其他安全配置将自动恢复。';
 	@override String get msg_restore_config_item_webdav => 'WebDAV 设置';
 	@override String get msg_restore_config_item_image_bed => '图床设置';
+	@override String get msg_restore_config_item_image_compression => '图片压缩设置';
 	@override String get msg_restore_config_item_app_lock => '应用锁设置';
 	@override String get msg_restore_config_item_ai => 'AI 设置';
 	@override String get msg_backup_plain_risk_title => '明文备份';
@@ -6447,6 +6491,16 @@ class _StringsStringsLegacyZhHantTw extends _StringsStringsLegacyEn {
 	@override String get msg_date_range_2 => '日期范围';
 	@override String get msg_feedback => '反馈';
 	@override String get msg_image_bed_2 => '图床';
+	@override String get msg_image_compression => '圖片壓縮';
+	@override String get msg_enable_image_compression => '啟用圖片壓縮';
+	@override String get msg_image_compression_desc => '在上傳前壓縮新加入的圖片附件。';
+	@override String get msg_image_compression_scope => '僅對新加入的附件生效。';
+	@override String get msg_max_side => '最長邊';
+	@override String get msg_quality => '品質';
+	@override String get msg_output_format => '輸出格式';
+	@override String get msg_format_auto => '自動';
+	@override String get msg_format_jpeg => 'JPEG';
+	@override String get msg_format_webp => 'WebP';
 	@override String get msg_restoring => '恢复中…';
 	@override String get msg_export => '导出';
 	@override String get msg_enter_token_name => '请输入 Token 名称';
@@ -6637,6 +6691,7 @@ class _StringsStringsLegacyZhHantTw extends _StringsStringsLegacyEn {
 	@override String get msg_restore_config_confirm_hint => '請選擇要恢复的敏感設定，其他安全設定將自動恢复。';
 	@override String get msg_restore_config_item_webdav => 'WebDAV 設定';
 	@override String get msg_restore_config_item_image_bed => '圖床設定';
+	@override String get msg_restore_config_item_image_compression => '圖片壓縮設定';
 	@override String get msg_restore_config_item_app_lock => '應用鎖設定';
 	@override String get msg_restore_config_item_ai => 'AI 設定';
 	@override String get msg_backup_plain_risk_title => '明文備份';
@@ -7808,6 +7863,16 @@ extension on Translations {
 			case 'strings.legacy.msg_date_range_2': return 'Date range';
 			case 'strings.legacy.msg_feedback': return 'Feedback';
 			case 'strings.legacy.msg_image_bed_2': return 'Image Bed';
+			case 'strings.legacy.msg_image_compression': return 'Image Compression';
+			case 'strings.legacy.msg_enable_image_compression': return 'Enable image compression';
+			case 'strings.legacy.msg_image_compression_desc': return 'Compress newly added image attachments before upload.';
+			case 'strings.legacy.msg_image_compression_scope': return 'Only applies to newly added attachments.';
+			case 'strings.legacy.msg_max_side': return 'Max side';
+			case 'strings.legacy.msg_quality': return 'Quality';
+			case 'strings.legacy.msg_output_format': return 'Output format';
+			case 'strings.legacy.msg_format_auto': return 'Auto';
+			case 'strings.legacy.msg_format_jpeg': return 'JPEG';
+			case 'strings.legacy.msg_format_webp': return 'WebP';
 			case 'strings.legacy.msg_restoring': return 'Restoring…';
 			case 'strings.legacy.msg_export': return 'Export';
 			case 'strings.legacy.msg_enter_token_name': return 'Please enter token name';
@@ -7998,6 +8063,7 @@ extension on Translations {
 			case 'strings.legacy.msg_restore_config_confirm_hint': return 'Select which sensitive settings to apply. Other settings will be restored automatically.';
 			case 'strings.legacy.msg_restore_config_item_webdav': return 'WebDAV settings';
 			case 'strings.legacy.msg_restore_config_item_image_bed': return 'Image bed settings';
+			case 'strings.legacy.msg_restore_config_item_image_compression': return 'Image compression settings';
 			case 'strings.legacy.msg_restore_config_item_app_lock': return 'App lock settings';
 			case 'strings.legacy.msg_restore_config_item_ai': return 'AI settings';
 			case 'strings.legacy.msg_backup_plain_risk_title': return 'Plaintext backup';
@@ -8919,6 +8985,16 @@ extension on _StringsDe {
 			case 'strings.legacy.msg_date_range_2': return 'Datumsbereich';
 			case 'strings.legacy.msg_feedback': return 'Feedback';
 			case 'strings.legacy.msg_image_bed_2': return 'Bildspeicher';
+			case 'strings.legacy.msg_image_compression': return 'Bildkomprimierung';
+			case 'strings.legacy.msg_enable_image_compression': return 'Bildkomprimierung aktivieren';
+			case 'strings.legacy.msg_image_compression_desc': return 'Neue Bildanhänge vor dem Upload komprimieren.';
+			case 'strings.legacy.msg_image_compression_scope': return 'Gilt nur für neu hinzugefügte Anhänge.';
+			case 'strings.legacy.msg_max_side': return 'Maximale Kante';
+			case 'strings.legacy.msg_quality': return 'Qualität';
+			case 'strings.legacy.msg_output_format': return 'Ausgabeformat';
+			case 'strings.legacy.msg_format_auto': return 'Auto';
+			case 'strings.legacy.msg_format_jpeg': return 'JPEG';
+			case 'strings.legacy.msg_format_webp': return 'WebP';
 			case 'strings.legacy.msg_restoring': return 'Wird wiederhergestellt…';
 			case 'strings.legacy.msg_export': return 'Exportieren';
 			case 'strings.legacy.msg_enter_token_name': return 'Bitte Token-Namen eingeben';
@@ -9109,6 +9185,7 @@ extension on _StringsDe {
 			case 'strings.legacy.msg_restore_config_confirm_hint': return 'Wähle aus, welche sensiblen Einstellungen wiederhergestellt werden sollen. Sichere Einstellungen werden automatisch wiederhergestellt.';
 			case 'strings.legacy.msg_restore_config_item_webdav': return 'WebDAV-Einstellungen';
 			case 'strings.legacy.msg_restore_config_item_image_bed': return 'Image-Bed-Einstellungen';
+			case 'strings.legacy.msg_restore_config_item_image_compression': return 'Bildkomprimierungs-Einstellungen';
 			case 'strings.legacy.msg_restore_config_item_app_lock': return 'App-Sperre';
 			case 'strings.legacy.msg_restore_config_item_ai': return 'KI-Einstellungen';
 			case 'strings.legacy.msg_backup_plain_risk_title': return 'Unverschlüsselte Sicherung';
@@ -10030,6 +10107,16 @@ extension on _StringsJa {
 			case 'strings.legacy.msg_date_range_2': return '日付範囲';
 			case 'strings.legacy.msg_feedback': return 'フィードバック';
 			case 'strings.legacy.msg_image_bed_2': return '画像ベッド';
+			case 'strings.legacy.msg_image_compression': return '画像圧縮';
+			case 'strings.legacy.msg_enable_image_compression': return '画像圧縮を有効にする';
+			case 'strings.legacy.msg_image_compression_desc': return '新しく追加した画像添付をアップロード前に圧縮します。';
+			case 'strings.legacy.msg_image_compression_scope': return '新しく追加した添付のみ対象です。';
+			case 'strings.legacy.msg_max_side': return '最大辺';
+			case 'strings.legacy.msg_quality': return '画質';
+			case 'strings.legacy.msg_output_format': return '出力形式';
+			case 'strings.legacy.msg_format_auto': return '自動';
+			case 'strings.legacy.msg_format_jpeg': return 'JPEG';
+			case 'strings.legacy.msg_format_webp': return 'WebP';
 			case 'strings.legacy.msg_restoring': return '復元中…';
 			case 'strings.legacy.msg_export': return 'エクスポート';
 			case 'strings.legacy.msg_enter_token_name': return 'トークン名を入力してください';
@@ -10220,6 +10307,7 @@ extension on _StringsJa {
 			case 'strings.legacy.msg_restore_config_confirm_hint': return '復元する機密設定を選択してください。安全な設定は自動で復元されます。';
 			case 'strings.legacy.msg_restore_config_item_webdav': return 'WebDAV 設定';
 			case 'strings.legacy.msg_restore_config_item_image_bed': return '画像ベッド設定';
+			case 'strings.legacy.msg_restore_config_item_image_compression': return '画像圧縮設定';
 			case 'strings.legacy.msg_restore_config_item_app_lock': return 'アプリロック設定';
 			case 'strings.legacy.msg_restore_config_item_ai': return 'AI 設定';
 			case 'strings.legacy.msg_backup_plain_risk_title': return '平文バックアップ';
@@ -11141,6 +11229,16 @@ extension on _StringsZhHans {
 			case 'strings.legacy.msg_date_range_2': return '日期范围';
 			case 'strings.legacy.msg_feedback': return '反馈';
 			case 'strings.legacy.msg_image_bed_2': return '图床';
+			case 'strings.legacy.msg_image_compression': return '图片压缩';
+			case 'strings.legacy.msg_enable_image_compression': return '启用图片压缩';
+			case 'strings.legacy.msg_image_compression_desc': return '在上传前压缩新添加的图片附件。';
+			case 'strings.legacy.msg_image_compression_scope': return '仅对新添加的附件生效。';
+			case 'strings.legacy.msg_max_side': return '最长边';
+			case 'strings.legacy.msg_quality': return '质量';
+			case 'strings.legacy.msg_output_format': return '输出格式';
+			case 'strings.legacy.msg_format_auto': return '自动';
+			case 'strings.legacy.msg_format_jpeg': return 'JPEG';
+			case 'strings.legacy.msg_format_webp': return 'WebP';
 			case 'strings.legacy.msg_restoring': return '恢复中…';
 			case 'strings.legacy.msg_export': return '导出';
 			case 'strings.legacy.msg_enter_token_name': return '请输入 Token 名称';
@@ -11331,6 +11429,7 @@ extension on _StringsZhHans {
 			case 'strings.legacy.msg_restore_config_confirm_hint': return '请选择要恢复的敏感配置，其他安全配置将自动恢复。';
 			case 'strings.legacy.msg_restore_config_item_webdav': return 'WebDAV 设置';
 			case 'strings.legacy.msg_restore_config_item_image_bed': return '图床设置';
+			case 'strings.legacy.msg_restore_config_item_image_compression': return '图片压缩设置';
 			case 'strings.legacy.msg_restore_config_item_app_lock': return '应用锁设置';
 			case 'strings.legacy.msg_restore_config_item_ai': return 'AI 设置';
 			case 'strings.legacy.msg_backup_plain_risk_title': return '明文备份';
@@ -12252,6 +12351,16 @@ extension on _StringsZhHantTw {
 			case 'strings.legacy.msg_date_range_2': return '日期范围';
 			case 'strings.legacy.msg_feedback': return '反馈';
 			case 'strings.legacy.msg_image_bed_2': return '图床';
+			case 'strings.legacy.msg_image_compression': return '圖片壓縮';
+			case 'strings.legacy.msg_enable_image_compression': return '啟用圖片壓縮';
+			case 'strings.legacy.msg_image_compression_desc': return '在上傳前壓縮新加入的圖片附件。';
+			case 'strings.legacy.msg_image_compression_scope': return '僅對新加入的附件生效。';
+			case 'strings.legacy.msg_max_side': return '最長邊';
+			case 'strings.legacy.msg_quality': return '品質';
+			case 'strings.legacy.msg_output_format': return '輸出格式';
+			case 'strings.legacy.msg_format_auto': return '自動';
+			case 'strings.legacy.msg_format_jpeg': return 'JPEG';
+			case 'strings.legacy.msg_format_webp': return 'WebP';
 			case 'strings.legacy.msg_restoring': return '恢复中…';
 			case 'strings.legacy.msg_export': return '导出';
 			case 'strings.legacy.msg_enter_token_name': return '请输入 Token 名称';
@@ -12442,6 +12551,7 @@ extension on _StringsZhHantTw {
 			case 'strings.legacy.msg_restore_config_confirm_hint': return '請選擇要恢复的敏感設定，其他安全設定將自動恢复。';
 			case 'strings.legacy.msg_restore_config_item_webdav': return 'WebDAV 設定';
 			case 'strings.legacy.msg_restore_config_item_image_bed': return '圖床設定';
+			case 'strings.legacy.msg_restore_config_item_image_compression': return '圖片壓縮設定';
 			case 'strings.legacy.msg_restore_config_item_app_lock': return '應用鎖設定';
 			case 'strings.legacy.msg_restore_config_item_ai': return 'AI 設定';
 			case 'strings.legacy.msg_backup_plain_risk_title': return '明文備份';

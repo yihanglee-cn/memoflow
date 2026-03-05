@@ -8,6 +8,7 @@ enum WebDavBackupConfigScope { none, safe, full }
 
 class WebDavSettings {
   const WebDavSettings({
+    required this.schemaVersion,
     required this.enabled,
     required this.autoSyncAllowed,
     required this.serverUrl,
@@ -31,6 +32,7 @@ class WebDavSettings {
     required this.backupMirrorRootPath,
   });
 
+  final int schemaVersion;
   final bool enabled;
   final bool autoSyncAllowed;
   final String serverUrl;
@@ -58,6 +60,7 @@ class WebDavSettings {
       backupConfigScope != WebDavBackupConfigScope.none;
 
   static const defaults = WebDavSettings(
+    schemaVersion: 1,
     enabled: false,
     autoSyncAllowed: false,
     serverUrl: '',
@@ -82,6 +85,7 @@ class WebDavSettings {
   );
 
   WebDavSettings copyWith({
+    int? schemaVersion,
     bool? enabled,
     bool? autoSyncAllowed,
     String? serverUrl,
@@ -105,6 +109,7 @@ class WebDavSettings {
     String? backupMirrorRootPath,
   }) {
     return WebDavSettings(
+      schemaVersion: schemaVersion ?? this.schemaVersion,
       enabled: enabled ?? this.enabled,
       autoSyncAllowed: autoSyncAllowed ?? this.autoSyncAllowed,
       serverUrl: serverUrl ?? this.serverUrl,
@@ -134,6 +139,7 @@ class WebDavSettings {
   }
 
   Map<String, dynamic> toJson() => {
+    'schemaVersion': schemaVersion,
     'enabled': enabled,
     'autoSyncAllowed': autoSyncAllowed,
     'serverUrl': serverUrl,
@@ -169,6 +175,14 @@ class WebDavSettings {
     String readString(String key, String fallback) {
       final raw = json[key];
       if (raw is String) return raw;
+      return fallback;
+    }
+
+    int readInt(String key, int fallback) {
+      final raw = json[key];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      if (raw is String) return int.tryParse(raw.trim()) ?? fallback;
       return fallback;
     }
 
@@ -220,19 +234,12 @@ class WebDavSettings {
           : WebDavBackupConfigScope.none;
     }
 
-    int readInt(String key, int fallback) {
-      final raw = json[key];
-      if (raw is int) return raw;
-      if (raw is num) return raw.toInt();
-      if (raw is String) return int.tryParse(raw.trim()) ?? fallback;
-      return fallback;
-    }
-
     final resolvedAutoSyncAllowed = json.containsKey('autoSyncAllowed')
         ? readBool('autoSyncAllowed', WebDavSettings.defaults.autoSyncAllowed)
         : true;
 
     return WebDavSettings(
+      schemaVersion: readInt('schemaVersion', WebDavSettings.defaults.schemaVersion),
       enabled: readBool('enabled', WebDavSettings.defaults.enabled),
       autoSyncAllowed: resolvedAutoSyncAllowed,
       serverUrl: readString('serverUrl', WebDavSettings.defaults.serverUrl),

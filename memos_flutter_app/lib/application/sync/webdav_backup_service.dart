@@ -22,6 +22,7 @@ import '../../data/local_library/local_library_fs.dart';
 import '../../data/local_library/local_library_markdown.dart';
 import '../../data/local_library/local_library_naming.dart';
 import '../../data/models/attachment.dart';
+import '../../data/models/image_compression_settings.dart';
 import '../../data/models/image_bed_settings.dart';
 import '../../data/models/local_library.dart';
 import '../../data/models/local_memo.dart';

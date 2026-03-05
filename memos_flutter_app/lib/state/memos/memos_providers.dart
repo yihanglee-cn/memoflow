@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/attachments/attachment_preprocessor.dart';
 import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
 import '../../core/image_bed_url.dart';
@@ -29,6 +30,7 @@ import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../system/database_provider.dart';
+import '../attachments/attachment_preprocessor_provider.dart';
 import '../settings/image_bed_settings_provider.dart';
 import '../system/local_library_provider.dart';
 import '../sync/local_sync_controller.dart';
@@ -1447,6 +1449,7 @@ final syncControllerProvider =
           ),
           syncStatusTracker: ref.read(syncStatusTrackerProvider),
           syncQueueProgressTracker: ref.read(syncQueueProgressTrackerProvider),
+          attachmentPreprocessor: ref.watch(attachmentPreprocessorProvider),
         );
       }
 
@@ -1463,6 +1466,7 @@ final syncControllerProvider =
         syncStatusTracker: ref.read(syncStatusTrackerProvider),
         syncQueueProgressTracker: ref.read(syncQueueProgressTrackerProvider),
         imageBedRepository: ref.watch(imageBedSettingsRepositoryProvider),
+        attachmentPreprocessor: ref.watch(attachmentPreprocessorProvider),
         onRelationsSynced: (memoUids) {
           for (final uid in memoUids) {
             final trimmed = uid.trim();
@@ -1590,6 +1594,7 @@ class RemoteSyncController extends SyncControllerBase {
     required this.syncStatusTracker,
     required this.syncQueueProgressTracker,
     required this.imageBedRepository,
+    required this.attachmentPreprocessor,
     this.onRelationsSynced,
   }) : super(const AsyncValue.data(null));
 
@@ -1599,6 +1604,7 @@ class RemoteSyncController extends SyncControllerBase {
   final SyncStatusTracker syncStatusTracker;
   final SyncQueueProgressTracker syncQueueProgressTracker;
   final ImageBedSettingsRepository imageBedRepository;
+  final AttachmentPreprocessor attachmentPreprocessor;
   final void Function(Set<String> memoUids)? onRelationsSynced;
   int _syncRunSeq = 0;
   bool _isDisposed = false;
@@ -3178,19 +3184,41 @@ class RemoteSyncController extends SyncControllerBase {
       throw const FormatException('upload_attachment missing fields');
     }
 
-    final file = File(filePath);
-    if (!file.existsSync()) {
-      throw FileSystemException('File not found', filePath);
+    final processed = await attachmentPreprocessor.preprocess(
+      AttachmentPreprocessRequest(
+        filePath: filePath,
+        filename: filename,
+        mimeType: mimeType,
+      ),
+    );
+    final processedFile = File(processed.filePath);
+    if (!processedFile.existsSync()) {
+      throw FileSystemException('File not found', processed.filePath);
     }
-    final bytes = await file.readAsBytes();
+    final bytes = await processedFile.readAsBytes();
 
-    if (_isImageMimeType(mimeType)) {
+    final processedExternalLink = processed.filePath.startsWith('content://')
+        ? processed.filePath
+        : Uri.file(processed.filePath).toString();
+    await _updateLocalAttachmentMeta(
+      memoUid: memoUid,
+      localAttachmentUid: uid,
+      filename: processed.filename,
+      mimeType: processed.mimeType,
+      size: processed.size,
+      width: processed.width,
+      height: processed.height,
+      hash: processed.hash,
+      externalLink: processedExternalLink,
+    );
+
+    if (_isImageMimeType(processed.mimeType)) {
       final settings = await imageBedRepository.read();
       if (settings.enabled) {
         final url = await _uploadImageToImageBed(
           settings: settings,
           bytes: bytes,
-          filename: filename,
+          filename: processed.filename,
         );
         await _appendImageBedLink(
           memoUid: memoUid,
@@ -3204,8 +3232,8 @@ class RemoteSyncController extends SyncControllerBase {
     if (api.usesLegacyMemos) {
       final created = await _createAttachmentWith409Recovery(
         attachmentId: uid,
-        filename: filename,
-        mimeType: mimeType,
+        filename: processed.filename,
+        mimeType: processed.mimeType,
         bytes: bytes,
         memoUid: null,
         onSendProgress: (sentBytes, totalBytes) {
@@ -3220,7 +3248,7 @@ class RemoteSyncController extends SyncControllerBase {
       await _updateLocalMemoAttachment(
         memoUid: memoUid,
         localAttachmentUid: uid,
-        filename: filename,
+        filename: processed.filename,
         remote: created,
       );
 
@@ -3247,8 +3275,8 @@ class RemoteSyncController extends SyncControllerBase {
 
     final created = await _createAttachmentWith409Recovery(
       attachmentId: uid,
-      filename: filename,
-      mimeType: mimeType,
+      filename: processed.filename,
+      mimeType: processed.mimeType,
       bytes: bytes,
       memoUid: supportsSetAttachments ? null : memoUid,
       onSendProgress: (sentBytes, totalBytes) {
@@ -3736,6 +3764,67 @@ class RemoteSyncController extends SyncControllerBase {
     }
   }
 
+  Future<void> _updateLocalAttachmentMeta({
+    required String memoUid,
+    required String localAttachmentUid,
+    required String filename,
+    required String mimeType,
+    required int size,
+    int? width,
+    int? height,
+    String? hash,
+    String? externalLink,
+  }) async {
+    final row = await db.getMemoByUid(memoUid);
+    final raw = row?['attachments_json'];
+    if (raw is! String || raw.trim().isEmpty) return;
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } catch (_) {
+      return;
+    }
+    if (decoded is! List) return;
+
+    final expectedNames = <String>{
+      'attachments/$localAttachmentUid',
+      'resources/$localAttachmentUid',
+    };
+
+    var changed = false;
+    final out = <Map<String, dynamic>>[];
+    for (final item in decoded) {
+      if (item is! Map) continue;
+      final m = item.cast<String, dynamic>();
+      final name = (m['name'] as String?) ?? '';
+      final fn = (m['filename'] as String?) ?? '';
+
+      if (expectedNames.contains(name) || fn == filename) {
+        final next = Map<String, dynamic>.from(m);
+        next['filename'] = filename;
+        next['type'] = mimeType;
+        next['size'] = size;
+        if (externalLink != null) {
+          next['externalLink'] = externalLink;
+        }
+        if (width != null) next['width'] = width;
+        if (height != null) next['height'] = height;
+        if (hash != null) next['hash'] = hash;
+        out.add(next);
+        changed = true;
+        continue;
+      }
+      out.add(m);
+    }
+
+    if (!changed) return;
+    await db.updateMemoAttachmentsJson(
+      memoUid,
+      attachmentsJson: jsonEncode(out),
+    );
+  }
+
   Future<void> _updateLocalMemoAttachment({
     required String memoUid,
     required String localAttachmentUid,
@@ -3774,6 +3863,9 @@ class RemoteSyncController extends SyncControllerBase {
         next['type'] = remote.type;
         next['size'] = remote.size;
         next['externalLink'] = remote.externalLink;
+        if (remote.width != null) next['width'] = remote.width;
+        if (remote.height != null) next['height'] = remote.height;
+        if (remote.hash != null) next['hash'] = remote.hash;
         out.add(next);
         changed = true;
         continue;

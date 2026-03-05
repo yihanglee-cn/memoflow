@@ -11,6 +11,7 @@ enum WebDavBackupConfigType {
   aiSettings,
   reminderSettings,
   imageBedSettings,
+  imageCompressionSettings,
   locationSettings,
   templateSettings,
   appLock,
@@ -24,6 +25,7 @@ class WebDavBackupConfigBundle {
     this.aiSettings,
     this.reminderSettings,
     this.imageBedSettings,
+    this.imageCompressionSettings,
     this.locationSettings,
     this.templateSettings,
     this.appLockSnapshot,
@@ -35,6 +37,7 @@ class WebDavBackupConfigBundle {
   final AiSettings? aiSettings;
   final ReminderSettings? reminderSettings;
   final ImageBedSettings? imageBedSettings;
+  final ImageCompressionSettings? imageCompressionSettings;
   final LocationSettings? locationSettings;
   final MemoTemplateSettings? templateSettings;
   final AppLockSnapshot? appLockSnapshot;
@@ -46,6 +49,7 @@ class WebDavBackupConfigBundle {
       aiSettings == null &&
       reminderSettings == null &&
       imageBedSettings == null &&
+      imageCompressionSettings == null &&
       locationSettings == null &&
       templateSettings == null &&
       appLockSnapshot == null &&
@@ -75,6 +79,7 @@ const _autoRestoreConfigTypes = <WebDavBackupConfigType>{
   WebDavBackupConfigType.reminderSettings,
   WebDavBackupConfigType.templateSettings,
   WebDavBackupConfigType.locationSettings,
+  WebDavBackupConfigType.imageCompressionSettings,
 };
 
 const _confirmRestoreConfigTypes = <WebDavBackupConfigType>{
@@ -93,6 +98,7 @@ const _safeBackupConfigTypes = <WebDavBackupConfigType>{
   WebDavBackupConfigType.reminderSettings,
   WebDavBackupConfigType.templateSettings,
   WebDavBackupConfigType.locationSettings,
+  WebDavBackupConfigType.imageCompressionSettings,
 };
 
 const _fullBackupConfigTypes = <WebDavBackupConfigType>{
@@ -102,6 +108,7 @@ const _fullBackupConfigTypes = <WebDavBackupConfigType>{
   WebDavBackupConfigType.locationSettings,
   WebDavBackupConfigType.webdavSettings,
   WebDavBackupConfigType.imageBedSettings,
+  WebDavBackupConfigType.imageCompressionSettings,
   WebDavBackupConfigType.appLock,
   WebDavBackupConfigType.noteDraft,
   WebDavBackupConfigType.aiSettings,
@@ -119,6 +126,8 @@ const _backupPreferencesSnapshotPath = 'config/preferences.json';
 const _backupAiSettingsSnapshotPath = 'config/ai_settings.json';
 const _backupReminderSnapshotPath = 'config/reminder_settings.json';
 const _backupImageBedSnapshotPath = 'config/image_bed.json';
+const _backupImageCompressionSnapshotPath =
+    'config/image_compression_settings.json';
 const _backupLocationSnapshotPath = 'config/location_settings.json';
 const _backupTemplateSnapshotPath = 'config/template_settings.json';
 const _backupAppLockSnapshotPath = 'config/app_lock.json';

@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/sync/webdav_sync_service.dart';
+import '../../data/models/image_compression_settings.dart';
 import '../../data/models/image_bed_settings.dart';
 import '../../data/models/location_settings.dart';
 import '../../data/models/memo_template_settings.dart';
@@ -9,6 +10,7 @@ import '../../data/repositories/ai_settings_repository.dart';
 import '../settings/ai_settings_provider.dart';
 import '../settings/app_lock_provider.dart';
 import '../settings/image_bed_settings_provider.dart';
+import '../settings/image_compression_settings_provider.dart';
 import '../settings/location_settings_provider.dart';
 import '../settings/memo_template_settings_provider.dart';
 import '../memos/note_draft_provider.dart';
@@ -27,6 +29,7 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
     final ai = _ref.read(aiSettingsProvider);
     final reminder = _ref.read(reminderSettingsProvider);
     final imageBed = _ref.read(imageBedSettingsProvider);
+    final imageCompression = _ref.read(imageCompressionSettingsProvider);
     final location = _ref.read(locationSettingsProvider);
     final template = _ref.read(memoTemplateSettingsProvider);
     final lockRepo = _ref.read(appLockRepositoryProvider);
@@ -37,6 +40,7 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
       aiSettings: ai,
       reminderSettings: reminder,
       imageBedSettings: imageBed,
+      imageCompressionSettings: imageCompression,
       locationSettings: location,
       templateSettings: template,
       appLockSnapshot: lockSnapshot,
@@ -69,6 +73,15 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
   Future<void> applyImageBedSettings(ImageBedSettings settings) async {
     await _ref
         .read(imageBedSettingsProvider.notifier)
+        .setAll(settings, triggerSync: false);
+  }
+
+  @override
+  Future<void> applyImageCompressionSettings(
+    ImageCompressionSettings settings,
+  ) async {
+    await _ref
+        .read(imageCompressionSettingsProvider.notifier)
         .setAll(settings, triggerSync: false);
   }
 

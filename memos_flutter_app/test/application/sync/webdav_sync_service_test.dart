@@ -8,6 +8,7 @@ import 'package:memos_flutter_app/application/sync/sync_types.dart';
 import 'package:memos_flutter_app/application/sync/webdav_sync_service.dart';
 import 'package:memos_flutter_app/application/sync/webdav_vault_service.dart';
 import 'package:memos_flutter_app/data/logs/debug_log_store.dart';
+import 'package:memos_flutter_app/data/models/image_compression_settings.dart';
 import 'package:memos_flutter_app/data/models/image_bed_settings.dart';
 import 'package:memos_flutter_app/data/models/location_settings.dart';
 import 'package:memos_flutter_app/data/models/memo_template_settings.dart';
@@ -27,6 +28,7 @@ const _preferencesFile = 'preferences.json';
 const _aiFile = 'ai_settings.json';
 const _reminderFile = 'reminder_settings.json';
 const _imageBedFile = 'image_bed.json';
+const _imageCompressionFile = 'image_compression_settings.json';
 const _locationFile = 'location_settings.json';
 const _templateFile = 'template_settings.json';
 const _appLockFile = 'app_lock.json';
@@ -100,6 +102,11 @@ class FakeWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
 
   @override
   Future<void> applyImageBedSettings(ImageBedSettings settings) async {}
+
+  @override
+  Future<void> applyImageCompressionSettings(
+    ImageCompressionSettings settings,
+  ) async {}
 
   @override
   Future<void> applyLocationSettings(LocationSettings settings) async {}
@@ -219,6 +226,7 @@ WebDavSyncLocalSnapshot _defaultSnapshot() {
     aiSettings: AiSettings.defaults,
     reminderSettings: ReminderSettings.defaultsFor(AppLanguage.en),
     imageBedSettings: ImageBedSettings.defaults,
+    imageCompressionSettings: ImageCompressionSettings.defaults,
     locationSettings: LocationSettings.defaults,
     templateSettings: MemoTemplateSettings.defaults,
     appLockSnapshot: const AppLockSnapshot(
@@ -391,6 +399,11 @@ void main() {
       ),
       _imageBedFile: WebDavFileMeta(
         hash: _jsonHash(snapshot.imageBedSettings.toJson()),
+        updatedAt: '2024-01-01T00:00:00Z',
+        size: 10,
+      ),
+      _imageCompressionFile: WebDavFileMeta(
+        hash: _jsonHash(snapshot.imageCompressionSettings.toJson()),
         updatedAt: '2024-01-01T00:00:00Z',
         size: 10,
       ),

@@ -9,6 +9,7 @@ import '../../core/hash.dart';
 import '../../core/log_sanitizer.dart';
 import '../../core/webdav_url.dart';
 import '../../data/logs/debug_log_store.dart';
+import '../../data/models/image_compression_settings.dart';
 import '../../data/models/image_bed_settings.dart';
 import '../../data/models/location_settings.dart';
 import '../../data/models/memo_template_settings.dart';
@@ -35,6 +36,7 @@ const _webDavAppLockFile = 'app_lock.json';
 const _webDavDraftFile = 'note_draft.json';
 const _webDavReminderFile = 'reminder_settings.json';
 const _webDavImageBedFile = 'image_bed.json';
+const _webDavImageCompressionFile = 'image_compression_settings.json';
 const _webDavLocationFile = 'location_settings.json';
 const _webDavTemplateFile = 'template_settings.json';
 const _webDavPreferencesEncFile = 'preferences.enc';
@@ -43,6 +45,7 @@ const _webDavAppLockEncFile = 'app_lock.enc';
 const _webDavDraftEncFile = 'note_draft.enc';
 const _webDavReminderEncFile = 'reminder_settings.enc';
 const _webDavImageBedEncFile = 'image_bed.enc';
+const _webDavImageCompressionEncFile = 'image_compression_settings.enc';
 const _webDavLocationEncFile = 'location_settings.enc';
 const _webDavTemplateEncFile = 'template_settings.enc';
 const _webDavDeprecatedDelay = Duration(days: 7);
@@ -53,6 +56,7 @@ class WebDavSyncLocalSnapshot {
     required this.aiSettings,
     required this.reminderSettings,
     required this.imageBedSettings,
+    required this.imageCompressionSettings,
     required this.locationSettings,
     required this.templateSettings,
     required this.appLockSnapshot,
@@ -63,6 +67,7 @@ class WebDavSyncLocalSnapshot {
   final AiSettings aiSettings;
   final ReminderSettings reminderSettings;
   final ImageBedSettings imageBedSettings;
+  final ImageCompressionSettings imageCompressionSettings;
   final LocationSettings locationSettings;
   final MemoTemplateSettings templateSettings;
   final AppLockSnapshot appLockSnapshot;
@@ -76,6 +81,9 @@ abstract class WebDavSyncLocalAdapter {
   Future<void> applyAiSettings(AiSettings settings);
   Future<void> applyReminderSettings(ReminderSettings settings);
   Future<void> applyImageBedSettings(ImageBedSettings settings);
+  Future<void> applyImageCompressionSettings(
+    ImageCompressionSettings settings,
+  );
   Future<void> applyLocationSettings(LocationSettings settings);
   Future<void> applyTemplateSettings(MemoTemplateSettings settings);
   Future<void> applyAppLockSnapshot(AppLockSnapshot snapshot);
@@ -403,6 +411,10 @@ class WebDavSyncService {
           snapshot.reminderSettings.toJson(),
       useVault ? _webDavImageBedEncFile : _webDavImageBedFile:
           snapshot.imageBedSettings.toJson(),
+      useVault
+              ? _webDavImageCompressionEncFile
+              : _webDavImageCompressionFile:
+          snapshot.imageCompressionSettings.toJson(),
       useVault ? _webDavLocationEncFile : _webDavLocationFile:
           snapshot.locationSettings.toJson(),
       useVault ? _webDavTemplateEncFile : _webDavTemplateFile:
@@ -683,6 +695,10 @@ class WebDavSyncService {
         final settings = ImageBedSettings.fromJson(json);
         await _localAdapter.applyImageBedSettings(settings);
         break;
+      case _webDavImageCompressionFile:
+        final settings = ImageCompressionSettings.fromJson(json);
+        await _localAdapter.applyImageCompressionSettings(settings);
+        break;
       case _webDavLocationFile:
         final settings = LocationSettings.fromJson(json);
         await _localAdapter.applyLocationSettings(settings);
@@ -800,6 +816,7 @@ class WebDavSyncService {
         _webDavDraftFile,
         _webDavReminderFile,
         _webDavImageBedFile,
+        _webDavImageCompressionFile,
         _webDavLocationFile,
         _webDavTemplateFile,
       };

@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../core/app_localization.dart';
 import '../../core/memoflow_palette.dart';
 import '../../state/settings/image_bed_settings_provider.dart';
+import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/location_settings_provider.dart';
 import '../../state/settings/memoflow_bridge_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
@@ -17,6 +18,7 @@ import '../../state/settings/reminder_settings_provider.dart';
 import '../../state/webdav/webdav_settings_provider.dart';
 import '../reminders/reminder_settings_screen.dart';
 import 'image_bed_settings_screen.dart';
+import 'image_compression_settings_screen.dart';
 import 'location_settings_screen.dart';
 import 'memoflow_bridge_screen.dart';
 import 'template_settings_screen.dart';
@@ -33,6 +35,7 @@ class ComponentsSettingsScreen extends ConsumerWidget {
     final prefs = ref.watch(appPreferencesProvider);
     final reminderSettings = ref.watch(reminderSettingsProvider);
     final imageBedSettings = ref.watch(imageBedSettingsProvider);
+    final imageCompressionSettings = ref.watch(imageCompressionSettingsProvider);
     final locationSettings = ref.watch(locationSettingsProvider);
     final bridgeSettings = ref.watch(memoFlowBridgeSettingsProvider);
     final templateSettings = ref.watch(memoTemplateSettingsProvider);
@@ -137,6 +140,24 @@ class ComponentsSettingsScreen extends ConsumerWidget {
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => const ImageBedSettingsScreen(),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _ToggleCard(
+                card: card,
+                label: context.t.strings.legacy.msg_image_compression,
+                description:
+                    context.t.strings.legacy.msg_image_compression_desc,
+                value: imageCompressionSettings.enabled,
+                textMain: textMain,
+                textMuted: textMuted,
+                onChanged: (v) => ref
+                    .read(imageCompressionSettingsProvider.notifier)
+                    .setEnabled(v),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const ImageCompressionSettingsScreen(),
                   ),
                 ),
               ),
