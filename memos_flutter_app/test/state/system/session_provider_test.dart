@@ -1,9 +1,12 @@
+﻿import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memos_flutter_app/core/desktop_runtime_role.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/repositories/accounts_repository.dart';
+import 'package:memos_flutter_app/data/repositories/windows_locked_secure_storage.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
 
 class _FakeAccountsRepository extends AccountsRepository {
@@ -44,6 +47,12 @@ Future<void> _settleProviderLoads() async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  tearDown(() {
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   test(
     'switchWorkspace retries persisting current workspace after a failed write',
     () async {
@@ -76,4 +85,38 @@ void main() {
       expect(repository.persisted.currentKey, 'local-workspace');
     },
   );
+
+  test('secureStorageProvider defaults to main-app Windows role', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    final storage = container.read(secureStorageProvider);
+
+    expect(storage, isA<WindowsLockedQueuedFlutterSecureStorage>());
+    expect(
+      (storage as WindowsLockedQueuedFlutterSecureStorage).runtimeRole,
+      DesktopRuntimeRole.mainApp,
+    );
+  });
+
+  for (final role in DesktopRuntimeRole.values) {
+    test('secureStorageProvider keeps Windows lock wrapper for ${role.name}', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      final container = ProviderContainer(
+        overrides: [
+          desktopRuntimeRoleProvider.overrideWith((ref) => role),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final storage = container.read(secureStorageProvider);
+
+      expect(storage, isA<WindowsLockedQueuedFlutterSecureStorage>());
+      expect(
+        (storage as WindowsLockedQueuedFlutterSecureStorage).runtimeRole,
+        role,
+      );
+    });
+  }
 }

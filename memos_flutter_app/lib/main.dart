@@ -16,6 +16,7 @@ import 'package:window_manager/window_manager.dart';
 import 'app.dart';
 import 'application/desktop/desktop_tray_controller.dart';
 import 'application/desktop/single_instance_coordinator.dart';
+import 'core/desktop_runtime_role.dart';
 import 'core/debug_ephemeral_storage.dart';
 import 'core/startup_timing.dart';
 import 'data/logs/log_manager.dart';
@@ -102,6 +103,11 @@ void main(List<String> args) {
           StartupTiming.markRunApp(target: 'desktop_quick_input');
           runApp(
             ProviderScope(
+              overrides: [
+                desktopRuntimeRoleProvider.overrideWith(
+                  (ref) => DesktopRuntimeRole.desktopQuickInput,
+                ),
+              ],
               child: DesktopQuickInputWindowApp(windowId: windowId),
             ),
           );
@@ -112,7 +118,14 @@ void main(List<String> args) {
           _initializeDesktopDatabaseFactory();
           StartupTiming.markRunApp(target: 'desktop_settings');
           runApp(
-            ProviderScope(child: DesktopSettingsWindowApp(windowId: windowId)),
+            ProviderScope(
+              overrides: [
+                desktopRuntimeRoleProvider.overrideWith(
+                  (ref) => DesktopRuntimeRole.desktopSettings,
+                ),
+              ],
+              child: DesktopSettingsWindowApp(windowId: windowId),
+            ),
           );
           _schedulePostFirstFrameInit();
           return;
@@ -155,7 +168,16 @@ void main(List<String> args) {
         return false;
       };
       StartupTiming.markRunApp(target: 'main_app');
-      runApp(const ProviderScope(child: App()));
+      runApp(
+        ProviderScope(
+          overrides: [
+            desktopRuntimeRoleProvider.overrideWith(
+              (ref) => DesktopRuntimeRole.mainApp,
+            ),
+          ],
+          child: const App(),
+        ),
+      );
       _schedulePostFirstFrameInit();
     },
     (error, stackTrace) {

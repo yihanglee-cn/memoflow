@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/desktop_quick_input_channel.dart';
+import 'desktop_workspace_snapshot.dart';
 import 'desktop_settings_window.dart';
 import '../../core/desktop/shortcuts.dart';
 import 'desktop_tray_controller.dart';
@@ -14,9 +15,8 @@ import 'desktop_exit_coordinator.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 import 'desktop_quick_input_controller.dart';
 
-typedef DesktopQuickInputLauncher = Future<void> Function({
-  required bool autoFocus,
-});
+typedef DesktopQuickInputLauncher =
+    Future<void> Function({required bool autoFocus});
 
 class DesktopWindowManager {
   DesktopWindowManager({
@@ -88,10 +88,7 @@ class DesktopWindowManager {
     };
   }
 
-  void setSubWindowVisibility({
-    required int windowId,
-    required bool visible,
-  }) {
+  void setSubWindowVisibility({required int windowId, required bool visible}) {
     if (windowId <= 0) return;
     final changed = visible
         ? _desktopVisibleSubWindowIds.add(windowId)
@@ -221,9 +218,7 @@ class DesktopWindowManager {
             setKeyOk = false;
             log.warn(
               'Desktop workspace reload ignored non-string currentKey',
-              context: <String, Object?>{
-                'type': rawKey.runtimeType.toString(),
-              },
+              context: <String, Object?>{'type': rawKey.runtimeType.toString()},
             );
           }
         }
@@ -251,6 +246,14 @@ class DesktopWindowManager {
       case desktopHomeShowLoadingOverlayMethod:
         _bootstrapAdapter.forceHomeLoadingOverlay(_ref);
         return true;
+      case desktopMainGetWorkspaceSnapshotMethod:
+        final session = _bootstrapAdapter.readSession(_ref);
+        final localLibrary = _bootstrapAdapter.readCurrentLocalLibrary(_ref);
+        return DesktopWorkspaceSnapshot(
+          currentKey: session?.currentKey,
+          hasCurrentAccount: session?.currentAccount != null,
+          hasLocalLibrary: localLibrary != null,
+        ).toJson();
       default:
         return null;
     }
@@ -412,11 +415,13 @@ class DesktopWindowManager {
     try {
       await _quickInputController.prewarm();
     } catch (error, stackTrace) {
-      _bootstrapAdapter.readLogManager(_ref).warn(
-        'Desktop sub-window prewarm failed',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      _bootstrapAdapter
+          .readLogManager(_ref)
+          .warn(
+            'Desktop sub-window prewarm failed',
+            error: error,
+            stackTrace: stackTrace,
+          );
     }
     prewarmDesktopSettingsWindowIfSupported();
   }

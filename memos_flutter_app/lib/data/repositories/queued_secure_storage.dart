@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Serializes secure storage calls to reduce file-lock contention on Windows.
@@ -15,7 +16,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
 
   Future<void> _queue = Future<void>.value();
 
-  Future<T> _enqueue<T>(Future<T> Function() task) {
+  @protected
+  Future<T> enqueueTask<T>(Future<T> Function() task) {
     final completer = Completer<T>();
     _queue = _queue.then((_) async {
       try {
@@ -25,6 +27,130 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
       }
     });
     return completer.future;
+  }
+
+  @protected
+  Future<void> rawWrite({
+    required String key,
+    required String? value,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.write(
+      key: key,
+      value: value,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
+  @protected
+  Future<String?> rawRead({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.read(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
+  @protected
+  Future<bool> rawContainsKey({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.containsKey(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
+  @protected
+  Future<void> rawDelete({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.delete(
+      key: key,
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
+  @protected
+  Future<Map<String, String>> rawReadAll({
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.readAll(
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
+  }
+
+  @protected
+  Future<void> rawDeleteAll({
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) {
+    return super.deleteAll(
+      iOptions: iOptions,
+      aOptions: aOptions,
+      lOptions: lOptions,
+      webOptions: webOptions,
+      mOptions: mOptions,
+      wOptions: wOptions,
+    );
   }
 
   @override
@@ -38,8 +164,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.write(
+    return enqueueTask(
+      () => rawWrite(
         key: key,
         value: value,
         iOptions: iOptions,
@@ -62,8 +188,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.read(
+    return enqueueTask(
+      () => rawRead(
         key: key,
         iOptions: iOptions,
         aOptions: aOptions,
@@ -85,8 +211,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.containsKey(
+    return enqueueTask(
+      () => rawContainsKey(
         key: key,
         iOptions: iOptions,
         aOptions: aOptions,
@@ -108,8 +234,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.delete(
+    return enqueueTask(
+      () => rawDelete(
         key: key,
         iOptions: iOptions,
         aOptions: aOptions,
@@ -130,8 +256,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.readAll(
+    return enqueueTask(
+      () => rawReadAll(
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,
@@ -151,8 +277,8 @@ class QueuedFlutterSecureStorage extends FlutterSecureStorage {
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
   }) {
-    return _enqueue(
-      () => super.deleteAll(
+    return enqueueTask(
+      () => rawDeleteAll(
         iOptions: iOptions,
         aOptions: aOptions,
         lOptions: lOptions,

@@ -13,6 +13,7 @@ import '../../state/system/home_loading_overlay_provider.dart';
 import '../../state/memos/login_provider.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
+
 enum _LoginMode { token, password }
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -44,6 +45,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   var _probing = false;
   var _versionMenuExpanded = false;
   var _shownInitialError = false;
+  var _activeLoginOpId = 0;
 
   @override
   void initState() {
@@ -57,11 +59,44 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   void dispose() {
+    _activeLoginOpId++;
     _baseUrlController.dispose();
     _tokenController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  int _beginLoginOp() => ++_activeLoginOpId;
+
+  bool _isLoginOpActive(int opId) => mounted && opId == _activeLoginOpId;
+
+  void _setStateIfActive(int opId, VoidCallback callback) {
+    if (_isLoginOpActive(opId)) {
+      setState(callback);
+    }
+  }
+
+  void _showSnackIfActive(int opId, String message) {
+    if (!_isLoginOpActive(opId)) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<T?> _showDialogIfActive<T>(
+    int opId, {
+    required WidgetBuilder builder,
+    bool barrierDismissible = true,
+  }) {
+    if (!_isLoginOpActive(opId)) {
+      return Future<T?>.value(null);
+    }
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      builder: builder,
+    );
   }
 
   String _normalizeTokenInput(String raw) {
@@ -166,10 +201,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _connect() async {
+    final opId = _beginLoginOp();
     if (_loginMode == _LoginMode.password) {
-      return _connectWithPassword();
+      return _connectWithPassword(opId);
     }
-    return _connectWithToken();
+    return _connectWithToken(opId);
   }
 
   String _resolveInitialServerVersion() {
@@ -194,18 +230,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Future<void> _showProbeSuccessDialog(LoginApiVersion version) async {
-    await showDialog<void>(
-      context: context,
+  Future<void> _showProbeSuccessDialog(
+    int opId,
+    LoginApiVersion version,
+  ) async {
+    await _showDialogIfActive<void>(
+      opId,
       barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
-          title: const Text('版本探测完成'),
-          content: Text('当前使用 API ${version.versionString} 版本。'),
+          title: const Text('Version probe complete'),
+          content: Text('Currently using API ${version.versionString}.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('确定'),
+              child: const Text('OK'),
             ),
           ],
         );
@@ -213,12 +252,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Future<void> _showProbeFailureDialog(String diagnostics) async {
-    await showDialog<void>(
-      context: context,
+  Future<void> _showProbeFailureDialog(int opId, String diagnostics) async {
+    await _showDialogIfActive<void>(
+      opId,
       builder: (context) {
         return AlertDialog(
-          title: const Text('版本探测失败'),
+          title: const Text('Version probe failed'),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(child: SelectableText(diagnostics)),
@@ -228,13 +267,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               onPressed: () async {
                 await Clipboard.setData(ClipboardData(text: diagnostics));
                 if (!mounted) return;
-                showTopToast(context, '诊断信息已复制');
+                showTopToast(context, 'Diagnostics copied');
               },
-              child: const Text('复制诊断'),
+              child: const Text('Copy diagnostics'),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('关闭'),
+              child: const Text('Close'),
             ),
           ],
         );
@@ -258,65 +297,65 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<LoginProbeReport?> _probeSingleVersion({
+    required int opId,
     required Uri baseUrl,
     required String personalAccessToken,
     required LoginApiVersion version,
+    required LoginController loginController,
   }) async {
-    setState(() => _probing = true);
+    _setStateIfActive(opId, () => _probing = true);
     try {
-      return await ref.read(loginControllerProvider).probeSingleVersion(
-            baseUrl: baseUrl,
-            personalAccessToken: personalAccessToken,
-            version: version,
-            probeMemoNotice: context.t.strings.legacy.msg_probe_memo_can_delete,
-          );
+      final report = await loginController.probeSingleVersion(
+        baseUrl: baseUrl,
+        personalAccessToken: personalAccessToken,
+        version: version,
+        probeMemoNotice: context.t.strings.legacy.msg_probe_memo_can_delete,
+      );
+      if (!_isLoginOpActive(opId)) return null;
+      return report;
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('版本探测异常：$error')));
-      }
+      _showSnackIfActive(opId, 'Probe failed: $error');
       return null;
     } finally {
-      if (mounted) {
-        setState(() => _probing = false);
-      }
+      _setStateIfActive(opId, () => _probing = false);
     }
   }
 
   Future<void> _cleanupProbeArtifactsAfterSync({
+    required int opId,
     required LoginApiVersion version,
     required LoginProbeCleanup cleanup,
     required Uri baseUrl,
     required String personalAccessToken,
+    required LoginController loginController,
   }) async {
-    await ref.read(loginControllerProvider).cleanupProbeArtifactsAfterSync(
-          version: version,
-          cleanup: cleanup,
-          baseUrl: baseUrl,
-          personalAccessToken: personalAccessToken,
-        );
+    if (!_isLoginOpActive(opId)) return;
+    await loginController.cleanupProbeArtifactsAfterSync(
+      version: version,
+      cleanup: cleanup,
+      baseUrl: baseUrl,
+      personalAccessToken: personalAccessToken,
+    );
   }
 
   Future<bool> _runSelectedVersionProbeGate({
+    required int opId,
     required AppSessionController sessionController,
     required LoginApiVersion version,
     required String? previousCurrentKey,
     required Set<String> previousAccountKeys,
+    required LoginController loginController,
   }) async {
+    if (!_isLoginOpActive(opId)) return false;
     final currentAccount = ref
         .read(appSessionProvider)
         .valueOrNull
         ?.currentAccount;
     if (currentAccount == null) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.t.strings.login.errors.connectionFailedWithMessage(
-              message: 'No active session after sign in',
-            ),
-          ),
+      _showSnackIfActive(
+        opId,
+        context.t.strings.login.errors.connectionFailedWithMessage(
+          message: 'No active session after sign in',
         ),
       );
       return false;
@@ -326,10 +365,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       currentAccount.key,
     );
     final report = await _probeSingleVersion(
+      opId: opId,
       baseUrl: currentAccount.baseUrl,
       personalAccessToken: currentAccount.personalAccessToken,
       version: version,
+      loginController: loginController,
     );
+    if (!_isLoginOpActive(opId)) return false;
     if (report == null) {
       await _rollbackProbeFailure(
         sessionController: sessionController,
@@ -340,9 +382,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return false;
     }
     if (!report.passed) {
-      if (mounted) {
-        await _showProbeFailureDialog(report.diagnostics);
-      }
+      await _showProbeFailureDialog(opId, report.diagnostics);
+      if (!_isLoginOpActive(opId)) return false;
       await _rollbackProbeFailure(
         sessionController: sessionController,
         failedAccountKey: currentAccount.key,
@@ -355,14 +396,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     await sessionController.setCurrentAccountServerVersionOverride(
       version.versionString,
     );
+    if (!_isLoginOpActive(opId)) return false;
     await _cleanupProbeArtifactsAfterSync(
+      opId: opId,
       version: version,
       cleanup: report.cleanup,
       baseUrl: currentAccount.baseUrl,
       personalAccessToken: currentAccount.personalAccessToken,
+      loginController: loginController,
     );
-    if (!mounted) return false;
-    await _showProbeSuccessDialog(version);
+    if (!_isLoginOpActive(opId)) return false;
+    await _showProbeSuccessDialog(opId, version);
+    if (!_isLoginOpActive(opId)) return false;
     return true;
   }
 
@@ -390,9 +435,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     ref.read(appPreferencesProvider.notifier).setHasSelectedLanguage(false);
   }
 
-  Future<void> _connectWithToken() async {
+  Future<void> _connectWithToken(int opId) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
+    final loginController = ref.read(loginControllerProvider);
     final sessionController = ref.read(appSessionProvider.notifier);
     final tokenRaw = _tokenController.text.trim();
     final token = _normalizeTokenInput(tokenRaw);
@@ -405,23 +451,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
     final selectedVersion = _selectedProbeVersion();
     if (selectedVersion == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.common.selectValidServerVersion),
-        ),
+      _showSnackIfActive(
+        opId,
+        context.t.strings.common.selectValidServerVersion,
       );
       return;
     }
 
     final probeReport = await _probeSingleVersion(
+      opId: opId,
       baseUrl: baseUrl,
       personalAccessToken: token,
       version: selectedVersion,
+      loginController: loginController,
     );
     if (probeReport == null) return;
-    if (!mounted) return;
+    if (!_isLoginOpActive(opId)) return;
     if (!probeReport.passed) {
-      await _showProbeFailureDialog(probeReport.diagnostics);
+      await _showProbeFailureDialog(opId, probeReport.diagnostics);
+      if (!_isLoginOpActive(opId)) return;
       return;
     }
 
@@ -430,15 +478,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       personalAccessToken: token,
       serverVersionOverride: selectedVersion.versionString,
     );
-    if (!mounted) return;
+    if (!_isLoginOpActive(opId)) return;
 
     final sessionAsync = ref.read(appSessionProvider);
     if (sessionAsync.hasError) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_formatLoginError(sessionAsync.error!, token: token)),
-        ),
+      _showSnackIfActive(
+        opId,
+        _formatLoginError(sessionAsync.error!, token: token),
       );
       return;
     }
@@ -449,25 +495,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ?.currentAccount;
     if (currentAccount != null) {
       await _cleanupProbeArtifactsAfterSync(
+        opId: opId,
         version: selectedVersion,
         cleanup: probeReport.cleanup,
         baseUrl: currentAccount.baseUrl,
         personalAccessToken: currentAccount.personalAccessToken,
+        loginController: loginController,
       );
     }
 
-    if (!mounted) return;
-    await _showProbeSuccessDialog(selectedVersion);
-    if (!mounted) return;
+    if (!_isLoginOpActive(opId)) return;
+    await _showProbeSuccessDialog(opId, selectedVersion);
+    if (!_isLoginOpActive(opId)) return;
     if (selectedVersion.isV025) {
       _requestHomeLoadingOverlayForNextEntry();
     }
     _navigateAfterLogin();
+    return;
   }
 
-  Future<void> _connectWithPassword() async {
+  Future<void> _connectWithPassword(int opId) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
 
+    final loginController = ref.read(loginControllerProvider);
     final sessionController = ref.read(appSessionProvider.notifier);
     final baseUrl = _resolveBaseUrl();
     if (baseUrl == null) return;
@@ -481,10 +531,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         <String>{};
     final selectedVersion = _selectedProbeVersion();
     if (selectedVersion == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.common.selectValidServerVersion),
-        ),
+      _showSnackIfActive(
+        opId,
+        context.t.strings.common.selectValidServerVersion,
       );
       return;
     }
@@ -496,15 +545,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       useLegacyApi: false,
       serverVersionOverride: selectedVersion.versionString,
     );
-    if (!mounted) return;
+    if (!_isLoginOpActive(opId)) return;
 
     final sessionAsync = ref.read(appSessionProvider);
     if (sessionAsync.hasError) {
-      if (!mounted) return;
       _passwordController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_formatPasswordLoginError(sessionAsync.error!))),
-      );
+      _showSnackIfActive(opId, _formatPasswordLoginError(sessionAsync.error!));
       return;
     }
 
@@ -516,17 +562,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     }
 
     final ready = await _runSelectedVersionProbeGate(
+      opId: opId,
       sessionController: sessionController,
       version: selectedVersion,
       previousCurrentKey: previousCurrentKey,
       previousAccountKeys: previousAccountKeys,
+      loginController: loginController,
     );
     if (!ready) return;
-    if (!mounted) return;
+    if (!_isLoginOpActive(opId)) return;
     if (selectedVersion.isV025) {
       _requestHomeLoadingOverlayForNextEntry();
     }
     _navigateAfterLogin();
+    return;
   }
 
   Widget _buildField({
@@ -980,7 +1029,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               textMuted: textMuted,
                             ),
                             Text(
-                              '登录前将仅检测所选版本的核心 API。',
+                              'Before sign-in, only the core APIs of the selected server version are probed.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: textMuted,

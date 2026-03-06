@@ -14,6 +14,7 @@ import '../../core/app_theme.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/desktop_quick_input_channel.dart';
 import '../../core/top_toast.dart';
+import '../../application/desktop/desktop_workspace_snapshot.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/system/local_library_provider.dart';
@@ -35,6 +36,9 @@ import 'desktop_shortcuts_overview_screen.dart';
 import 'user_guide_screen.dart';
 import 'widgets_screen.dart';
 import 'windows_related_settings_screen.dart';
+
+final desktopSettingsWorkspaceSnapshotProvider =
+    StateProvider<DesktopWorkspaceSnapshot?>((ref) => null);
 
 class DesktopSettingsWindowApp extends ConsumerWidget {
   const DesktopSettingsWindowApp({super.key, required this.windowId});
@@ -137,7 +141,9 @@ class DesktopSettingsWindowApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(appPreferencesProvider);
     final accountKey = ref.watch(
-      appSessionProvider.select((state) => state.valueOrNull?.currentKey),
+      desktopSettingsWorkspaceSnapshotProvider.select(
+        (snapshot) => snapshot?.currentKey,
+      ),
     );
     final themeColor = prefs.resolveThemeColor(accountKey);
     final customTheme = prefs.resolveCustomTheme(accountKey);
@@ -222,18 +228,16 @@ class _DesktopSettingsWindowScreenState
   ProviderSubscription<String?>? _sessionKeySub;
   ProviderSubscription<List<LocalLibrary>>? _localLibrariesSub;
   bool _workspaceListenersBound = false;
+  bool _workspaceSnapshotLoading = true;
+  String? _workspaceSnapshotError;
 
   @override
   void initState() {
     super.initState();
     DesktopMultiWindow.setMethodHandler(_handleMethodCall);
-    unawaited(_reloadSessionFromStorage());
     unawaited(_initializeWindowManager());
     unawaited(_notifyMainWindowVisibility(true));
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _bindWorkspaceChangeListeners();
-    });
+    unawaited(_refreshWorkspaceSnapshotWithRetry());
   }
 
   @override
@@ -243,6 +247,14 @@ class _DesktopSettingsWindowScreenState
     _sessionKeySub?.close();
     _localLibrariesSub?.close();
     super.dispose();
+  }
+
+  void _setWorkspaceSnapshotState({required bool loading, String? error}) {
+    if (!mounted) return;
+    setState(() {
+      _workspaceSnapshotLoading = loading;
+      _workspaceSnapshotError = error;
+    });
   }
 
   Future<void> _initializeWindowManager() async {
@@ -284,9 +296,7 @@ class _DesktopSettingsWindowScreenState
       localLibrariesProvider,
       (prev, next) {
         if (_sameLocalLibraryKeys(prev, next)) return;
-        unawaited(
-          _notifyMainWindowWorkspaceChanged(reason: 'local_libraries'),
-        );
+        unawaited(_notifyMainWindowWorkspaceChanged(reason: 'local_libraries'));
       },
     );
     _workspaceListenersBound = true;
@@ -315,10 +325,7 @@ class _DesktopSettingsWindowScreenState
       if (reason == 'session_key' || currentKey != null) {
         args['currentKey'] = currentKey;
       }
-      await _invokeMainWindowMethod(
-        desktopMainReloadWorkspaceMethod,
-        args,
-      );
+      await _invokeMainWindowMethod(desktopMainReloadWorkspaceMethod, args);
     } catch (_) {}
   }
 
@@ -403,7 +410,7 @@ class _DesktopSettingsWindowScreenState
       }
     }
     if (call.method == desktopSettingsRefreshSessionMethod) {
-      await _reloadSessionFromStorage();
+      await _refreshWorkspaceSnapshotWithRetry(showErrorOnFailure: false);
       return true;
     }
     if (call.method == desktopSettingsPingMethod) {
@@ -425,11 +432,68 @@ class _DesktopSettingsWindowScreenState
     } catch (_) {}
   }
 
-  Future<void> _reloadSessionFromStorage() async {
-    try {
-      final container = ProviderScope.containerOf(context, listen: false);
-      await container.read(appSessionProvider.notifier).reloadFromStorage();
-    } catch (_) {}
+  Future<DesktopWorkspaceSnapshot> _fetchWorkspaceSnapshot() async {
+    final raw = await _invokeMainWindowMethod(
+      desktopMainGetWorkspaceSnapshotMethod,
+    );
+    if (raw is! Map) {
+      throw const FormatException('Invalid workspace snapshot payload.');
+    }
+    return DesktopWorkspaceSnapshot.fromJson(Map<Object?, Object?>.from(raw));
+  }
+
+  Future<void> _refreshWorkspaceSnapshotWithRetry({
+    bool showErrorOnFailure = true,
+  }) async {
+    _setWorkspaceSnapshotState(loading: true, error: null);
+    final delays = <Duration>[
+      Duration.zero,
+      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 300),
+      const Duration(milliseconds: 800),
+    ];
+    Object? lastError;
+    for (final delay in delays) {
+      if (delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
+      if (!mounted) return;
+      try {
+        final snapshot = await _fetchWorkspaceSnapshot();
+        if (!mounted) return;
+        final container = ProviderScope.containerOf(context, listen: false);
+        container
+                .read(desktopSettingsWorkspaceSnapshotProvider.notifier)
+                .state =
+            snapshot;
+        _setWorkspaceSnapshotState(loading: false, error: null);
+        _bindWorkspaceChangeListeners();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!mounted) return;
+    final container = ProviderScope.containerOf(context, listen: false);
+    if (lastError != null) {
+      container
+          .read(logManagerProvider)
+          .warn('Desktop settings snapshot unavailable', error: lastError);
+    }
+    if (showErrorOnFailure) {
+      container.read(desktopSettingsWorkspaceSnapshotProvider.notifier).state =
+          null;
+    }
+    _setWorkspaceSnapshotState(
+      loading: false,
+      error: showErrorOnFailure
+          ? context.tr(
+              zh: '主窗口不可用，请从主窗口重新打开设置窗口。',
+              en: 'Main window unavailable. Please reopen settings from the main window.',
+            )
+          : null,
+    );
   }
 
   Future<void> _bringWindowToFront() async {
@@ -471,8 +535,74 @@ class _DesktopSettingsWindowScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (_workspaceSnapshotLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final error = _workspaceSnapshotError;
+    if (error != null) {
+      return _DesktopSettingsWindowErrorState(
+        message: error,
+        onRetry: () => unawaited(_refreshWorkspaceSnapshotWithRetry()),
+        onClose: () => unawaited(_closeWindow()),
+      );
+    }
     return _DesktopSettingsWorkbench(
       onRequestClose: () => unawaited(_closeWindow()),
+    );
+  }
+}
+
+class _DesktopSettingsWindowErrorState extends StatelessWidget {
+  const _DesktopSettingsWindowErrorState({
+    required this.message,
+    required this.onRetry,
+    required this.onClose,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.link_off_outlined,
+                size: 36,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge,
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton(
+                    onPressed: onRetry,
+                    child: Text(context.tr(zh: '重试', en: 'Retry')),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton(
+                    onPressed: onClose,
+                    child: Text(context.tr(zh: '关闭', en: 'Close')),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -787,33 +917,42 @@ class _DesktopPaneContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return switch (pane) {
-      _DesktopSettingsPane.account =>
-        const AccountSecurityScreen(showBackButton: false),
-      _DesktopSettingsPane.preferences =>
-        const PreferencesSettingsScreen(showBackButton: false),
-      _DesktopSettingsPane.windowsRelated =>
-        const WindowsRelatedSettingsScreen(showBackButton: false),
-      _DesktopSettingsPane.ai =>
-        const AiSettingsScreen(showBackButton: false),
-      _DesktopSettingsPane.appLock =>
-        const PasswordLockScreen(showBackButton: false),
-      _DesktopSettingsPane.laboratory =>
-        const LaboratoryScreen(showBackButton: false),
-      _DesktopSettingsPane.components =>
-        const ComponentsSettingsScreen(showBackButton: false),
-      _DesktopSettingsPane.feedback =>
-        const FeedbackScreen(showBackButton: false),
-      _DesktopSettingsPane.importExport =>
-        const ImportExportScreen(showBackButton: false),
-      _DesktopSettingsPane.about =>
-        const AboutUsScreen(showBackButton: false),
-      _DesktopSettingsPane.userGuide =>
-        const UserGuideScreen(showBackButton: false),
+      _DesktopSettingsPane.account => const AccountSecurityScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.preferences => const PreferencesSettingsScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.windowsRelated => const WindowsRelatedSettingsScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.ai => const AiSettingsScreen(showBackButton: false),
+      _DesktopSettingsPane.appLock => const PasswordLockScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.laboratory => const LaboratoryScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.components => const ComponentsSettingsScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.feedback => const FeedbackScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.importExport => const ImportExportScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.about => const AboutUsScreen(showBackButton: false),
+      _DesktopSettingsPane.userGuide => const UserGuideScreen(
+        showBackButton: false,
+      ),
       _DesktopSettingsPane.stats => const StatsScreen(showBackButton: false),
-      _DesktopSettingsPane.widgets =>
-        const WidgetsScreen(showBackButton: false),
-      _DesktopSettingsPane.apiPlugins =>
-        const ApiPluginsScreen(showBackButton: false),
+      _DesktopSettingsPane.widgets => const WidgetsScreen(
+        showBackButton: false,
+      ),
+      _DesktopSettingsPane.apiPlugins => const ApiPluginsScreen(
+        showBackButton: false,
+      ),
     };
   }
 }

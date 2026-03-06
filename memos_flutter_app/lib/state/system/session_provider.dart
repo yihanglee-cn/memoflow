@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../../core/desktop_runtime_role.dart';
 import '../../core/storage_read.dart';
 import '../../data/api/memo_api_facade.dart';
 import '../../data/api/memo_api_version.dart';
@@ -16,6 +17,7 @@ import '../../data/models/instance_profile.dart';
 import '../../data/repositories/accounts_repository.dart';
 import '../../data/repositories/ephemeral_secure_storage.dart';
 import '../../data/repositories/queued_secure_storage.dart';
+import '../../data/repositories/windows_locked_secure_storage.dart';
 import '../../core/url.dart';
 import '../../core/debug_ephemeral_storage.dart';
 import 'storage_error_provider.dart';
@@ -39,6 +41,11 @@ class AppSessionState {
 final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   if (isEphemeralDebugStorageEnabled) {
     return EphemeralSecureStorage();
+  }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    return WindowsLockedQueuedFlutterSecureStorage(
+      runtimeRole: ref.watch(desktopRuntimeRoleProvider),
+    );
   }
   return QueuedFlutterSecureStorage();
 });
