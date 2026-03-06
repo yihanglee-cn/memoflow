@@ -67,6 +67,43 @@ class VideoThumbnailCache {
   static const _downloadTimeout = Duration(seconds: 90);
   static bool get _useMediaKitDesktopPipeline =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+  static bool get _isWindowsDesktop => !kIsWeb && Platform.isWindows;
+
+  @visibleForTesting
+  static bool allowVideoThumbnailPluginFallbackForPlatform({
+    required bool isWeb,
+    required bool isWindows,
+    required bool isAndroid,
+    required bool isIOS,
+    required bool isMacOS,
+    required bool isLinux,
+  }) {
+    if (isWeb) return false;
+    if (isWindows) return false;
+    if (isAndroid || isIOS) return true;
+    return isMacOS || isLinux;
+  }
+
+  static bool _allowVideoThumbnailPluginFallback() =>
+      allowVideoThumbnailPluginFallbackForPlatform(
+        isWeb: kIsWeb,
+        isWindows: _isWindowsDesktop,
+        isAndroid: !kIsWeb && Platform.isAndroid,
+        isIOS: !kIsWeb && Platform.isIOS,
+        isMacOS: !kIsWeb && Platform.isMacOS,
+        isLinux: !kIsWeb && Platform.isLinux,
+      );
+
+  static void _logWindowsThumbnailFailure({required String source}) {
+    LogManager.instance.warn(
+      'Video thumbnail generate failed',
+      context: {
+        'source': source,
+        'usedMediaKit': true,
+        'pluginFallbackDisabled': true,
+      },
+    );
+  }
 
   static final Map<String, Future<File?>> _pending = {};
   static final Map<String, Uint8List> _memoryCache = {};
@@ -395,6 +432,7 @@ class VideoThumbnailCache {
     required String? videoUrl,
     Map<String, String>? headers,
   }) async {
+    final allowPluginFallback = _allowVideoThumbnailPluginFallback();
     if (localFile != null && localFile.existsSync()) {
       LogManager.instance.debug(
         'Video thumbnail source local',
@@ -411,6 +449,10 @@ class VideoThumbnailCache {
         if (mediaKitData != null && mediaKitData.isNotEmpty) {
           return mediaKitData;
         }
+        if (!allowPluginFallback) {
+          _logWindowsThumbnailFailure(source: localFile.path);
+          return null;
+        }
       }
       return _tryThumbnailData(source: localFile.path, headers: null);
     }
@@ -421,7 +463,7 @@ class VideoThumbnailCache {
       return null;
     }
 
-    if (_useMediaKitDesktopPipeline) {
+    if (_useMediaKitDesktopPipeline && allowPluginFallback) {
       final mediaKitData = await _tryMediaKitThumbnailData(
         source: url,
         headers: headers,
@@ -433,6 +475,10 @@ class VideoThumbnailCache {
 
     final tempFile = await _downloadToTemp(url, headers: headers ?? const {});
     if (tempFile == null) {
+      if (!allowPluginFallback) {
+        _logWindowsThumbnailFailure(source: url);
+        return null;
+      }
       LogManager.instance.warn(
         'Video thumbnail download failed, fallback to direct',
         context: {
@@ -443,10 +489,12 @@ class VideoThumbnailCache {
       return _tryThumbnailData(source: url, headers: headers);
     }
     try {
-      final data = await _tryThumbnailData(
-        source: tempFile.path,
-        headers: null,
-      );
+      final data = !allowPluginFallback && _useMediaKitDesktopPipeline
+          ? await _tryMediaKitThumbnailData(
+              source: tempFile.path,
+              headers: null,
+            )
+          : await _tryThumbnailData(source: tempFile.path, headers: null);
       if (data != null && data.isNotEmpty) return data;
     } finally {
       if (tempFile.existsSync()) {
@@ -454,6 +502,11 @@ class VideoThumbnailCache {
           await tempFile.delete();
         } catch (_) {}
       }
+    }
+
+    if (!allowPluginFallback) {
+      _logWindowsThumbnailFailure(source: url);
+      return null;
     }
 
     LogManager.instance.warn(

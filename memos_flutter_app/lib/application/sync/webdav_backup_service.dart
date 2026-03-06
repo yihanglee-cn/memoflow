@@ -67,7 +67,8 @@ abstract class _WebDavBackupServiceBase {
   WebDavVaultPasswordRepository get _vaultPasswordRepository;
   WebDavSyncLocalAdapter? get _configAdapter;
   WebDavBackupProgressTracker? get _progressTracker;
-  LocalLibraryScanService Function(LocalLibrary library)? get _scanServiceFactory;
+  LocalLibraryScanService Function(LocalLibrary library)?
+  get _scanServiceFactory;
   WebDavBackupClientFactory get _clientFactory;
   void Function(DebugLogEntry entry)? get _logWriter;
   AesGcm get _cipher;
@@ -375,7 +376,7 @@ abstract class _WebDavBackupServiceBase {
     required WebDavBackupExportIssue issue,
     required WebDavBackupExportIssueHandler? issueHandler,
     required Map<WebDavBackupExportIssueKind, WebDavBackupExportResolution>
-        stickyResolutions,
+    stickyResolutions,
   });
   String _formatExportIssueMessage(WebDavBackupExportIssue issue);
   String _dedupeAttachmentFilename(String filename, Set<String> used);
@@ -467,7 +468,7 @@ class WebDavBackupService extends _WebDavBackupServiceBase
         _WebDavBackupExportMixin,
         _WebDavBackupImportMixin {
   WebDavBackupService({
-    required AppDatabase db,
+    required AppDatabase Function() readDatabase,
     required LocalAttachmentStore attachmentStore,
     required WebDavBackupStateRepository stateRepository,
     required WebDavBackupPasswordRepository passwordRepository,
@@ -478,7 +479,7 @@ class WebDavBackupService extends _WebDavBackupServiceBase
     LocalLibraryScanService Function(LocalLibrary library)? scanServiceFactory,
     WebDavBackupClientFactory? clientFactory,
     void Function(DebugLogEntry entry)? logWriter,
-  }) : _db = db,
+  }) : _readDatabase = readDatabase,
        _attachmentStore = attachmentStore,
        _stateRepository = stateRepository,
        _passwordRepository = passwordRepository,
@@ -490,7 +491,7 @@ class WebDavBackupService extends _WebDavBackupServiceBase
        _clientFactory = clientFactory ?? _defaultBackupClientFactory,
        _logWriter = logWriter;
 
-  final AppDatabase _db;
+  final AppDatabase Function() _readDatabase;
   final LocalAttachmentStore _attachmentStore;
   final WebDavBackupStateRepository _stateRepository;
   final WebDavBackupPasswordRepository _passwordRepository;
@@ -505,4 +506,7 @@ class WebDavBackupService extends _WebDavBackupServiceBase
 
   final _cipher = AesGcm.with256bits();
   final _random = Random.secure();
+
+  @override
+  AppDatabase get _db => _readDatabase();
 }

@@ -39,7 +39,7 @@ class AppBootstrapController {
     required VoidCallback scheduleShareHandling,
     required Future<void> Function(AppPreferences prefs) ensureFontLoaded,
     required Future<void> Function(AppPreferences prefs)
-        registerDesktopQuickInputHotKey,
+    registerDesktopQuickInputHotKey,
     required Future<void> Function(bool enabled) applyDebugScreenshotMode,
     required ReminderTapHandler reminderTapHandler,
     required VoidCallback scheduleDesktopSubWindowPrewarm,
@@ -66,16 +66,12 @@ class AppBootstrapController {
       );
     });
 
-    _prefsLoadedSubscription = _adapter.listenPreferencesLoaded(
-      ref,
-      (prev, next) {
-        _handlePreferencesLoadedChanged(
-          ref: ref,
-          prev: prev,
-          next: next,
-        );
-      },
-    );
+    _prefsLoadedSubscription = _adapter.listenPreferencesLoaded(ref, (
+      prev,
+      next,
+    ) {
+      _handlePreferencesLoadedChanged(ref: ref, prev: prev, next: next);
+    });
 
     final reminderScheduler = _adapter.readReminderScheduler(ref);
     reminderScheduler.setTapHandler(reminderTapHandler);
@@ -84,13 +80,15 @@ class AppBootstrapController {
       _flushQueuedReminderReschedule(reminderScheduler);
       unawaited(reminderScheduler.initialize(caller: 'post_first_frame'));
     });
-    _reminderSettingsSubscription =
-        _adapter.listenReminderSettings(ref, (prev, next) {
-          _handleReminderSettingsChanged(
-            ref: ref,
-            reminderScheduler: reminderScheduler,
-          );
-        });
+    _reminderSettingsSubscription = _adapter.listenReminderSettings(ref, (
+      prev,
+      next,
+    ) {
+      _handleReminderSettingsChanged(
+        ref: ref,
+        reminderScheduler: reminderScheduler,
+      );
+    });
 
     if (kDebugMode) {
       _debugScreenshotModeSubscription = _adapter.listenDebugScreenshotMode(
@@ -160,8 +158,7 @@ class AppBootstrapController {
           'nextKey': nextKey,
           'hasPreviousAccount': prevAccount != null,
           'hasNextAccount': nextAccount != null,
-          'currentLocalLibraryKey':
-              _adapter.readCurrentLocalLibrary(ref)?.key,
+          'currentLocalLibraryKey': _adapter.readCurrentLocalLibrary(ref)?.key,
         },
       );
     }
@@ -171,14 +168,23 @@ class AppBootstrapController {
       prevAccount: prevAccount,
       nextAccount: nextAccount,
     );
-    if (shouldTriggerPostLoginSync) {
+    final sessionIsStable = next.asData != null && !next.isLoading;
+    if (shouldTriggerPostLoginSync && sessionIsStable && nextKey != null) {
       scheduleStatsWidgetUpdate();
       syncOrchestrator.resetResumeCooldown();
-      syncOrchestrator.triggerLifecycleSync(
-        isResume: true,
-        refreshCurrentUserBeforeSync: false,
-        showFeedbackToast: false,
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final latestSession = _adapter.readSession(ref);
+        final latestKey = latestSession?.currentKey;
+        final latestAccount = latestSession?.currentAccount;
+        if (latestKey != nextKey || latestAccount == null) {
+          return;
+        }
+        syncOrchestrator.triggerLifecycleSync(
+          isResume: true,
+          refreshCurrentUserBeforeSync: false,
+          showFeedbackToast: false,
+        );
+      });
       _queueReminderReschedule(
         reminderScheduler: _adapter.readReminderScheduler(ref),
         force: true,
@@ -202,7 +208,7 @@ class AppBootstrapController {
     required AppPreferences next,
     required Future<void> Function(AppPreferences prefs) ensureFontLoaded,
     required Future<void> Function(AppPreferences prefs)
-        registerDesktopQuickInputHotKey,
+    registerDesktopQuickInputHotKey,
   }) {
     if (kDebugMode) {
       final hasOnboardingChanged =
@@ -220,7 +226,8 @@ class AppBootstrapController {
         );
       }
     }
-    if (prev?.fontFamily != next.fontFamily || prev?.fontFile != next.fontFile) {
+    if (prev?.fontFamily != next.fontFamily ||
+        prev?.fontFile != next.fontFile) {
       unawaited(ensureFontLoaded(next));
     }
     if (isDesktopShortcutEnabled() &&
@@ -241,7 +248,9 @@ class AppBootstrapController {
           'previous': prev,
           'next': next,
           'sessionKey': _adapter.readSession(ref)?.currentKey,
-          'hasSelectedLanguage': _adapter.readPreferences(ref).hasSelectedLanguage,
+          'hasSelectedLanguage': _adapter
+              .readPreferences(ref)
+              .hasSelectedLanguage,
         },
       );
     }
@@ -271,9 +280,7 @@ class AppBootstrapController {
     String? reason,
   }) {
     if (_firstFrameRendered) {
-      unawaited(
-        reminderScheduler.rescheduleAll(force: force, caller: reason),
-      );
+      unawaited(reminderScheduler.rescheduleAll(force: force, caller: reason));
       return;
     }
     _reminderRescheduleQueued = true;
@@ -288,10 +295,7 @@ class AppBootstrapController {
     _reminderRescheduleQueued = false;
     _reminderRescheduleForce = false;
     unawaited(
-      reminderScheduler.rescheduleAll(
-        force: force,
-        caller: 'post_first_frame',
-      ),
+      reminderScheduler.rescheduleAll(force: force, caller: 'post_first_frame'),
     );
   }
 

@@ -27,7 +27,6 @@ import '../webdav/webdav_vault_provider.dart';
 
 final syncCoordinatorProvider =
     StateNotifierProvider<SyncCoordinator, SyncCoordinatorState>((ref) {
-      final db = ref.watch(databaseProvider);
       final attachmentStore = LocalAttachmentStore();
       final localAdapter = RiverpodWebDavSyncLocalAdapter(ref);
       final webDavSyncService = WebDavSyncService(
@@ -35,17 +34,21 @@ final syncCoordinatorProvider =
         deviceIdRepository: ref.watch(webDavDeviceIdRepositoryProvider),
         localAdapter: localAdapter,
         vaultService: ref.watch(webDavVaultServiceProvider),
-        vaultPasswordRepository: ref.watch(webDavVaultPasswordRepositoryProvider),
+        vaultPasswordRepository: ref.watch(
+          webDavVaultPasswordRepositoryProvider,
+        ),
         logWriter: (entry) =>
             unawaited(ref.read(webDavLogStoreProvider).add(entry)),
       );
       final webDavBackupService = WebDavBackupService(
-        db: db,
+        readDatabase: () => ref.read(databaseProvider),
         attachmentStore: attachmentStore,
         stateRepository: ref.watch(webDavBackupStateRepositoryProvider),
         passwordRepository: ref.watch(webDavBackupPasswordRepositoryProvider),
         vaultService: ref.watch(webDavVaultServiceProvider),
-        vaultPasswordRepository: ref.watch(webDavVaultPasswordRepositoryProvider),
+        vaultPasswordRepository: ref.watch(
+          webDavVaultPasswordRepositoryProvider,
+        ),
         configAdapter: localAdapter,
         progressTracker: ref.watch(webDavBackupProgressTrackerProvider),
         logWriter: (entry) =>
@@ -62,7 +65,7 @@ final syncCoordinatorProvider =
         readCurrentAccount: () =>
             ref.read(appSessionProvider).valueOrNull?.currentAccount,
         readCurrentLocalLibrary: () => ref.read(currentLocalLibraryProvider),
-        readDatabase: () => db,
+        readDatabase: () => ref.read(databaseProvider),
         runMemosSync: () => ref.read(syncControllerProvider.notifier).syncNow(),
       );
       return SyncCoordinator(deps);

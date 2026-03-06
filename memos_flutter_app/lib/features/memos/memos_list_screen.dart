@@ -415,6 +415,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   int _loadMoreRequestSeq = 0;
   int? _activeLoadMoreRequestId;
   String? _activeLoadMoreSource;
+  String? _lastWorkspaceDebugSignature;
   bool _desktopWindowMaximized = false;
   bool _windowsHeaderSearchExpanded = false;
   bool _desktopQuickInputSubmitting = false;
@@ -5859,23 +5860,33 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       final workspaceMode = currentLocalLibrary != null
           ? 'local'
           : (session?.currentAccount != null ? 'remote' : 'none');
-      ref
-          .read(logManagerProvider)
-          .info(
-            'MemosList build: workspace_debug',
-            context: <String, Object?>{
-              'event': 'build',
-              'currentKey': currentKey,
-              'resolvedDbName': resolvedDb,
-              'workspaceMode': workspaceMode,
-              'currentLocalLibraryNull': currentLocalLibrary == null,
-              'localLibraryKey': currentLocalLibrary?.key,
-              'localLibraryName': currentLocalLibrary?.name,
-              'localLibraryLocation': currentLocalLibrary?.locationLabel,
-            },
-          );
+      final debugSignature = [
+        currentKey ?? '',
+        resolvedDb ?? '',
+        workspaceMode,
+        currentLocalLibrary?.key ?? '',
+        currentLocalLibrary?.name ?? '',
+        currentLocalLibrary?.locationLabel ?? '',
+      ].join('|');
+      if (_lastWorkspaceDebugSignature != debugSignature) {
+        _lastWorkspaceDebugSignature = debugSignature;
+        ref
+            .read(logManagerProvider)
+            .info(
+              'MemosList build: workspace_debug',
+              context: <String, Object?>{
+                'event': 'build',
+                'currentKey': currentKey,
+                'resolvedDbName': resolvedDb,
+                'workspaceMode': workspaceMode,
+                'currentLocalLibraryNull': currentLocalLibrary == null,
+                'localLibraryKey': currentLocalLibrary?.key,
+                'localLibraryName': currentLocalLibrary?.name,
+                'localLibraryLocation': currentLocalLibrary?.locationLabel,
+              },
+            );
+      }
     }
-    final account = session?.currentAccount;
     final debugApiVersionText = ref.watch(memosListDebugApiVersionTextProvider);
     final mediaQuery = MediaQuery.of(context);
     final bottomInset = mediaQuery.padding.bottom;
@@ -6695,7 +6706,6 @@ class _TitleMenuDropdown extends ConsumerWidget {
     final dividerColor = border.withValues(alpha: 0.6);
 
     final shortcutsAsync = showShortcuts ? ref.watch(shortcutsProvider) : null;
-    final useLocalShortcuts = shortcutHints.useLocalShortcuts;
     final canCreateShortcut = shortcutHints.canCreateShortcut;
     final items = <Widget>[];
 

@@ -14,7 +14,8 @@ import '../system/database_provider.dart';
 import '../system/session_provider.dart';
 import 'webdav_log_provider.dart';
 
-export '../../application/sync/webdav_backup_service.dart'    show
+export '../../application/sync/webdav_backup_service.dart'
+    show
         WebDavBackupExportAction,
         WebDavBackupExportIssue,
         WebDavBackupExportIssueHandler,
@@ -47,9 +48,8 @@ final webDavBackupPasswordRepositoryProvider =
     });
 
 final webDavBackupServiceProvider = Provider<WebDavBackupService>((ref) {
-  final db = ref.watch(databaseProvider);
   return WebDavBackupService(
-    db: db,
+    readDatabase: () => ref.read(databaseProvider),
     attachmentStore: LocalAttachmentStore(),
     stateRepository: ref.watch(webDavBackupStateRepositoryProvider),
     passwordRepository: ref.watch(webDavBackupPasswordRepositoryProvider),

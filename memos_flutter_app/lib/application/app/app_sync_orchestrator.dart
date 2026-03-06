@@ -180,6 +180,19 @@ class AppSyncOrchestrator {
       }
       return;
     }
+    if (!_adapter.isSyncContextReady()) {
+      LogManager.instance.info(
+        'AutoSync: skipped_preconditions',
+        context: <String, Object?>{
+          'reason': logReason,
+          'hasWorkspace': hasWorkspace,
+          'hasAuthenticatedAccount': _adapter.hasAuthenticatedAccount(),
+          'databaseContextReady': _adapter.isDatabaseContextReady(),
+          'syncContextReady': _adapter.isSyncContextReady(),
+        },
+      );
+      return;
+    }
 
     LogManager.instance.info(
       'AutoSync: start',
@@ -211,10 +224,24 @@ class AppSyncOrchestrator {
             );
             return;
           }
+          if (!_adapter.isSyncContextReady()) {
+            LogManager.instance.info(
+              'AutoSync: skipped_preconditions',
+              context: <String, Object?>{
+                'reason': logReason,
+                'hasWorkspace': hasWorkspace,
+                'hasAuthenticatedAccount': _adapter.hasAuthenticatedAccount(),
+                'databaseContextReady': _adapter.isDatabaseContextReady(),
+                'syncContextReady': _adapter.isSyncContextReady(),
+                'afterRefresh': true,
+              },
+            );
+            return;
+          }
         }
         await _adapter.requestSync(
-              SyncRequest(kind: requestKind, reason: requestReason),
-            );
+          SyncRequest(kind: requestKind, reason: requestReason),
+        );
       } catch (error, stackTrace) {
         syncSucceeded = false;
         LogManager.instance.warn(

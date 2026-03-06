@@ -2,10 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/sync/sync_request.dart';
 import '../../data/models/app_preferences.dart';
+import '../system/database_provider.dart';
 import '../system/local_library_provider.dart';
 import '../settings/preferences_provider.dart';
 import '../system/session_provider.dart';
 import '../sync/sync_coordinator_provider.dart';
+
 final appSyncAdapterProvider = Provider<AppSyncAdapter>((ref) {
   return AppSyncAdapter(ref);
 });
@@ -17,11 +19,27 @@ class AppSyncAdapter {
 
   AppPreferences readPreferences() => _ref.read(appPreferencesProvider);
 
-  AppSessionState? readSession() =>
-      _ref.read(appSessionProvider).valueOrNull;
+  AppSessionState? readSession() => _ref.read(appSessionProvider).valueOrNull;
 
-  bool hasLocalLibrary() =>
-      _ref.read(currentLocalLibraryProvider) != null;
+  bool hasAuthenticatedAccount() => readSession()?.currentAccount != null;
+
+  bool hasWorkspace() => hasAuthenticatedAccount() || hasLocalLibrary();
+
+  bool hasLocalLibrary() => _ref.read(currentLocalLibraryProvider) != null;
+
+  bool isDatabaseContextReady() {
+    try {
+      _ref.read(databaseProvider);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool isSyncContextReady() {
+    if (!hasWorkspace()) return false;
+    return isDatabaseContextReady();
+  }
 
   Future<void> refreshCurrentUser() =>
       _ref.read(appSessionProvider.notifier).refreshCurrentUser();

@@ -586,4 +586,64 @@ void main() {
       container.dispose();
     });
   });
+
+  test('skips memos sync when context is not ready', () async {
+    final calls = <String>[];
+    var memosCalls = 0;
+    final coordinator = SyncCoordinator(
+      SyncDependencies(
+        webDavSyncService: FakeWebDavSyncService(calls),
+        webDavBackupService: FakeWebDavBackupService(calls),
+        webDavBackupStateRepository: FakeWebDavBackupStateRepository(),
+        readWebDavSettings: () => WebDavSettings.defaults,
+        readCurrentAccountKey: () => null,
+        readCurrentAccount: () => null,
+        readCurrentLocalLibrary: () => null,
+        readDatabase: () => throw StateError('Not authenticated'),
+        runMemosSync: () async {
+          memosCalls += 1;
+          return const MemoSyncSuccess();
+        },
+      ),
+    );
+
+    final result = await coordinator.requestSync(
+      const SyncRequest(
+        kind: SyncRequestKind.memos,
+        reason: SyncRequestReason.manual,
+      ),
+    );
+
+    expect(result, isA<SyncRunSkipped>());
+    expect((result as SyncRunSkipped).reason?.message, 'context_not_ready');
+    expect(memosCalls, 0);
+  });
+
+  test('skips all sync when context is not ready', () async {
+    final calls = <String>[];
+    final coordinator = SyncCoordinator(
+      SyncDependencies(
+        webDavSyncService: FakeWebDavSyncService(calls),
+        webDavBackupService: FakeWebDavBackupService(calls),
+        webDavBackupStateRepository: FakeWebDavBackupStateRepository(),
+        readWebDavSettings: () => WebDavSettings.defaults,
+        readCurrentAccountKey: () => null,
+        readCurrentAccount: () => null,
+        readCurrentLocalLibrary: () => null,
+        readDatabase: () => throw StateError('Not authenticated'),
+        runMemosSync: () async => const MemoSyncSuccess(),
+      ),
+    );
+
+    final result = await coordinator.requestSync(
+      const SyncRequest(
+        kind: SyncRequestKind.all,
+        reason: SyncRequestReason.auto,
+      ),
+    );
+
+    expect(result, isA<SyncRunSkipped>());
+    expect((result as SyncRunSkipped).reason?.message, 'context_not_ready');
+    expect(calls, isEmpty);
+  });
 }
