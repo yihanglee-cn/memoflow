@@ -41,7 +41,8 @@ Future<void> prepareEphemeralDebugStorage({required bool clearExisting}) async {
 
 Future<Directory> resolveAppSupportDirectory() async {
   if (!isEphemeralDebugStorageEnabled) {
-    return getApplicationSupportDirectory();
+    final dir = await getApplicationSupportDirectory();
+    return _ensureDirectory(dir);
   }
   final root = await _resolveEphemeralRootDirectory();
   return _ensureDirectory(Directory(p.join(root.path, 'support')));
@@ -49,7 +50,8 @@ Future<Directory> resolveAppSupportDirectory() async {
 
 Future<Directory> resolveAppDocumentsDirectory() async {
   if (!isEphemeralDebugStorageEnabled) {
-    return getApplicationDocumentsDirectory();
+    final dir = await getApplicationDocumentsDirectory();
+    return _ensureDirectory(dir);
   }
   final root = await _resolveEphemeralRootDirectory();
   return _ensureDirectory(Directory(p.join(root.path, 'documents')));
@@ -57,7 +59,16 @@ Future<Directory> resolveAppDocumentsDirectory() async {
 
 Future<String> resolveDatabasesDirectoryPath() async {
   if (!isEphemeralDebugStorageEnabled) {
-    return getDatabasesPath();
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      final supportDir = await resolveAppSupportDirectory();
+      final dbDir = await _ensureDirectory(
+        Directory(p.join(supportDir.path, 'databases')),
+      );
+      return dbDir.path;
+    }
+    final path = await getDatabasesPath();
+    final dir = await _ensureDirectory(Directory(path));
+    return dir.path;
   }
   final root = await _resolveEphemeralRootDirectory();
   final dir = await _ensureDirectory(Directory(p.join(root.path, 'databases')));
