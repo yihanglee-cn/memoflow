@@ -477,7 +477,7 @@ legacy:
   msg_failed_load_announcement_config: "お知らせ設定の読み込みに失敗しました"
   msg_shortcuts: "ショートカット"
   msg_memo: "メモ"
-  msg_maybe_later: "後で"
+  msg_maybe_later: "このバージョンは再通知しない"
   msg_server_connection: "サーバー接続"
   msg_days_2: "日"
   msg_include_archived: "アーカイブを含む"

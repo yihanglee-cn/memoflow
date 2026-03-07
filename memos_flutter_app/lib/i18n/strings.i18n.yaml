@@ -478,7 +478,7 @@ legacy:
   msg_failed_load_announcement_config: "Failed to load announcement config"
   msg_shortcuts: "Shortcuts"
   msg_memo: "Memo"
-  msg_maybe_later: "Maybe later"
+  msg_maybe_later: "Don't remind me for this version"
   msg_server_connection: "Server connection"
   msg_days_2: "Days"
   msg_include_archived: "Include Archived"

@@ -8,7 +8,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
-import '../../core/app_localization.dart';
 import '../../core/storage_read.dart';
 import '../../core/debug_ephemeral_storage.dart';
 import '../../core/desktop/shortcuts.dart';
@@ -307,6 +306,13 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
 
   void setLastSeenAppVersion(String v) =>
       _setAndPersist(state.copyWith(lastSeenAppVersion: v), triggerSync: false);
+  void setSkippedUpdateVersion(String version) {
+    _setAndPersist(
+      state.copyWith(skippedUpdateVersion: version),
+      triggerSync: false,
+    );
+  }
+
   void setLastSeenAnnouncement({
     required String version,
     required int announcementId,

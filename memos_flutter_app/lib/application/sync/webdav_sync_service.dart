@@ -460,6 +460,7 @@ class WebDavSyncService {
   Map<String, dynamic> _preferencesForSync(AppPreferences prefs) {
     final json = Map<String, dynamic>.from(prefs.toJson());
     json.remove('lastSeenAppVersion');
+    json.remove('skippedUpdateVersion');
     json.remove('lastSeenAnnouncementVersion');
     json.remove('lastSeenAnnouncementId');
     json.remove('lastSeenNoticeHash');
@@ -734,6 +735,7 @@ class WebDavSyncService {
     final current = (await _localAdapter.readSnapshot()).preferences;
     final mergedJson = Map<String, dynamic>.from(remote.toJson());
     mergedJson['lastSeenAppVersion'] = current.lastSeenAppVersion;
+    mergedJson['skippedUpdateVersion'] = current.skippedUpdateVersion;
     mergedJson['lastSeenAnnouncementVersion'] =
         current.lastSeenAnnouncementVersion;
     mergedJson['lastSeenAnnouncementId'] = current.lastSeenAnnouncementId;

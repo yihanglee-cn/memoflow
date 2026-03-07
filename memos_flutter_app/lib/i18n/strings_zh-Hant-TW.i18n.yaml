@@ -478,7 +478,7 @@ legacy:
   msg_failed_load_announcement_config: "未获取到公告配置"
   msg_shortcuts: "快捷筛选"
   msg_memo: "笔记"
-  msg_maybe_later: "稍后再说"
+  msg_maybe_later: "此版本不再提醒"
   msg_server_connection: "服务器连接"
   msg_days_2: "天"
   msg_include_archived: "包含归档"

@@ -109,6 +109,7 @@ class AppPreferences {
     windowsCloseToTray: true,
     desktopShortcutBindings: desktopShortcutDefaultBindings,
     lastSeenAppVersion: '',
+    skippedUpdateVersion: '',
     lastSeenAnnouncementVersion: '',
     lastSeenAnnouncementId: 0,
     lastSeenNoticeHash: '',
@@ -156,6 +157,7 @@ class AppPreferences {
     required this.windowsCloseToTray,
     required this.desktopShortcutBindings,
     required this.lastSeenAppVersion,
+    required this.skippedUpdateVersion,
     required this.lastSeenAnnouncementVersion,
     required this.lastSeenAnnouncementId,
     required this.lastSeenNoticeHash,
@@ -195,6 +197,7 @@ class AppPreferences {
   final Map<DesktopShortcutAction, DesktopShortcutBinding>
   desktopShortcutBindings;
   final String lastSeenAppVersion;
+  final String skippedUpdateVersion;
   final String lastSeenAnnouncementVersion;
   final int lastSeenAnnouncementId;
   final String lastSeenNoticeHash;
@@ -255,6 +258,7 @@ class AppPreferences {
       desktopShortcutBindings,
     ),
     'lastSeenAppVersion': lastSeenAppVersion,
+    'skippedUpdateVersion': skippedUpdateVersion,
     'lastSeenAnnouncementVersion': lastSeenAnnouncementVersion,
     'lastSeenAnnouncementId': lastSeenAnnouncementId,
     'lastSeenNoticeHash': lastSeenNoticeHash,
@@ -459,6 +463,12 @@ class AppPreferences {
       return '';
     }
 
+    String parseSkippedUpdateVersion() {
+      final raw = json['skippedUpdateVersion'];
+      if (raw is String) return raw;
+      return '';
+    }
+
     String parseLastSeenNoticeHash() {
       final raw = json['lastSeenNoticeHash'];
       if (raw is String) return raw;
@@ -576,6 +586,7 @@ class AppPreferences {
       ),
       desktopShortcutBindings: parsedDesktopShortcutBindings,
       lastSeenAppVersion: parseLastSeenAppVersion(),
+      skippedUpdateVersion: parseSkippedUpdateVersion(),
       lastSeenAnnouncementVersion: parseLastSeenAnnouncementVersion(),
       lastSeenAnnouncementId: parseLastSeenAnnouncementId(),
       lastSeenNoticeHash: parseLastSeenNoticeHash(),
@@ -616,6 +627,7 @@ class AppPreferences {
     bool? windowsCloseToTray,
     Map<DesktopShortcutAction, DesktopShortcutBinding>? desktopShortcutBindings,
     String? lastSeenAppVersion,
+    String? skippedUpdateVersion,
     String? lastSeenAnnouncementVersion,
     int? lastSeenAnnouncementId,
     String? lastSeenNoticeHash,
@@ -669,6 +681,7 @@ class AppPreferences {
       desktopShortcutBindings:
           desktopShortcutBindings ?? this.desktopShortcutBindings,
       lastSeenAppVersion: lastSeenAppVersion ?? this.lastSeenAppVersion,
+      skippedUpdateVersion: skippedUpdateVersion ?? this.skippedUpdateVersion,
       lastSeenAnnouncementVersion:
           lastSeenAnnouncementVersion ?? this.lastSeenAnnouncementVersion,
       lastSeenAnnouncementId:

@@ -212,10 +212,12 @@ class VersionAnnouncementEntry {
 List<VersionAnnouncementEntry> buildVersionAnnouncementEntries(
   List<UpdateReleaseNoteEntry> entries,
 ) {
-  return entries
+  final builtEntries = entries
       .map(buildVersionAnnouncementEntry)
       .whereType<VersionAnnouncementEntry>()
-      .toList(growable: false);
+      .toList();
+  builtEntries.sort(_compareVersionAnnouncementEntries);
+  return builtEntries;
 }
 
 VersionAnnouncementEntry? buildVersionAnnouncementEntry(
@@ -292,6 +294,61 @@ String _normalizeReleaseNoteVersion(String version) {
     return trimmed.substring(1);
   }
   return trimmed;
+}
+
+int _compareVersionAnnouncementEntries(
+  VersionAnnouncementEntry left,
+  VersionAnnouncementEntry right,
+) {
+  final versionDiff = _compareReleaseNoteVersions(right.version, left.version);
+  if (versionDiff != 0) return versionDiff;
+
+  final dateDiff = _compareReleaseNoteDates(right.dateLabel, left.dateLabel);
+  if (dateDiff != 0) return dateDiff;
+
+  return 0;
+}
+
+int _compareReleaseNoteVersions(String left, String right) {
+  final leftParts = _parseReleaseNoteVersionParts(left);
+  final rightParts = _parseReleaseNoteVersionParts(right);
+  final maxLength = leftParts.length > rightParts.length
+      ? leftParts.length
+      : rightParts.length;
+
+  for (var i = 0; i < maxLength; i++) {
+    final leftValue = i < leftParts.length ? leftParts[i] : 0;
+    final rightValue = i < rightParts.length ? rightParts[i] : 0;
+    final diff = leftValue.compareTo(rightValue);
+    if (diff != 0) return diff;
+  }
+
+  return 0;
+}
+
+List<int> _parseReleaseNoteVersionParts(String version) {
+  final normalized = _normalizeReleaseNoteVersion(version);
+  if (normalized.isEmpty) return const [];
+
+  return normalized
+      .split(RegExp(r'[-+]'))
+      .first
+      .split('.')
+      .map((part) {
+        final match = RegExp(r'\d+').firstMatch(part);
+        if (match == null) return 0;
+        return int.tryParse(match.group(0) ?? '') ?? 0;
+      })
+      .toList(growable: false);
+}
+
+int _compareReleaseNoteDates(String left, String right) {
+  final leftDate = DateTime.tryParse(left.trim());
+  final rightDate = DateTime.tryParse(right.trim());
+  if (leftDate == null && rightDate == null) return 0;
+  if (leftDate == null) return -1;
+  if (rightDate == null) return 1;
+  return leftDate.compareTo(rightDate);
 }
 
 String _normalizeAnnouncementLangKey(String code) {

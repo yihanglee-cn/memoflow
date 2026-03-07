@@ -184,6 +184,33 @@ class UpdateAnnouncementDialog extends StatelessWidget {
               context.t.strings.legacy.msg_special_thanks,
               style: TextStyle(fontSize: 12.5, height: 1.4, color: textMuted),
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final label in newDonorLabels)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: isDark ? 0.16 : 0.1),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: border.withValues(alpha: 0.7)),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: textMain,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ],
           const SizedBox(height: 12),
           Align(

@@ -148,13 +148,20 @@ class UpdateAnnouncementRunner {
         (skipUpdateVersion.isEmpty || latestVersion != skipUpdateVersion) &&
         _compareVersionTriplets(latestVersion, currentVersion) > 0;
     final isForce = config.versionInfo.isForce && hasUpdate;
+    final skippedUpdateVersion = prefs.skippedUpdateVersion.trim();
+    final skippedThisVersion =
+        latestVersion.isNotEmpty &&
+        skippedUpdateVersion.isNotEmpty &&
+        _compareVersionTriplets(latestVersion, skippedUpdateVersion) == 0;
 
     final showWhenUpToDate = config.announcement.showWhenUpToDate;
     final announcementId = config.announcement.id;
     final hasUnseenAnnouncement =
         announcementId > 0 && announcementId != prefs.lastSeenAnnouncementId;
     final shouldShow =
-        isForce || hasUpdate || (showWhenUpToDate && hasUnseenAnnouncement);
+        isForce ||
+        (hasUpdate && !skippedThisVersion) ||
+        (showWhenUpToDate && hasUnseenAnnouncement);
     if (!shouldShow) return;
 
     final dialogContext = _navigatorKey.currentContext;
@@ -172,6 +179,12 @@ class UpdateAnnouncementRunner {
         ref: ref,
         version: currentVersion,
         announcementId: config.announcement.id,
+      );
+    }
+    if (action == AnnouncementAction.later && hasUpdate) {
+      _bootstrapAdapter.setSkippedUpdateVersion(
+        ref: ref,
+        version: latestVersion,
       );
     }
   }

@@ -477,7 +477,7 @@ legacy:
   msg_failed_load_announcement_config: "Ankündigungskonfiguration konnte nicht geladen werden"
   msg_shortcuts: "Tastenkürzel"
   msg_memo: "Memo"
-  msg_maybe_later: "Vielleicht später"
+  msg_maybe_later: "Für diese Version nicht erneut erinnern"
   msg_server_connection: "Serververbindung"
   msg_days_2: "Tage"
   msg_include_archived: "Archivierte einschließen"

@@ -5,9 +5,7 @@ import '../../data/api/memos_api.dart';
 import '../../data/db/app_database.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/logs/logger_service.dart';
-import '../../data/models/app_preferences.dart';
 import '../../data/models/local_library.dart';
-import '../../data/models/reminder_settings.dart';
 import '../../data/models/user_setting.dart';
 import '../../data/updates/update_config.dart';
 import '../system/database_provider.dart';
@@ -145,6 +143,13 @@ class AppBootstrapAdapter {
           version: version,
           announcementId: announcementId,
         );
+  }
+
+  void setSkippedUpdateVersion({
+    required WidgetRef ref,
+    required String version,
+  }) {
+    ref.read(appPreferencesProvider.notifier).setSkippedUpdateVersion(version);
   }
 
   void setLastSeenNoticeHash(WidgetRef ref, String hash) {
