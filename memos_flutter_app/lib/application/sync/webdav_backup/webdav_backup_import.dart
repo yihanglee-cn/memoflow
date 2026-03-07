@@ -10,220 +10,227 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
     Map<String, bool>? conflictDecisions,
     WebDavBackupConfigDecisionHandler? configDecisionHandler,
   }) async {
-    final normalizedAccountKey = accountKey?.trim() ?? '';
-    if (normalizedAccountKey.isEmpty) {
-      return WebDavRestoreSkipped(
-        reason: _keyedError(
-          'legacy.webdav.restore_account_missing',
-          code: SyncErrorCode.invalidConfig,
-        ),
-      );
-    }
-    if (activeLocalLibrary == null) {
-      _logEvent('Restore skipped', detail: 'local_only');
-      return WebDavRestoreSkipped(
-        reason: _keyedError(
-          'legacy.webdav.restore_local_only',
-          code: SyncErrorCode.invalidConfig,
-        ),
-      );
-    }
+    return _withBoundDatabase(() async {
+      final normalizedAccountKey = accountKey?.trim() ?? '';
+      if (normalizedAccountKey.isEmpty) {
+        return WebDavRestoreSkipped(
+          reason: _keyedError(
+            'legacy.webdav.restore_account_missing',
+            code: SyncErrorCode.invalidConfig,
+          ),
+        );
+      }
+      if (activeLocalLibrary == null) {
+        _logEvent('Restore skipped', detail: 'local_only');
+        return WebDavRestoreSkipped(
+          reason: _keyedError(
+            'legacy.webdav.restore_local_only',
+            code: SyncErrorCode.invalidConfig,
+          ),
+        );
+      }
 
-    _logEvent('Restore started', detail: 'snapshot=${snapshot.id}');
-    _startProgress(WebDavBackupProgressOperation.restore);
-    _updateProgress(stage: WebDavBackupProgressStage.preparing);
-    await _setWakelockEnabled(true);
-    try {
-      final baseUrl = _parseBaseUrl(settings.serverUrl);
-      final accountId = fnv1a64Hex(normalizedAccountKey);
-      final rootPath = normalizeWebDavRootPath(settings.rootPath);
-      final client = _buildClient(settings, baseUrl);
+      _logEvent('Restore started', detail: 'snapshot=${snapshot.id}');
+      _startProgress(WebDavBackupProgressOperation.restore);
+      _updateProgress(stage: WebDavBackupProgressStage.preparing);
+      await _setWakelockEnabled(true);
       try {
-        await _ensureBackupCollections(client, baseUrl, rootPath, accountId);
-        SecretKey masterKey;
-        if (settings.vaultEnabled) {
-          masterKey = await _resolveVaultMasterKey(
-            settings: settings,
-            accountKey: normalizedAccountKey,
-            password: password,
-          );
-        } else {
-          final config = await _loadConfig(client, baseUrl, rootPath, accountId);
-          if (config == null) {
-            throw _keyedError(
-              'legacy.msg_no_backups_found',
-              code: SyncErrorCode.unknown,
+        final baseUrl = _parseBaseUrl(settings.serverUrl);
+        final accountId = fnv1a64Hex(normalizedAccountKey);
+        final rootPath = normalizeWebDavRootPath(settings.rootPath);
+        final client = _buildClient(settings, baseUrl);
+        try {
+          await _ensureBackupCollections(client, baseUrl, rootPath, accountId);
+          SecretKey masterKey;
+          if (settings.vaultEnabled) {
+            masterKey = await _resolveVaultMasterKey(
+              settings: settings,
+              accountKey: normalizedAccountKey,
+              password: password,
             );
-          }
-          masterKey = await _resolveMasterKey(password, config);
-        }
-        final snapshotData = await _loadSnapshot(
-          client: client,
-          baseUrl: baseUrl,
-          rootPath: rootPath,
-          accountId: accountId,
-          masterKey: masterKey,
-          snapshotId: snapshot.id,
-        );
-        if (snapshotData.files.isEmpty) {
-          _logEvent('Restore failed', detail: 'snapshot_empty');
-          return WebDavRestoreFailure(
-            _keyedError(
-              'legacy.webdav.backup_empty',
-              code: SyncErrorCode.dataCorrupt,
-            ),
-          );
-        }
-        if (!_snapshotHasMemos(snapshotData)) {
-          _logEvent('Restore failed', detail: 'no_memos');
-          return WebDavRestoreFailure(
-            _keyedError(
-              'legacy.webdav.backup_no_memos',
-              code: SyncErrorCode.dataCorrupt,
-            ),
-          );
-        }
-
-        final fileSystem = LocalLibraryFileSystem(activeLocalLibrary);
-        final configPayloads = <WebDavBackupConfigType, Uint8List>{};
-        await fileSystem.clearLibrary();
-        await _attachmentStore.clearAll();
-        await fileSystem.ensureStructure();
-
-        final entries =
-            snapshotData.files
-                .where((entry) => entry.path != _backupManifestFile)
-                .toList(growable: false);
-        var restoredCount = 0;
-        final totalCount = entries.length;
-        _updateProgress(
-          stage: WebDavBackupProgressStage.downloading,
-          completed: restoredCount,
-          total: totalCount,
-          currentPath: '',
-          itemGroup: WebDavBackupProgressItemGroup.other,
-        );
-        for (final entry in entries) {
-          await _waitIfPaused();
-          _updateProgress(
-            stage: WebDavBackupProgressStage.downloading,
-            completed: restoredCount,
-            total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
-          );
-          final configType = _configTypeForPath(entry.path);
-          if (configType != null) {
-            try {
-              final bytes = await _readSnapshotFileBytes(
-                entry: entry,
-                client: client,
-                baseUrl: baseUrl,
-                rootPath: rootPath,
-                accountId: accountId,
-                masterKey: masterKey,
-              );
-              configPayloads[configType] = bytes;
-              restoredCount += 1;
-              _updateProgress(
-                stage: WebDavBackupProgressStage.writing,
-                completed: restoredCount,
-                total: totalCount,
-                currentPath: entry.path,
-                itemGroup: WebDavBackupProgressItemGroup.config,
-              );
-            } catch (error) {
-              _logEvent('Config restore skipped', error: error);
-              restoredCount += 1;
-              _updateProgress(
-                stage: WebDavBackupProgressStage.writing,
-                completed: restoredCount,
-                total: totalCount,
-                currentPath: entry.path,
-                itemGroup: WebDavBackupProgressItemGroup.config,
+          } else {
+            final config = await _loadConfig(
+              client,
+              baseUrl,
+              rootPath,
+              accountId,
+            );
+            if (config == null) {
+              throw _keyedError(
+                'legacy.msg_no_backups_found',
+                code: SyncErrorCode.unknown,
               );
             }
-            continue;
+            masterKey = await _resolveMasterKey(password, config);
           }
-          _updateProgress(
-            stage: WebDavBackupProgressStage.writing,
-            completed: restoredCount,
-            total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
-          );
-          await _restoreFile(
-            entry: entry,
-            fileSystem: fileSystem,
+          final snapshotData = await _loadSnapshot(
             client: client,
             baseUrl: baseUrl,
             rootPath: rootPath,
             accountId: accountId,
             masterKey: masterKey,
+            snapshotId: snapshot.id,
           );
-          restoredCount += 1;
-          _updateProgress(
-            stage: WebDavBackupProgressStage.writing,
-            completed: restoredCount,
-            total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
-          );
-        }
+          if (snapshotData.files.isEmpty) {
+            _logEvent('Restore failed', detail: 'snapshot_empty');
+            return WebDavRestoreFailure(
+              _keyedError(
+                'legacy.webdav.backup_empty',
+                code: SyncErrorCode.dataCorrupt,
+              ),
+            );
+          }
+          if (!_snapshotHasMemos(snapshotData)) {
+            _logEvent('Restore failed', detail: 'no_memos');
+            return WebDavRestoreFailure(
+              _keyedError(
+                'legacy.webdav.backup_no_memos',
+                code: SyncErrorCode.dataCorrupt,
+              ),
+            );
+          }
 
-        await _db.clearOutbox();
-        final scanService = _scanServiceFor(activeLocalLibrary);
-        if (scanService != null) {
-          await _waitIfPaused();
+          final fileSystem = LocalLibraryFileSystem(activeLocalLibrary);
+          final configPayloads = <WebDavBackupConfigType, Uint8List>{};
+          await fileSystem.clearLibrary();
+          await _attachmentStore.clearAll();
+          await fileSystem.ensureStructure();
+
+          final entries = snapshotData.files
+              .where((entry) => entry.path != _backupManifestFile)
+              .toList(growable: false);
+          var restoredCount = 0;
+          final totalCount = entries.length;
           _updateProgress(
-            stage: WebDavBackupProgressStage.scanning,
+            stage: WebDavBackupProgressStage.downloading,
             completed: restoredCount,
             total: totalCount,
             currentPath: '',
+            itemGroup: WebDavBackupProgressItemGroup.other,
           );
-          final scanResult = await scanService.scanAndMerge(
-            forceDisk: true,
-            conflictDecisions: conflictDecisions,
-          );
-          switch (scanResult) {
-            case LocalScanConflictResult(:final conflicts):
-              return WebDavRestoreConflict(conflicts);
-            case LocalScanFailure(:final error):
-              return WebDavRestoreFailure(error);
-            case LocalScanSuccess():
-              break;
+          for (final entry in entries) {
+            await _waitIfPaused();
+            _updateProgress(
+              stage: WebDavBackupProgressStage.downloading,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: entry.path,
+              itemGroup: _progressItemGroupForPath(entry.path),
+            );
+            final configType = _configTypeForPath(entry.path);
+            if (configType != null) {
+              try {
+                final bytes = await _readSnapshotFileBytes(
+                  entry: entry,
+                  client: client,
+                  baseUrl: baseUrl,
+                  rootPath: rootPath,
+                  accountId: accountId,
+                  masterKey: masterKey,
+                );
+                configPayloads[configType] = bytes;
+                restoredCount += 1;
+                _updateProgress(
+                  stage: WebDavBackupProgressStage.writing,
+                  completed: restoredCount,
+                  total: totalCount,
+                  currentPath: entry.path,
+                  itemGroup: WebDavBackupProgressItemGroup.config,
+                );
+              } catch (error) {
+                _logEvent('Config restore skipped', error: error);
+                restoredCount += 1;
+                _updateProgress(
+                  stage: WebDavBackupProgressStage.writing,
+                  completed: restoredCount,
+                  total: totalCount,
+                  currentPath: entry.path,
+                  itemGroup: WebDavBackupProgressItemGroup.config,
+                );
+              }
+              continue;
+            }
+            _updateProgress(
+              stage: WebDavBackupProgressStage.writing,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: entry.path,
+              itemGroup: _progressItemGroupForPath(entry.path),
+            );
+            await _restoreFile(
+              entry: entry,
+              fileSystem: fileSystem,
+              client: client,
+              baseUrl: baseUrl,
+              rootPath: rootPath,
+              accountId: accountId,
+              masterKey: masterKey,
+            );
+            restoredCount += 1;
+            _updateProgress(
+              stage: WebDavBackupProgressStage.writing,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: entry.path,
+              itemGroup: _progressItemGroupForPath(entry.path),
+            );
           }
-        }
 
-        if (configPayloads.isNotEmpty) {
-          final bundle = _parseConfigBundle(configPayloads);
-          await _applyConfigBundle(
-            bundle: bundle,
-            decisionHandler: configDecisionHandler,
+          await _db.clearOutbox();
+          final scanService = _scanServiceFor(activeLocalLibrary);
+          if (scanService != null) {
+            await _waitIfPaused();
+            _updateProgress(
+              stage: WebDavBackupProgressStage.scanning,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: '',
+            );
+            final scanResult = await scanService.scanAndMerge(
+              forceDisk: true,
+              conflictDecisions: conflictDecisions,
+            );
+            switch (scanResult) {
+              case LocalScanConflictResult(:final conflicts):
+                return WebDavRestoreConflict(conflicts);
+              case LocalScanFailure(:final error):
+                return WebDavRestoreFailure(error);
+              case LocalScanSuccess():
+                break;
+            }
+          }
+
+          if (configPayloads.isNotEmpty) {
+            final bundle = _parseConfigBundle(configPayloads);
+            await _applyConfigBundle(
+              bundle: bundle,
+              decisionHandler: configDecisionHandler,
+            );
+          }
+
+          _logEvent('Restore completed', detail: 'snapshot=${snapshot.id}');
+          _updateProgress(
+            stage: WebDavBackupProgressStage.completed,
+            currentPath: '',
           );
+          return const WebDavRestoreSuccess();
+        } finally {
+          await client.close();
         }
-
-        _logEvent('Restore completed', detail: 'snapshot=${snapshot.id}');
-        _updateProgress(
-          stage: WebDavBackupProgressStage.completed,
-          currentPath: '',
-        );
-        return const WebDavRestoreSuccess();
+      } on SyncError catch (error) {
+        _logEvent('Restore failed', error: error);
+        return WebDavRestoreFailure(error);
+      } catch (error) {
+        final mapped = _mapUnexpectedError(error);
+        _logEvent('Restore failed', error: mapped);
+        return WebDavRestoreFailure(mapped);
       } finally {
-        await client.close();
+        await _setWakelockEnabled(false);
+        _finishProgress();
       }
-    } on SyncError catch (error) {
-      _logEvent('Restore failed', error: error);
-      return WebDavRestoreFailure(error);
-    } catch (error) {
-      final mapped = _mapUnexpectedError(error);
-      _logEvent('Restore failed', error: mapped);
-      return WebDavRestoreFailure(mapped);
-    } finally {
-      await _setWakelockEnabled(false);
-      _finishProgress();
-    }
+    });
   }
+
   Future<WebDavRestoreResult> restorePlainBackup({
     required WebDavSettings settings,
     required String? accountKey,
@@ -231,204 +238,206 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
     Map<String, bool>? conflictDecisions,
     WebDavBackupConfigDecisionHandler? configDecisionHandler,
   }) async {
-    final normalizedAccountKey = accountKey?.trim() ?? '';
-    if (normalizedAccountKey.isEmpty) {
-      return WebDavRestoreSkipped(
-        reason: _keyedError(
-          'legacy.webdav.restore_account_missing',
-          code: SyncErrorCode.invalidConfig,
-        ),
-      );
-    }
-    if (activeLocalLibrary == null) {
-      _logEvent('Restore skipped', detail: 'local_only');
-      return WebDavRestoreSkipped(
-        reason: _keyedError(
-          'legacy.webdav.restore_local_only',
-          code: SyncErrorCode.invalidConfig,
-        ),
-      );
-    }
+    return _withBoundDatabase(() async {
+      final normalizedAccountKey = accountKey?.trim() ?? '';
+      if (normalizedAccountKey.isEmpty) {
+        return WebDavRestoreSkipped(
+          reason: _keyedError(
+            'legacy.webdav.restore_account_missing',
+            code: SyncErrorCode.invalidConfig,
+          ),
+        );
+      }
+      if (activeLocalLibrary == null) {
+        _logEvent('Restore skipped', detail: 'local_only');
+        return WebDavRestoreSkipped(
+          reason: _keyedError(
+            'legacy.webdav.restore_local_only',
+            code: SyncErrorCode.invalidConfig,
+          ),
+        );
+      }
 
-    _logEvent('Restore started', detail: 'mode=plain');
-    _startProgress(WebDavBackupProgressOperation.restore);
-    _updateProgress(stage: WebDavBackupProgressStage.preparing);
-    await _setWakelockEnabled(true);
-    try {
-      final baseUrl = _parseBaseUrl(settings.serverUrl);
-      final accountId = fnv1a64Hex(normalizedAccountKey);
-      final rootPath = normalizeWebDavRootPath(settings.rootPath);
-      final client = _buildClient(settings, baseUrl);
+      _logEvent('Restore started', detail: 'mode=plain');
+      _startProgress(WebDavBackupProgressOperation.restore);
+      _updateProgress(stage: WebDavBackupProgressStage.preparing);
+      await _setWakelockEnabled(true);
       try {
-        await _ensureBackupCollections(client, baseUrl, rootPath, accountId);
-        final index = await _loadPlainIndex(
-          client,
-          baseUrl,
-          rootPath,
-          accountId,
-        );
-        if (index == null) {
-          _logEvent('Restore failed', detail: 'no_backups_found');
-          return WebDavRestoreFailure(
-            _keyedError(
-              'legacy.msg_no_backups_found',
-              code: SyncErrorCode.unknown,
-            ),
+        final baseUrl = _parseBaseUrl(settings.serverUrl);
+        final accountId = fnv1a64Hex(normalizedAccountKey);
+        final rootPath = normalizeWebDavRootPath(settings.rootPath);
+        final client = _buildClient(settings, baseUrl);
+        try {
+          await _ensureBackupCollections(client, baseUrl, rootPath, accountId);
+          final index = await _loadPlainIndex(
+            client,
+            baseUrl,
+            rootPath,
+            accountId,
           );
-        }
-        if (index.files.isEmpty) {
-          _logEvent('Restore failed', detail: 'backup_empty');
-          return WebDavRestoreFailure(
-            _keyedError(
-              'legacy.webdav.backup_empty',
-              code: SyncErrorCode.dataCorrupt,
-            ),
-          );
-        }
-        if (!_plainIndexHasMemos(index)) {
-          _logEvent('Restore failed', detail: 'no_memos');
-          return WebDavRestoreFailure(
-            _keyedError(
-              'legacy.webdav.backup_no_memos',
-              code: SyncErrorCode.dataCorrupt,
-            ),
-          );
-        }
+          if (index == null) {
+            _logEvent('Restore failed', detail: 'no_backups_found');
+            return WebDavRestoreFailure(
+              _keyedError(
+                'legacy.msg_no_backups_found',
+                code: SyncErrorCode.unknown,
+              ),
+            );
+          }
+          if (index.files.isEmpty) {
+            _logEvent('Restore failed', detail: 'backup_empty');
+            return WebDavRestoreFailure(
+              _keyedError(
+                'legacy.webdav.backup_empty',
+                code: SyncErrorCode.dataCorrupt,
+              ),
+            );
+          }
+          if (!_plainIndexHasMemos(index)) {
+            _logEvent('Restore failed', detail: 'no_memos');
+            return WebDavRestoreFailure(
+              _keyedError(
+                'legacy.webdav.backup_no_memos',
+                code: SyncErrorCode.dataCorrupt,
+              ),
+            );
+          }
 
-        final fileSystem = LocalLibraryFileSystem(activeLocalLibrary);
-        final configPayloads = <WebDavBackupConfigType, Uint8List>{};
-        await fileSystem.clearLibrary();
-        await _attachmentStore.clearAll();
-        await fileSystem.ensureStructure();
+          final fileSystem = LocalLibraryFileSystem(activeLocalLibrary);
+          final configPayloads = <WebDavBackupConfigType, Uint8List>{};
+          await fileSystem.clearLibrary();
+          await _attachmentStore.clearAll();
+          await fileSystem.ensureStructure();
 
-        final entries =
-            index.files
-                .where((entry) => entry.path != _backupManifestFile)
-                .toList(growable: false);
-        var restoredCount = 0;
-        final totalCount = entries.length;
-        _updateProgress(
-          stage: WebDavBackupProgressStage.downloading,
-          completed: restoredCount,
-          total: totalCount,
-          currentPath: '',
-          itemGroup: WebDavBackupProgressItemGroup.other,
-        );
-
-        for (final entry in entries) {
-          await _waitIfPaused();
+          final entries = index.files
+              .where((entry) => entry.path != _backupManifestFile)
+              .toList(growable: false);
+          var restoredCount = 0;
+          final totalCount = entries.length;
           _updateProgress(
             stage: WebDavBackupProgressStage.downloading,
             completed: restoredCount,
             total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
+            currentPath: '',
+            itemGroup: WebDavBackupProgressItemGroup.other,
           );
-          final configType = _configTypeForPath(entry.path);
-          if (configType != null) {
+
+          for (final entry in entries) {
+            await _waitIfPaused();
+            _updateProgress(
+              stage: WebDavBackupProgressStage.downloading,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: entry.path,
+              itemGroup: _progressItemGroupForPath(entry.path),
+            );
+            final configType = _configTypeForPath(entry.path);
+            if (configType != null) {
+              final bytes = await _getBytes(
+                client,
+                _plainFileUri(baseUrl, rootPath, accountId, entry.path),
+              );
+              if (bytes != null) {
+                configPayloads[configType] = Uint8List.fromList(bytes);
+              }
+              restoredCount += 1;
+              _updateProgress(
+                stage: WebDavBackupProgressStage.writing,
+                completed: restoredCount,
+                total: totalCount,
+                currentPath: entry.path,
+                itemGroup: WebDavBackupProgressItemGroup.config,
+              );
+              continue;
+            }
+            _updateProgress(
+              stage: WebDavBackupProgressStage.writing,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: entry.path,
+              itemGroup: _progressItemGroupForPath(entry.path),
+            );
             final bytes = await _getBytes(
               client,
               _plainFileUri(baseUrl, rootPath, accountId, entry.path),
             );
-            if (bytes != null) {
-              configPayloads[configType] = Uint8List.fromList(bytes);
+            if (bytes == null) {
+              throw SyncError(
+                code: SyncErrorCode.dataCorrupt,
+                retryable: false,
+                message: 'BACKUP_FILE_MISSING',
+              );
             }
+            await fileSystem.writeFileFromChunks(
+              entry.path,
+              Stream<Uint8List>.value(Uint8List.fromList(bytes)),
+              mimeType: _guessMimeType(entry.path),
+            );
             restoredCount += 1;
             _updateProgress(
               stage: WebDavBackupProgressStage.writing,
               completed: restoredCount,
               total: totalCount,
               currentPath: entry.path,
-              itemGroup: WebDavBackupProgressItemGroup.config,
-            );
-            continue;
-          }
-          _updateProgress(
-            stage: WebDavBackupProgressStage.writing,
-            completed: restoredCount,
-            total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
-          );
-          final bytes = await _getBytes(
-            client,
-            _plainFileUri(baseUrl, rootPath, accountId, entry.path),
-          );
-          if (bytes == null) {
-            throw SyncError(
-              code: SyncErrorCode.dataCorrupt,
-              retryable: false,
-              message: 'BACKUP_FILE_MISSING',
+              itemGroup: _progressItemGroupForPath(entry.path),
             );
           }
-          await fileSystem.writeFileFromChunks(
-            entry.path,
-            Stream<Uint8List>.value(Uint8List.fromList(bytes)),
-            mimeType: _guessMimeType(entry.path),
-          );
-          restoredCount += 1;
-          _updateProgress(
-            stage: WebDavBackupProgressStage.writing,
-            completed: restoredCount,
-            total: totalCount,
-            currentPath: entry.path,
-            itemGroup: _progressItemGroupForPath(entry.path),
-          );
-        }
 
-        await _db.clearOutbox();
-        final scanService = _scanServiceFor(activeLocalLibrary);
-        if (scanService != null) {
-          await _waitIfPaused();
+          await _db.clearOutbox();
+          final scanService = _scanServiceFor(activeLocalLibrary);
+          if (scanService != null) {
+            await _waitIfPaused();
+            _updateProgress(
+              stage: WebDavBackupProgressStage.scanning,
+              completed: restoredCount,
+              total: totalCount,
+              currentPath: '',
+            );
+            final scanResult = await scanService.scanAndMerge(
+              forceDisk: true,
+              conflictDecisions: conflictDecisions,
+            );
+            switch (scanResult) {
+              case LocalScanConflictResult(:final conflicts):
+                return WebDavRestoreConflict(conflicts);
+              case LocalScanFailure(:final error):
+                return WebDavRestoreFailure(error);
+              case LocalScanSuccess():
+                break;
+            }
+          }
+
+          if (configPayloads.isNotEmpty) {
+            final bundle = _parseConfigBundle(configPayloads);
+            await _applyConfigBundle(
+              bundle: bundle,
+              decisionHandler: configDecisionHandler,
+            );
+          }
+
+          _logEvent('Restore completed', detail: 'mode=plain');
           _updateProgress(
-            stage: WebDavBackupProgressStage.scanning,
-            completed: restoredCount,
-            total: totalCount,
+            stage: WebDavBackupProgressStage.completed,
             currentPath: '',
           );
-          final scanResult = await scanService.scanAndMerge(
-            forceDisk: true,
-            conflictDecisions: conflictDecisions,
-          );
-          switch (scanResult) {
-            case LocalScanConflictResult(:final conflicts):
-              return WebDavRestoreConflict(conflicts);
-            case LocalScanFailure(:final error):
-              return WebDavRestoreFailure(error);
-            case LocalScanSuccess():
-              break;
-          }
+          return const WebDavRestoreSuccess();
+        } finally {
+          await client.close();
         }
-
-        if (configPayloads.isNotEmpty) {
-          final bundle = _parseConfigBundle(configPayloads);
-          await _applyConfigBundle(
-            bundle: bundle,
-            decisionHandler: configDecisionHandler,
-          );
-        }
-
-        _logEvent('Restore completed', detail: 'mode=plain');
-        _updateProgress(
-          stage: WebDavBackupProgressStage.completed,
-          currentPath: '',
-        );
-        return const WebDavRestoreSuccess();
+      } on SyncError catch (error) {
+        _logEvent('Restore failed', error: error);
+        return WebDavRestoreFailure(error);
+      } catch (error) {
+        final mapped = _mapUnexpectedError(error);
+        _logEvent('Restore failed', error: mapped);
+        return WebDavRestoreFailure(mapped);
       } finally {
-        await client.close();
+        await _setWakelockEnabled(false);
+        _finishProgress();
       }
-    } on SyncError catch (error) {
-      _logEvent('Restore failed', error: error);
-      return WebDavRestoreFailure(error);
-    } catch (error) {
-      final mapped = _mapUnexpectedError(error);
-      _logEvent('Restore failed', error: mapped);
-      return WebDavRestoreFailure(mapped);
-    } finally {
-      await _setWakelockEnabled(false);
-      _finishProgress();
-    }
+    });
   }
+
   Future<WebDavRestoreResult> restoreSnapshotToDirectory({
     required WebDavSettings settings,
     required String? accountKey,
@@ -467,7 +476,12 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
             password: password,
           );
         } else {
-          final config = await _loadConfig(client, baseUrl, rootPath, accountId);
+          final config = await _loadConfig(
+            client,
+            baseUrl,
+            rootPath,
+            accountId,
+          );
           if (config == null) {
             throw _keyedError(
               'legacy.msg_no_backups_found',
@@ -680,7 +694,10 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
           );
         }
 
-        _logEvent('Restore completed', detail: 'snapshot=${snapshot.id} (export)');
+        _logEvent(
+          'Restore completed',
+          detail: 'snapshot=${snapshot.id} (export)',
+        );
         _updateProgress(
           stage: WebDavBackupProgressStage.completed,
           currentPath: '',
@@ -704,6 +721,7 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
       _finishProgress();
     }
   }
+
   Future<WebDavRestoreResult> restorePlainBackupToDirectory({
     required WebDavSettings settings,
     required String? accountKey,
@@ -905,6 +923,7 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
       _finishProgress();
     }
   }
+
   Future<void> _restoreFile({
     required WebDavBackupFileEntry entry,
     required LocalLibraryFileSystem fileSystem,
@@ -946,6 +965,7 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
     await controller.close();
     await writeFuture;
   }
+
   Future<void> _restoreFileToPath({
     required WebDavBackupFileEntry entry,
     required String targetPath,

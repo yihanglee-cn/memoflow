@@ -60,6 +60,7 @@ part 'webdav_backup/webdav_backup_import.dart';
 
 abstract class _WebDavBackupServiceBase {
   AppDatabase get _db;
+  Future<T> _withBoundDatabase<T>(Future<T> Function() action);
   LocalAttachmentStore get _attachmentStore;
   WebDavBackupStateRepository get _stateRepository;
   WebDavBackupPasswordRepository get _passwordRepository;
@@ -506,7 +507,19 @@ class WebDavBackupService extends _WebDavBackupServiceBase
 
   final _cipher = AesGcm.with256bits();
   final _random = Random.secure();
+  AppDatabase? _boundDatabase;
 
   @override
-  AppDatabase get _db => _readDatabase();
+  Future<T> _withBoundDatabase<T>(Future<T> Function() action) async {
+    final previous = _boundDatabase;
+    _boundDatabase ??= _readDatabase();
+    try {
+      return await action();
+    } finally {
+      _boundDatabase = previous;
+    }
+  }
+
+  @override
+  AppDatabase get _db => _boundDatabase ?? _readDatabase();
 }
