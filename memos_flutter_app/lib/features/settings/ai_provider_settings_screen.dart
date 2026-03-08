@@ -8,18 +8,29 @@ import '../../data/repositories/ai_settings_repository.dart';
 import '../../state/settings/ai_settings_provider.dart';
 import '../../i18n/strings.g.dart';
 
+enum AiProviderSettingsMode { generation, embedding }
+
 class AiProviderSettingsScreen extends ConsumerStatefulWidget {
-  const AiProviderSettingsScreen({super.key});
+  const AiProviderSettingsScreen({
+    super.key,
+    this.mode = AiProviderSettingsMode.generation,
+  });
+
+  final AiProviderSettingsMode mode;
 
   @override
-  ConsumerState<AiProviderSettingsScreen> createState() => _AiProviderSettingsScreenState();
+  ConsumerState<AiProviderSettingsScreen> createState() =>
+      _AiProviderSettingsScreenState();
 }
 
-class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScreen> {
+class _AiProviderSettingsScreenState
+    extends ConsumerState<AiProviderSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _apiUrlController;
   late final TextEditingController _apiKeyController;
-  late final TextEditingController _promptController;
+  late final TextEditingController _embeddingBaseUrlController;
+  late final TextEditingController _embeddingApiKeyController;
+  late final TextEditingController _embeddingModelController;
   ProviderSubscription<AiSettings>? _settingsSubscription;
 
   var _model = '';
@@ -27,21 +38,37 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
   var _saving = false;
   var _modelOptions = <String>[];
 
+  bool get _isGenerationMode =>
+      widget.mode == AiProviderSettingsMode.generation;
+
   @override
   void initState() {
     super.initState();
     final settings = ref.read(aiSettingsProvider);
     _apiUrlController = TextEditingController(text: settings.apiUrl);
     _apiKeyController = TextEditingController(text: settings.apiKey);
-    _promptController = TextEditingController(text: settings.prompt);
+    _embeddingBaseUrlController = TextEditingController(
+      text: settings.embeddingBaseUrl,
+    );
+    _embeddingApiKeyController = TextEditingController(
+      text: settings.embeddingApiKey,
+    );
+    _embeddingModelController = TextEditingController(
+      text: settings.embeddingModel,
+    );
     _model = settings.model;
     _modelOptions = List<String>.from(settings.modelOptions);
 
-    _settingsSubscription = ref.listenManual<AiSettings>(aiSettingsProvider, (prev, next) {
+    _settingsSubscription = ref.listenManual<AiSettings>(aiSettingsProvider, (
+      prev,
+      next,
+    ) {
       if (_dirty || !mounted) return;
       _apiUrlController.text = next.apiUrl;
       _apiKeyController.text = next.apiKey;
-      _promptController.text = next.prompt;
+      _embeddingBaseUrlController.text = next.embeddingBaseUrl;
+      _embeddingApiKeyController.text = next.embeddingApiKey;
+      _embeddingModelController.text = next.embeddingModel;
       setState(() {
         _model = next.model;
         _modelOptions = List<String>.from(next.modelOptions);
@@ -54,7 +81,9 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
     _settingsSubscription?.close();
     _apiUrlController.dispose();
     _apiKeyController.dispose();
-    _promptController.dispose();
+    _embeddingBaseUrlController.dispose();
+    _embeddingApiKeyController.dispose();
+    _embeddingModelController.dispose();
     super.dispose();
   }
 
@@ -111,24 +140,19 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
     });
   }
 
-  String _modelLabel(BuildContext context, String value) {
-    return value;
-  }
-
   Future<void> _pickModel() async {
     if (_saving) return;
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showDialog<String>(
       context: context,
-      showDragHandle: true,
-      builder: (context) {
+      builder: (dialogContext) {
         var isEditing = false;
         var options = List<String>.from(_modelOptions);
 
         return StatefulBuilder(
-          builder: (context, setModalState) {
+          builder: (context, setDialogState) {
             void syncOptions(List<String> next, {bool adjustModel = true}) {
               options = _normalizeModelOptions(next);
-              setModalState(() {});
+              setDialogState(() {});
               _setModelOptions(options, adjustModel: adjustModel);
             }
 
@@ -140,54 +164,95 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
               if (!_containsModel(options, trimmed)) {
                 syncOptions([trimmed, ...options], adjustModel: false);
               }
-              if (!context.mounted) return;
-              Navigator.of(context).pop(trimmed);
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop(trimmed);
             }
 
             void deleteModel(String model) {
-              final next = options.where((m) => !_isSameModel(m, model)).toList();
+              final next = options
+                  .where((item) => !_isSameModel(item, model))
+                  .toList();
               syncOptions(next);
             }
 
-            return SafeArea(
-              child: ListView(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(context.t.strings.legacy.msg_model),
-                        TextButton(
-                          onPressed: () => setModalState(() => isEditing = !isEditing),
-                          child: Text(
-                            isEditing
-                                ? context.t.strings.legacy.msg_done
-                                : context.t.strings.legacy.msg_edit,
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 32,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 420,
+                  maxHeight: 520,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 14, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              context.t.strings.legacy.msg_model,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                          TextButton(
+                            onPressed: () =>
+                                setDialogState(() => isEditing = !isEditing),
+                            child: Text(
+                              isEditing
+                                  ? context.t.strings.legacy.msg_done
+                                  : context.t.strings.legacy.msg_edit,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  ...options.map(
-                    (m) => ListTile(
-                      title: Text(_modelLabel(context, m)),
-                      trailing: isEditing
-                          ? IconButton(
-                              tooltip: context.t.strings.legacy.msg_delete,
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => deleteModel(m),
-                            )
-                          : (_isSameModel(m, _model) ? const Icon(Icons.check) : null),
-                      onTap: isEditing ? null : () => Navigator.of(context).pop(m),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          ...options.map(
+                            (item) => ListTile(
+                              title: Text(item),
+                              trailing: isEditing
+                                  ? IconButton(
+                                      tooltip:
+                                          context.t.strings.legacy.msg_delete,
+                                      icon: const Icon(
+                                        Icons.delete_outline_rounded,
+                                      ),
+                                      onPressed: () => deleteModel(item),
+                                    )
+                                  : (_isSameModel(item, _model)
+                                        ? const Icon(Icons.check_rounded)
+                                        : null),
+                              onTap: isEditing
+                                  ? null
+                                  : () => Navigator.of(dialogContext).pop(item),
+                            ),
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.add_rounded),
+                            title: Text(
+                              context.t.strings.legacy.msg_add_custom_model,
+                            ),
+                            onTap: addCustomModel,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.add),
-                    title: Text(context.t.strings.legacy.msg_add_custom_model),
-                    onTap: addCustomModel,
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           },
@@ -195,8 +260,7 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
       },
     );
 
-    if (selected == null) return;
-    if (!mounted) return;
+    if (selected == null || !mounted) return;
     _setModel(selected);
   }
 
@@ -209,7 +273,9 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
 
   Future<void> _save() async {
     if (_saving) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_isGenerationMode && !(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
 
     setState(() => _saving = true);
     try {
@@ -224,19 +290,20 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
         apiKey: _apiKeyController.text.trim(),
         model: model,
         modelOptions: options,
-        prompt: _promptController.text.trim(),
+        embeddingBaseUrl: _embeddingBaseUrlController.text.trim(),
+        embeddingApiKey: _embeddingApiKeyController.text.trim(),
+        embeddingModel: _embeddingModelController.text.trim(),
       );
       await ref.read(aiSettingsProvider.notifier).setAll(next);
       if (!mounted) return;
       setState(() => _dirty = false);
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_settings_saved,
-      );
+      showTopToast(context, context.t.strings.legacy.msg_settings_saved);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.t.strings.legacy.msg_save_failed_3(e: e))),
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_save_failed_3(e: e)),
+        ),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -245,12 +312,235 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
 
   @override
   Widget build(BuildContext context) {
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? MemoFlowPalette.backgroundDark : MemoFlowPalette.backgroundLight;
+    final bg = isDark
+        ? MemoFlowPalette.backgroundDark
+        : MemoFlowPalette.backgroundLight;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
-    final textMain = isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
+    final textMain = isDark
+        ? MemoFlowPalette.textDark
+        : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final border = isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.06);
+    final border = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.06);
+
+    final pageTitle = _isGenerationMode
+        ? (isZh ? 'LLM 模型' : 'LLM Model')
+        : (isZh ? '向量模型' : 'Embedding Model');
+    final pageDescription = _isGenerationMode
+        ? (isZh
+              ? '用于总结、结构化分析与最终生成。'
+              : 'Used for summaries, structured analysis, and final generation.')
+        : (isZh
+              ? '用于检索、召回、相似度匹配与证据引用。'
+              : 'Used for retrieval, recall, similarity matching, and evidence links.');
+    final compatibilityHint = isZh
+        ? 'LLM 模型和向量模型可以共用同一个接口与密钥，也可以分别配置。如果当前 LLM 服务不支持 embeddings，请在这里单独配置支持向量的服务。'
+        : 'LLM and embedding models can share the same endpoint and API key, or use separate ones. If your current LLM service does not support embeddings, configure a dedicated embedding service here.';
+
+    Widget buildGenerationCard() {
+      return Container(
+        decoration: _cardDecoration(card, border, isDark),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              _FieldBlock(
+                label: isZh ? '接口地址' : 'API URL',
+                textMuted: textMuted,
+                child: TextFormField(
+                  controller: _apiUrlController,
+                  enabled: !_saving,
+                  onChanged: (_) => _markDirty(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  validator: (v) {
+                    final raw = (v ?? '').trim();
+                    if (raw.isEmpty) {
+                      return context.t.strings.legacy.msg_enter_api_url;
+                    }
+                    final uri = Uri.tryParse(raw);
+                    if (uri == null || !(uri.hasScheme && uri.hasAuthority)) {
+                      return context.t.strings.legacy.msg_enter_valid_url;
+                    }
+                    return null;
+                  },
+                ),
+              ),
+              Divider(height: 1, color: border),
+              _FieldBlock(
+                label: isZh ? '接口密钥' : 'API Key',
+                textMuted: textMuted,
+                child: TextFormField(
+                  controller: _apiKeyController,
+                  enabled: !_saving,
+                  onChanged: (_) => _markDirty(),
+                  obscureText: true,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+              Divider(height: 1, color: border),
+              _FieldBlock(
+                label: isZh ? 'LLM 模型' : 'LLM Model',
+                textMuted: textMuted,
+                helper: isZh
+                    ? '用于总结与结构化生成'
+                    : 'Used for summaries and structured generation.',
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: _pickModel,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _model.trim().isEmpty
+                                ? context.t.strings.legacy.msg_select
+                                : _model.trim(),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: textMain,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: textMuted,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildEmbeddingCard() {
+      return Container(
+        decoration: _cardDecoration(card, border, isDark),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              _FieldBlock(
+                label: isZh ? '接口地址' : 'API URL',
+                textMuted: textMuted,
+                child: TextFormField(
+                  controller: _embeddingBaseUrlController,
+                  enabled: !_saving,
+                  onChanged: (_) => _markDirty(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+              Divider(height: 1, color: border),
+              _FieldBlock(
+                label: isZh ? '接口密钥' : 'API Key',
+                textMuted: textMuted,
+                child: TextFormField(
+                  controller: _embeddingApiKeyController,
+                  enabled: !_saving,
+                  onChanged: (_) => _markDirty(),
+                  obscureText: true,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+              Divider(height: 1, color: border),
+              _FieldBlock(
+                label: isZh ? '向量模型' : 'Embedding Model',
+                textMuted: textMuted,
+                helper: isZh
+                    ? '用于检索、召回和相似度匹配'
+                    : 'Used for retrieval, recall, and similarity matching.',
+                child: TextFormField(
+                  controller: _embeddingModelController,
+                  enabled: !_saving,
+                  onChanged: (_) => _markDirty(),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget buildInfoCard() {
+      return Container(
+        decoration: _cardDecoration(card, border, isDark),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              pageTitle,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: textMain,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              pageDescription,
+              style: TextStyle(fontSize: 13, height: 1.55, color: textMuted),
+            ),
+            if (!_isGenerationMode) ...[
+              const SizedBox(height: 10),
+              Text(
+                compatibilityHint,
+                style: TextStyle(fontSize: 13, height: 1.55, color: textMuted),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
 
     Widget body() {
       return Stack(
@@ -258,149 +548,9 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
           ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 110),
             children: [
-              Container(
-                decoration: BoxDecoration(
-                  color: card,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: border),
-                  boxShadow: isDark
-                      ? [
-                          BoxShadow(
-                            blurRadius: 28,
-                            offset: const Offset(0, 16),
-                            color: Colors.black.withValues(alpha: 0.45),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                            color: Colors.black.withValues(alpha: 0.06),
-                          ),
-                        ],
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    children: [
-                      _FieldBlock(
-                        label: 'API URL',
-                        textMuted: textMuted,
-                        child: TextFormField(
-                          controller: _apiUrlController,
-                          enabled: !_saving,
-                          onChanged: (_) => _markDirty(),
-                          style: TextStyle(fontWeight: FontWeight.w600, color: textMain),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          validator: (v) {
-                            final raw = (v ?? '').trim();
-                            if (raw.isEmpty) return context.t.strings.legacy.msg_enter_api_url;
-                            final uri = Uri.tryParse(raw);
-                            if (uri == null || !(uri.hasScheme && uri.hasAuthority)) {
-                              return context.t.strings.legacy.msg_enter_valid_url;
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                      Divider(height: 1, color: border),
-                      _FieldBlock(
-                        label: 'API Key',
-                        textMuted: textMuted,
-                        child: TextFormField(
-                          controller: _apiKeyController,
-                          enabled: !_saving,
-                          onChanged: (_) => _markDirty(),
-                          obscureText: true,
-                          style: TextStyle(fontWeight: FontWeight.w600, color: textMain),
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
-                      ),
-                      Divider(height: 1, color: border),
-                      _FieldBlock(
-                        label: context.t.strings.legacy.msg_model,
-                        textMuted: textMuted,
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: _pickModel,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    _model.trim().isEmpty
-                                        ? context.t.strings.legacy.msg_select
-                                        : _model.trim(),
-                                    style: TextStyle(fontWeight: FontWeight.w600, color: textMain),
-                                  ),
-                                ),
-                                Icon(Icons.keyboard_arrow_down_rounded, color: textMuted),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              buildInfoCard(),
               const SizedBox(height: 14),
-              Container(
-                decoration: BoxDecoration(
-                  color: card,
-                  borderRadius: BorderRadius.circular(22),
-                  border: Border.all(color: border),
-                  boxShadow: isDark
-                      ? [
-                          BoxShadow(
-                            blurRadius: 28,
-                            offset: const Offset(0, 16),
-                            color: Colors.black.withValues(alpha: 0.45),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                            color: Colors.black.withValues(alpha: 0.06),
-                          ),
-                        ],
-                ),
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      context.t.strings.legacy.msg_prompt,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: textMuted),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _promptController,
-                      enabled: !_saving,
-                      onChanged: (_) => _markDirty(),
-                      minLines: 6,
-                      maxLines: 10,
-                      style: TextStyle(fontWeight: FontWeight.w600, color: textMain, height: 1.35),
-                      decoration: InputDecoration(
-                        hintText: context.t.strings.legacy.msg_default_prompt_ai_summaries_reports,
-                        hintStyle: TextStyle(color: textMuted),
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _isGenerationMode ? buildGenerationCard() : buildEmbeddingCard(),
             ],
           ),
           Positioned(
@@ -415,12 +565,20 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
                   style: ElevatedButton.styleFrom(
                     backgroundColor: MemoFlowPalette.primary,
                     foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(999),
+                    ),
                     elevation: isDark ? 0 : 4,
                   ),
                   onPressed: _saving ? null : _save,
                   child: _saving
-                      ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
                       : Text(
                           context.t.strings.legacy.msg_save_settings,
                           style: const TextStyle(fontWeight: FontWeight.w800),
@@ -445,7 +603,7 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: Text(context.t.strings.legacy.msg_ai_settings),
+        title: Text(pageTitle),
         centerTitle: false,
       ),
       body: isDark
@@ -457,11 +615,7 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [
-                          const Color(0xFF0B0B0B),
-                          bg,
-                          bg,
-                        ],
+                        colors: [const Color(0xFF0B0B0B), bg, bg],
                       ),
                     ),
                   ),
@@ -472,14 +626,43 @@ class _AiProviderSettingsScreenState extends ConsumerState<AiProviderSettingsScr
           : body(),
     );
   }
+
+  BoxDecoration _cardDecoration(Color card, Color border, bool isDark) {
+    return BoxDecoration(
+      color: card,
+      borderRadius: BorderRadius.circular(22),
+      border: Border.all(color: border),
+      boxShadow: isDark
+          ? [
+              BoxShadow(
+                blurRadius: 28,
+                offset: const Offset(0, 16),
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ]
+          : [
+              BoxShadow(
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: 0.06),
+              ),
+            ],
+    );
+  }
 }
 
 class _FieldBlock extends StatelessWidget {
-  const _FieldBlock({required this.label, required this.textMuted, required this.child});
+  const _FieldBlock({
+    required this.label,
+    required this.textMuted,
+    required this.child,
+    this.helper,
+  });
 
   final String label;
   final Color textMuted;
   final Widget child;
+  final String? helper;
 
   @override
   Widget build(BuildContext context) {
@@ -488,9 +671,23 @@ class _FieldBlock extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: textMuted)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: textMuted,
+            ),
+          ),
           const SizedBox(height: 6),
           child,
+          if (helper != null && helper!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              helper!,
+              style: TextStyle(fontSize: 12, height: 1.45, color: textMuted),
+            ),
+          ],
         ],
       ),
     );
@@ -538,8 +735,14 @@ class _CustomModelDialogState extends State<_CustomModelDialog> {
         ),
       ),
       actions: [
-        TextButton(onPressed: () => _close(null), child: Text(context.t.strings.legacy.msg_cancel_2)),
-        FilledButton(onPressed: () => _close(_controller.text), child: Text(context.t.strings.legacy.msg_ok)),
+        TextButton(
+          onPressed: () => _close(null),
+          child: Text(context.t.strings.legacy.msg_cancel_2),
+        ),
+        FilledButton(
+          onPressed: () => _close(_controller.text),
+          child: Text(context.t.strings.legacy.msg_ok),
+        ),
       ],
     );
   }

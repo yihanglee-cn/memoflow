@@ -7,7 +7,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:window_manager/window_manager.dart';
@@ -19,12 +18,14 @@ import '../../core/platform_layout.dart';
 import '../../core/top_toast.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
+import '../../data/ai/ai_analysis_models.dart';
 import '../../data/ai/ai_summary_service.dart';
-import '../../data/repositories/ai_settings_repository.dart';
+import '../../data/models/local_memo.dart';
 import '../about/about_screen.dart';
 import '../explore/explore_screen.dart';
 import '../home/app_drawer.dart';
 import '../memos/memo_markdown.dart';
+import '../memos/memo_detail_screen.dart';
 import '../memos/memos_list_screen.dart';
 import '../memos/recycle_bin_screen.dart';
 import '../notifications/notifications_screen.dart';
@@ -34,12 +35,13 @@ import '../stats/stats_screen.dart';
 import '../tags/tags_screen.dart';
 import '../sync/sync_queue_screen.dart';
 import '../../state/settings/ai_settings_provider.dart';
+import '../../state/review/ai_analysis_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
-import '../../state/settings/preferences_provider.dart';
 import 'daily_review_screen.dart';
-import 'quick_prompt_editor_screen.dart';
+import 'ai_insight_models.dart';
+import 'ai_insight_settings_sheet.dart';
 import '../../i18n/strings.g.dart';
 
 class AiSummaryScreen extends ConsumerStatefulWidget {
@@ -52,23 +54,15 @@ class AiSummaryScreen extends ConsumerStatefulWidget {
 enum _AiSummaryView { input, report }
 
 class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
-  final _promptController = TextEditingController();
-  final _aiService = AiSummaryService();
   final _reportBoundaryKey = GlobalKey();
-  var _range = _AiRange.last7Days;
+  var _range = AiInsightRange.last7Days;
   DateTimeRange? _customRange;
   var _view = _AiSummaryView.input;
   var _isLoading = false;
-  var _isQuickPromptEditing = false;
   var _requestId = 0;
   AiSummaryResult? _summary;
+  AiSavedAnalysisReport? _analysisReport;
   var _insightExpanded = false;
-
-  @override
-  void dispose() {
-    _promptController.dispose();
-    super.dispose();
-  }
 
   void _navigate(BuildContext context, AppDrawerDestination dest) {
     final route = switch (dest) {
@@ -128,75 +122,13 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     closeDrawerThenPushReplacement(context, const NotificationsScreen());
   }
 
-  void _applyPrompt(String text) {
-    _promptController.text = text;
-    _promptController.selection = TextSelection.fromPosition(
-      TextPosition(offset: _promptController.text.length),
-    );
-  }
-
-  void _enterQuickPromptEditing() {
-    if (_isQuickPromptEditing) return;
-    setState(() => _isQuickPromptEditing = true);
-  }
-
-  void _exitQuickPromptEditing() {
-    if (!_isQuickPromptEditing) return;
-    setState(() => _isQuickPromptEditing = false);
-  }
-
-  Future<void> _addQuickPrompt() async {
-    FocusScope.of(context).unfocus();
-    final created = await Navigator.of(context).push<AiQuickPrompt>(
-      MaterialPageRoute<AiQuickPrompt>(
-        builder: (_) => const QuickPromptEditorScreen(),
-      ),
-    );
-    if (!mounted || created == null) return;
-    final settings = ref.read(aiSettingsProvider);
-    final next = [...settings.quickPrompts];
-    final key = '${created.title}|${created.content}|${created.iconKey}'
-        .toLowerCase();
-    final exists = next.any(
-      (p) => '${p.title}|${p.content}|${p.iconKey}'.toLowerCase() == key,
-    );
-    if (!exists) {
-      next.add(created);
-      await ref
-          .read(aiSettingsProvider.notifier)
-          .setAll(settings.copyWith(quickPrompts: next));
-    }
-    if (!mounted) return;
-    final content = created.content.trim().isNotEmpty
-        ? created.content.trim()
-        : created.title.trim();
-    if (content.isNotEmpty) {
-      _applyPrompt(content);
-    }
-  }
-
-  Future<void> _removeQuickPrompt(AiQuickPrompt prompt) async {
-    final settings = ref.read(aiSettingsProvider);
-    bool same(AiQuickPrompt a, AiQuickPrompt b) {
-      return a.title == b.title &&
-          a.content == b.content &&
-          a.iconKey == b.iconKey;
-    }
-
-    final next = settings.quickPrompts.where((p) => !same(p, prompt)).toList();
-    await ref
-        .read(aiSettingsProvider.notifier)
-        .setAll(settings.copyWith(quickPrompts: next));
-    if (!mounted) return;
-    if (next.isEmpty) {
-      setState(() => _isQuickPromptEditing = false);
-    }
-  }
-
-  Future<DateTimeRange?> _pickCustomRange() {
+  Future<DateTimeRange?> _pickCustomRange(
+    BuildContext pickerContext,
+    DateTimeRange? currentRange,
+  ) {
     final now = DateTime.now();
     final initial =
-        _customRange ??
+        currentRange ??
         DateTimeRange(
           start: DateTime(
             now.year,
@@ -206,30 +138,63 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
           end: DateTime(now.year, now.month, now.day),
         );
     return showDateRangePicker(
-      context: context,
+      context: pickerContext,
       firstDate: DateTime(2000),
       lastDate: DateTime(now.year + 1),
       initialDateRange: initial,
     );
   }
 
-  Future<void> _handleCustomRangeTap() async {
-    final previous = _range;
-    final picked = await _pickCustomRange();
-    if (!mounted) return;
-    if (picked == null) {
-      setState(() => _range = previous);
-      return;
-    }
-    setState(() {
-      _customRange = picked;
-      _range = _AiRange.custom;
-    });
+  Future<void> _openInsightSettings(AiInsightDefinition definition) async {
+    if (_isLoading) return;
+    final result = await showDialog<AiInsightSettingsResult>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        child: AiInsightSettingsSheet(
+          definition: definition,
+          analysisLoading: _isLoading,
+          customRangePicker: _pickCustomRange,
+          previewLoader:
+              ({
+                required range,
+                required customRange,
+                required allowPublic,
+                required allowPrivate,
+                required allowProtected,
+              }) {
+                return _buildPreviewPayload(
+                  range: range,
+                  customRange: customRange,
+                  allowPublic: allowPublic,
+                  allowPrivate: allowPrivate,
+                  allowProtected: allowProtected,
+                );
+              },
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    await _runAnalysis(result);
   }
 
-  Future<void> _startSummary() async {
+  Future<void> _runAnalysis(AiInsightSettingsResult result) async {
     if (_isLoading) return;
     final settings = ref.read(aiSettingsProvider);
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+    if (!settings.hasEnabledEmbeddingProfile) {
+      showTopToast(
+        context,
+        isZh
+            ? '请先配置 embedding 模型。'
+            : 'Please configure an embedding model first.',
+      );
+      return;
+    }
     if (settings.apiKey.trim().isEmpty) {
       showTopToast(
         context,
@@ -246,31 +211,40 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     }
 
     final requestId = ++_requestId;
-    setState(() => _isLoading = true);
+    setState(() {
+      _range = result.range;
+      _customRange = result.customRange;
+      _isLoading = true;
+    });
     try {
-      final memoSource = await _buildMemoSource();
+      final previewPayload = result.previewPayload;
       if (!mounted || !_isLoading || requestId != _requestId) return;
-      if (memoSource.text.trim().isEmpty) {
+      if (!previewPayload.hasContent || previewPayload.embeddingReady <= 0) {
         setState(() => _isLoading = false);
         showTopToast(
           context,
-          context.t.strings.legacy.msg_no_memos_summarize_range,
+          isZh
+              ? '当前时间范围内还没有可用的索引证据。'
+              : 'No indexed evidence is available for this range yet.',
         );
         return;
       }
 
-      final result = await _aiService.generateSummary(
-        language: context.appLanguage,
-        settings: settings,
-        memoText: memoSource.text,
-        rangeLabel: _rangeLabel(),
-        memoCount: memoSource.total,
-        includedCount: memoSource.included,
-        customPrompt: _promptController.text.trim(),
-      );
+      final analysisResult = await ref
+          .read(aiAnalysisServiceProvider)
+          .generateEmotionMap(
+            language: context.appLanguage,
+            settings: settings,
+            range: resolveAiInsightRange(result.range, result.customRange),
+            includePublic: result.allowPublic,
+            includePrivate: result.allowPrivate,
+            includeProtected: result.allowProtected,
+            promptTemplate: result.promptTemplate.trim(),
+          );
       if (!mounted || !_isLoading || requestId != _requestId) return;
       setState(() {
-        _summary = result;
+        _analysisReport = analysisResult;
+        _summary = null;
         _view = _AiSummaryView.report;
         _isLoading = false;
         _insightExpanded = false;
@@ -377,13 +351,50 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     return buffer.toString().trim();
   }
 
+  String _buildStructuredReportText({
+    required AiSavedAnalysisReport report,
+    required bool forMemo,
+  }) {
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+    final title = isZh ? '情绪地图' : 'Emotion Map';
+    final header = forMemo ? '# $title' : title;
+    final buffer = StringBuffer();
+    buffer.writeln(header);
+    buffer.writeln('${context.t.strings.legacy.msg_range}: ${_rangeLabel()}');
+    buffer.writeln('');
+    buffer.writeln(report.summary.trim());
+    for (final section in report.sections) {
+      buffer.writeln('');
+      buffer.writeln('## ${section.title}');
+      buffer.writeln(section.body.trim());
+      final evidences = report.evidences.where(
+        (item) => item.sectionKey == section.sectionKey,
+      );
+      for (final evidence in evidences) {
+        buffer.writeln('- ${evidence.quoteText.trim()}');
+      }
+    }
+    if (report.followUpSuggestions.isNotEmpty) {
+      buffer.writeln('');
+      buffer.writeln('## ${isZh ? '后续建议' : 'Follow-up Suggestions'}');
+      for (final item in report.followUpSuggestions) {
+        buffer.writeln('- ${item.trim()}');
+      }
+    }
+    return buffer.toString().trim();
+  }
+
   Future<void> _shareReport() async {
+    final report = _analysisReport;
     final summary = _summary;
-    if (summary == null) {
+    if (summary == null && report == null) {
       showTopToast(context, context.t.strings.legacy.msg_no_summary_share);
       return;
     }
-    final text = _buildSummaryText(summary: summary, forMemo: false);
+    final text = report != null
+        ? _buildStructuredReportText(report: report, forMemo: false)
+        : _buildSummaryText(summary: summary!, forMemo: false);
     try {
       await SharePlus.instance.share(
         ShareParams(
@@ -402,8 +413,9 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 
   Future<void> _sharePoster() async {
+    final report = _analysisReport;
     final summary = _summary;
-    if (summary == null) {
+    if (summary == null && report == null) {
       showTopToast(context, context.t.strings.legacy.msg_no_summary_share);
       return;
     }
@@ -443,7 +455,9 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(file.path)],
-          text: _buildSummaryText(summary: summary, forMemo: false),
+          text: report != null
+              ? _buildStructuredReportText(report: report, forMemo: false)
+              : _buildSummaryText(summary: summary!, forMemo: false),
           subject: context.t.strings.legacy.msg_ai_summary_report,
         ),
       );
@@ -458,13 +472,16 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 
   Future<void> _saveAsMemo() async {
+    final report = _analysisReport;
     final summary = _summary;
-    if (summary == null) {
+    if (summary == null && report == null) {
       showTopToast(context, context.t.strings.legacy.msg_no_summary_save);
       return;
     }
 
-    final content = _buildSummaryText(summary: summary, forMemo: true);
+    final content = report != null
+        ? _buildStructuredReportText(report: report, forMemo: true)
+        : _buildSummaryText(summary: summary!, forMemo: true);
     final uid = generateUid();
     final now = DateTime.now();
     final tags = extractTags(content);
@@ -496,7 +513,9 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         },
       );
       unawaited(
-        ref.read(syncCoordinatorProvider.notifier).requestSync(
+        ref
+            .read(syncCoordinatorProvider.notifier)
+            .requestSync(
               const SyncRequest(
                 kind: SyncRequestKind.memos,
                 reason: SyncRequestReason.manual,
@@ -516,53 +535,27 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 
   DateTimeRange _effectiveRange() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    if (_range == _AiRange.custom && _customRange != null) {
-      return _customRange!;
-    }
-    if (_range == _AiRange.last30Days) {
-      return DateTimeRange(
-        start: today.subtract(const Duration(days: 29)),
-        end: today,
-      );
-    }
-    return DateTimeRange(
-      start: today.subtract(const Duration(days: 6)),
-      end: today,
-    );
+    return resolveAiInsightRange(_range, _customRange);
   }
 
   String _rangeLabel() {
-    final fmt = DateFormat('yyyy.MM.dd');
-    final range = _effectiveRange();
-    return '${fmt.format(range.start)} - ${fmt.format(range.end)}';
+    return formatAiInsightRangeLabel(_effectiveRange());
   }
 
   String _reportTitle() {
     final range = _effectiveRange();
     final days = range.end.difference(range.start).inDays + 1;
-    if (_range == _AiRange.last7Days || days <= 7) {
-      return context.t.strings.legacy.msg_week;
-    }
-    if (_range == _AiRange.last30Days || days <= 31) {
+    if (_range == AiInsightRange.last30Days || days > 7 && days <= 31) {
       return context.t.strings.legacy.msg_month;
+    }
+    if (_range == AiInsightRange.last7Days || days == 7) {
+      return context.t.strings.legacy.msg_week;
     }
     return context.t.strings.legacy.msg_period_review;
   }
 
   String _reportRangeLabel() {
-    final range = _effectiveRange();
-    final locale = Localizations.localeOf(context).toString();
-    final sameYear = range.start.year == range.end.year;
-    final sameMonth = sameYear && range.start.month == range.end.month;
-    final startFmt = sameYear
-        ? DateFormat.MMMd(locale)
-        : DateFormat.yMMMd(locale);
-    final endFmt = sameYear
-        ? (sameMonth ? DateFormat.d(locale) : DateFormat.MMMd(locale))
-        : DateFormat.yMMMd(locale);
-    return '${startFmt.format(range.start)} - ${endFmt.format(range.end)}';
+    return formatAiInsightReportRangeLabel(context, _effectiveRange());
   }
 
   String _buildInsightMarkdown(AiSummaryResult summary) {
@@ -589,60 +582,23 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     return buffer.toString().trim();
   }
 
-  Future<_MemoSource> _buildMemoSource() async {
-    final range = _effectiveRange();
-    final start = DateTime(
-      range.start.year,
-      range.start.month,
-      range.start.day,
-    );
-    final endExclusive = DateTime(
-      range.end.year,
-      range.end.month,
-      range.end.day,
-    ).add(const Duration(days: 1));
-    final allowPrivate = ref
-        .read(appPreferencesProvider)
-        .aiSummaryAllowPrivateMemos;
-    final db = ref.read(databaseProvider);
-    final rows = await db.listMemosForExport(
-      startTimeSec: start.toUtc().millisecondsSinceEpoch ~/ 1000,
-      endTimeSecExclusive: endExclusive.toUtc().millisecondsSinceEpoch ~/ 1000,
-    );
-    if (rows.isEmpty) {
-      return const _MemoSource.empty();
-    }
-
-    final buffer = StringBuffer();
-    var total = 0;
-    var included = 0;
-    for (final row in rows) {
-      final visibility = (row['visibility'] as String?)?.trim() ?? 'PRIVATE';
-      if (!allowPrivate && visibility.toUpperCase() == 'PRIVATE') {
-        continue;
-      }
-      final content = (row['content'] as String?)?.trim() ?? '';
-      if (content.isEmpty) continue;
-      total += 1;
-      final createdSec = (row['create_time'] as int?) ?? 0;
-      final created = DateTime.fromMillisecondsSinceEpoch(
-        createdSec * 1000,
-        isUtc: true,
-      ).toLocal();
-      final stamp = DateFormat('yyyy-MM-dd').format(created);
-      final line = '[$stamp] $content';
-      if (buffer.length + line.length + 1 > _MemoSource.maxChars) {
-        break;
-      }
-      buffer.writeln(line);
-      included += 1;
-    }
-
-    return _MemoSource(
-      text: buffer.toString().trim(),
-      total: total,
-      included: included,
-    );
+  Future<AiAnalysisPreviewPayload> _buildPreviewPayload({
+    required AiInsightRange range,
+    required DateTimeRange? customRange,
+    required bool allowPublic,
+    required bool allowPrivate,
+    required bool allowProtected,
+  }) async {
+    return ref
+        .read(aiAnalysisServiceProvider)
+        .buildEmotionMapPreview(
+          language: context.appLanguage,
+          settings: ref.read(aiSettingsProvider),
+          range: resolveAiInsightRange(range, customRange),
+          includePublic: allowPublic,
+          includePrivate: allowPrivate,
+          includeProtected: allowProtected,
+        );
   }
 
   PreferredSizeWidget _buildAppBar({
@@ -655,10 +611,10 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }) {
     final enableWindowsDragToMove = Platform.isWindows;
     final titleText = useDesktopSidePane
-        ? context.t.strings.legacy.msg_ai_summary
+        ? context.t.strings.aiInsight.title
         : (isReport
               ? context.t.strings.legacy.msg_ai_summary_report
-              : context.t.strings.legacy.msg_ai_summary);
+              : context.t.strings.aiInsight.title);
     return AppBar(
       title: IgnorePointer(
         ignoring: enableWindowsDragToMove,
@@ -723,17 +679,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         ? MemoFlowPalette.textDark
         : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.6 : 0.5);
-    final chipBg = isDark
-        ? MemoFlowPalette.audioSurfaceDark
-        : MemoFlowPalette.audioSurfaceLight;
-    final inputBg = chipBg;
     final isReport = _view == _AiSummaryView.report;
-    final quickPrompts = ref.watch(
-      aiSettingsProvider.select((s) => s.quickPrompts),
-    );
-    final allowPrivate = ref.watch(
-      appPreferencesProvider.select((p) => p.aiSummaryAllowPrivateMemos),
-    );
     final screenWidth = MediaQuery.sizeOf(context).width;
     final useDesktopSidePane = shouldUseDesktopSidePaneLayout(screenWidth);
     final drawerPanel = AppDrawer(
@@ -753,6 +699,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
             textMain: textMain,
             textMuted: textMuted,
             summary: _summary ?? AiSummaryResult.empty,
+            report: _analysisReport,
           )
         else
           _buildInputBody(
@@ -760,21 +707,14 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
             border: border,
             textMain: textMain,
             textMuted: textMuted,
-            chipBg: chipBg,
-            inputBg: inputBg,
-            quickPrompts: quickPrompts,
-            allowPrivate: allowPrivate,
-            onAllowPrivateChanged: (v) => ref
-                .read(appPreferencesProvider.notifier)
-                .setAiSummaryAllowPrivateMemos(v),
           ),
-        _buildBottomBar(
-          isReport: isReport,
-          bg: bg,
-          border: border,
-          textMain: textMain,
-          card: card,
-        ),
+        if (isReport)
+          _buildBottomBar(
+            bg: bg,
+            border: border,
+            textMain: textMain,
+            card: card,
+          ),
         if (_isLoading)
           _buildLoadingOverlay(
             bg: bg,
@@ -828,234 +768,73 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     required Color border,
     required Color textMain,
     required Color textMuted,
-    required Color chipBg,
-    required Color inputBg,
-    required List<AiQuickPrompt> quickPrompts,
-    required bool allowPrivate,
-    required ValueChanged<bool> onAllowPrivateChanged,
   }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final inactiveTrack = border.withValues(alpha: isDark ? 0.6 : 1);
+    final isNarrow = MediaQuery.sizeOf(context).width < 640;
+    final crossAxisCount = isNarrow ? 2 : 3;
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = isNarrow ? 20.0 : 28.0;
+    final grid = GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: visibleAiInsightDefinitions.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 14,
+        childAspectRatio: isNarrow ? 0.92 : 1.08,
+      ),
+      itemBuilder: (context, index) {
+        final definition = visibleAiInsightDefinitions[index];
+        return _AiInsightCard(
+          definition: definition,
+          cardColor: card,
+          borderColor: border,
+          textMain: textMain,
+          textMuted: textMuted,
+          onTap: () => _openInsightSettings(definition),
+        );
+      },
+    );
+
     return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 160),
+      padding: const EdgeInsets.only(bottom: 32),
       children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: card,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: border),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+        Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: width < 900 ? width : 840),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                24,
+                horizontalPadding,
+                24,
               ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                context.t.strings.legacy.msg_date_range_3,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: textMuted,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: _AiRangeButton(
-                      label: _AiRange.last7Days.labelFor(context.appLanguage),
-                      selected: _range == _AiRange.last7Days,
-                      onTap: () => setState(() => _range = _AiRange.last7Days),
-                      primary: MemoFlowPalette.primary,
-                      background: chipBg,
-                      borderColor: border,
-                      textColor: textMain,
+                  Text(
+                    context.t.strings.aiInsight.title,
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      color: textMain,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _AiRangeButton(
-                      label: _AiRange.last30Days.labelFor(context.appLanguage),
-                      selected: _range == _AiRange.last30Days,
-                      onTap: () => setState(() => _range = _AiRange.last30Days),
-                      primary: MemoFlowPalette.primary,
-                      background: chipBg,
-                      borderColor: border,
-                      textColor: textMain,
+                  const SizedBox(height: 8),
+                  Text(
+                    context.t.strings.aiInsight.subtitle,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.6,
+                      color: textMuted,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _AiRangeButton(
-                      label: _AiRange.custom.labelFor(context.appLanguage),
-                      selected: _range == _AiRange.custom,
-                      onTap: _handleCustomRangeTap,
-                      primary: MemoFlowPalette.primary,
-                      background: chipBg,
-                      borderColor: border,
-                      textColor: textMain,
-                    ),
-                  ),
+                  const SizedBox(height: 24),
+                  grid,
                 ],
               ),
-              const SizedBox(height: 20),
-              Text(
-                context.t.strings.legacy.msg_summary_prompt_optional,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: textMuted,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _promptController,
-                minLines: 4,
-                maxLines: 4,
-                style: TextStyle(fontSize: 15, height: 1.5, color: textMain),
-                decoration: InputDecoration(
-                  hintText:
-                      context.t.strings.legacy.msg_enter_what_want_summarize,
-                  hintStyle: TextStyle(color: textMuted.withValues(alpha: 0.7)),
-                  filled: true,
-                  fillColor: inputBg,
-                  contentPadding: const EdgeInsets.all(16),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide(
-                      color: border.withValues(alpha: 0.0),
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide(
-                      color: border.withValues(alpha: 0.0),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide(
-                      color: MemoFlowPalette.primary.withValues(alpha: 0.35),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Divider(height: 1, color: border.withValues(alpha: 0.6)),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      context.t.strings.legacy.msg_allow_private_memos,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: textMuted,
-                      ),
-                    ),
-                  ),
-                  Transform.scale(
-                    scale: 0.9,
-                    child: Switch(
-                      value: allowPrivate,
-                      onChanged: onAllowPrivateChanged,
-                      activeThumbColor: Colors.white,
-                      activeTrackColor: MemoFlowPalette.primary,
-                      inactiveThumbColor: Colors.white,
-                      inactiveTrackColor: inactiveTrack,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: 28),
-        Row(
-          children: [
-            Text(
-              context.t.strings.legacy.msg_quick_prompts,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.6,
-                color: textMuted,
-              ),
-            ),
-            const Spacer(),
-            if (quickPrompts.isNotEmpty && !_isQuickPromptEditing)
-              TextButton(
-                onPressed: _enterQuickPromptEditing,
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(
-                  context.t.strings.legacy.msg_manage,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: MemoFlowPalette.primary,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final prompt in quickPrompts)
-              _QuickPromptChip(
-                label: prompt.title.trim().isNotEmpty
-                    ? prompt.title.trim()
-                    : prompt.content.trim(),
-                background: card,
-                borderColor: border,
-                textColor: textMain,
-                accent: MemoFlowPalette.primary,
-                icon: QuickPromptIconCatalog.resolve(prompt.iconKey),
-                editing: _isQuickPromptEditing,
-                onDelete: _isQuickPromptEditing
-                    ? () => _removeQuickPrompt(prompt)
-                    : null,
-                onLongPress: _enterQuickPromptEditing,
-                onTap: () {
-                  final content = prompt.content.trim().isNotEmpty
-                      ? prompt.content.trim()
-                      : prompt.title.trim();
-                  if (content.isNotEmpty) {
-                    _applyPrompt(content);
-                  }
-                },
-              ),
-            _QuickPromptAddChip(
-              borderColor: border,
-              textColor: _isQuickPromptEditing
-                  ? MemoFlowPalette.primary
-                  : textMuted,
-              label: _isQuickPromptEditing
-                  ? context.t.strings.legacy.msg_done
-                  : context.t.strings.legacy.msg_add_2,
-              icon: _isQuickPromptEditing ? Icons.check : Icons.add,
-              onTap: _isQuickPromptEditing
-                  ? _exitQuickPromptEditing
-                  : _addQuickPrompt,
-            ),
-          ],
         ),
       ],
     );
@@ -1068,7 +847,18 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     required Color textMain,
     required Color textMuted,
     required AiSummaryResult summary,
+    required AiSavedAnalysisReport? report,
   }) {
+    if (report != null) {
+      return _buildStructuredReportBody(
+        bg: bg,
+        card: card,
+        border: border,
+        textMain: textMain,
+        textMuted: textMuted,
+        report: report,
+      );
+    }
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final reportBg = isDark ? bg : const Color(0xFFF7F2EA);
     final reportCard = isDark ? card : const Color(0xFFFFFFFF);
@@ -1336,7 +1126,6 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 
   Widget _buildBottomBar({
-    required bool isReport,
     required Color bg,
     required Color border,
     required Color textMain,
@@ -1364,15 +1153,10 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
                 width: double.infinity,
                 height: 56,
                 child: FilledButton.icon(
-                  onPressed: isReport ? _sharePoster : _startSummary,
-                  icon: Icon(
-                    isReport ? Icons.palette : Icons.auto_awesome,
-                    size: 20,
-                  ),
+                  onPressed: _sharePoster,
+                  icon: const Icon(Icons.palette, size: 20),
                   label: Text(
-                    isReport
-                        ? context.t.strings.legacy.msg_generate_share_poster
-                        : context.t.strings.legacy.msg_generate_summary,
+                    context.t.strings.legacy.msg_generate_share_poster,
                   ),
                   style: FilledButton.styleFrom(
                     backgroundColor: MemoFlowPalette.primary,
@@ -1386,30 +1170,28 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
                   ),
                 ),
               ),
-              if (isReport) ...[
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: OutlinedButton.icon(
-                    onPressed: _saveAsMemo,
-                    icon: const Icon(Icons.save_as, size: 20),
-                    label: Text(context.t.strings.legacy.msg_save_memo),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: textMain,
-                      side: BorderSide(color: border),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      textStyle: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
-                      backgroundColor: card,
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: OutlinedButton.icon(
+                  onPressed: _saveAsMemo,
+                  icon: const Icon(Icons.save_as, size: 20),
+                  label: Text(context.t.strings.legacy.msg_save_memo),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: textMain,
+                    side: BorderSide(color: border),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
                     ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                    backgroundColor: card,
                   ),
                 ),
-              ],
+              ),
             ],
           ),
         ),
@@ -1503,220 +1285,220 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 }
 
-enum _AiRange { last7Days, last30Days, custom }
-
-extension _AiRangeLabel on _AiRange {
-  String labelFor(AppLanguage language) => switch (this) {
-    _AiRange.last7Days => trByLanguageKey(
-      language: language,
-      key: 'legacy.msg_last_7_days',
-    ),
-    _AiRange.last30Days => trByLanguageKey(
-      language: language,
-      key: 'legacy.msg_last_30_days',
-    ),
-    _AiRange.custom => trByLanguageKey(
-      language: language,
-      key: 'legacy.msg_custom',
-    ),
-  };
-}
-
-class _MemoSource {
-  const _MemoSource({
-    required this.text,
-    required this.total,
-    required this.included,
-  });
-
-  final String text;
-  final int total;
-  final int included;
-
-  static const maxChars = 12000;
-
-  const _MemoSource.empty() : text = '', total = 0, included = 0;
-}
-
-class _AiRangeButton extends StatelessWidget {
-  const _AiRangeButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    required this.primary,
-    required this.background,
-    required this.borderColor,
-    required this.textColor,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final Color primary;
-  final Color background;
-  final Color borderColor;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? primary : background,
-            borderRadius: BorderRadius.circular(12),
-            border: selected ? null : Border.all(color: borderColor),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: selected ? Colors.white : textColor,
-              ),
+extension on _AiSummaryScreenState {
+  Widget _buildStructuredReportBody({
+    required Color bg,
+    required Color card,
+    required Color border,
+    required Color textMain,
+    required Color textMuted,
+    required AiSavedAnalysisReport report,
+  }) {
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+    return RepaintBoundary(
+      key: _reportBoundaryKey,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 200),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: card,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: border),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _QuickPromptChip extends StatelessWidget {
-  const _QuickPromptChip({
-    required this.label,
-    required this.background,
-    required this.borderColor,
-    required this.textColor,
-    required this.accent,
-    required this.icon,
-    required this.editing,
-    required this.onDelete,
-    required this.onLongPress,
-    required this.onTap,
-  });
-
-  final String label;
-  final Color background;
-  final Color borderColor;
-  final Color textColor;
-  final Color accent;
-  final IconData icon;
-  final bool editing;
-  final VoidCallback? onDelete;
-  final VoidCallback? onLongPress;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final content = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: borderColor),
-        boxShadow: isDark
-            ? null
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 3),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isZh ? '情绪地图' : 'Emotion Map',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    color: textMain,
+                  ),
                 ),
-              ],
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 200),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: accent),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: textColor,
+                const SizedBox(height: 8),
+                Text(
+                  _reportRangeLabel(),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: textMuted,
+                  ),
                 ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    final decorated = editing
-        ? Stack(
-            clipBehavior: Clip.none,
-            children: [
-              content,
-              if (onDelete != null)
-                Positioned(
-                  right: -6,
-                  top: -6,
-                  child: GestureDetector(
-                    onTap: onDelete,
-                    child: Container(
-                      width: 18,
-                      height: 18,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE05656),
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.12),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Center(
-                        child: Icon(Icons.close, size: 12, color: Colors.white),
+                if (report.isStale) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      isZh
+                          ? '当前分析结果已过期，建议重新生成。'
+                          : 'This result is stale and should be regenerated.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: textMain,
                       ),
                     ),
                   ),
+                ],
+                const SizedBox(height: 16),
+                Text(
+                  report.summary,
+                  style: TextStyle(fontSize: 15, height: 1.6, color: textMain),
                 ),
-            ],
-          )
-        : content;
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          for (final section in report.sections) ...[
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: card,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    section.title,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: textMain,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    section.body,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.6,
+                      color: textMain,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  for (final evidence in report.evidences.where(
+                    (item) => item.sectionKey == section.sectionKey,
+                  )) ...[
+                    InkWell(
+                      onTap: () => _openEvidenceMemo(evidence),
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: border),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              evidence.quoteText,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.5,
+                                color: textMain,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              isZh
+                                  ? '笔记：${evidence.memoUid} · 相关度 ${(evidence.relevanceScore * 100).toStringAsFixed(0)}%'
+                                  : 'Memo: ${evidence.memoUid} · Score ${(evidence.relevanceScore * 100).toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (report.followUpSuggestions.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: card,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isZh ? '后续建议' : 'Follow-up Suggestions',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: textMain,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  for (final item in report.followUpSuggestions) ...[
+                    Text(
+                      '• $item',
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.6,
+                        color: textMain,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: editing ? null : onTap,
-        onLongPress: editing ? null : onLongPress,
-        borderRadius: BorderRadius.circular(16),
-        child: decorated,
+  Future<void> _openEvidenceMemo(AiAnalysisEvidenceData evidence) async {
+    final row = await ref.read(databaseProvider).getMemoByUid(evidence.memoUid);
+    if (!mounted || row == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => MemoDetailScreen(initialMemo: LocalMemo.fromDb(row)),
       ),
     );
   }
 }
 
-class _QuickPromptAddChip extends StatelessWidget {
-  const _QuickPromptAddChip({
+class _AiInsightCard extends StatelessWidget {
+  const _AiInsightCard({
+    required this.definition,
+    required this.cardColor,
     required this.borderColor,
-    required this.textColor,
-    required this.label,
-    required this.icon,
+    required this.textMain,
+    required this.textMuted,
     required this.onTap,
   });
 
+  final AiInsightDefinition definition;
+  final Color cardColor;
   final Color borderColor;
-  final Color textColor;
-  final String label;
-  final IconData icon;
+  final Color textMain;
+  final Color textMuted;
   final VoidCallback onTap;
 
   @override
@@ -1725,24 +1507,68 @@ class _QuickPromptAddChip extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            color: cardColor,
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(icon, size: 14, color: textColor),
-              const SizedBox(width: 4),
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: definition.accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  definition.icon,
+                  color: definition.accent,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(height: 12),
               Text(
-                label,
+                definition.title(context),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: textColor,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: textMain,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Text(
+                  definition.description(context),
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: textMuted,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  color: textMuted,
+                  size: 22,
                 ),
               ),
             ],

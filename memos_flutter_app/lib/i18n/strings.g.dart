@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 6325 (1265 per locale)
+/// Strings: 6423 (1284 per locale)
 ///
-/// Built on 2026-03-07 at 06:29 UTC
+/// Built on 2026-03-07 at 14:29 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -167,6 +167,7 @@ class _StringsStringsEn {
 	late final _StringsStringsOnboardingEn onboarding = _StringsStringsOnboardingEn._(_root);
 	late final _StringsStringsLoginEn login = _StringsStringsLoginEn._(_root);
 	late final _StringsStringsSettingsEn settings = _StringsStringsSettingsEn._(_root);
+	late final _StringsStringsAiInsightEn aiInsight = _StringsStringsAiInsightEn._(_root);
 	late final _StringsStringsLegacyEn legacy = _StringsStringsLegacyEn._(_root);
 }
 
@@ -269,6 +270,25 @@ class _StringsStringsSettingsEn {
 
 	// Translations
 	late final _StringsStringsSettingsPreferencesEn preferences = _StringsStringsSettingsPreferencesEn._(_root);
+}
+
+// Path: strings.aiInsight
+class _StringsStringsAiInsightEn {
+	_StringsStringsAiInsightEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'AI Insight Studio';
+	String get subtitle => 'Let AI help you understand your notes from different angles.';
+	String get settingsTitle => 'AI Analysis Settings';
+	String get startAnalysis => 'Start Analysis';
+	late final _StringsStringsAiInsightCommonEn common = _StringsStringsAiInsightCommonEn._(_root);
+	late final _StringsStringsAiInsightTimeRangeEn timeRange = _StringsStringsAiInsightTimeRangeEn._(_root);
+	late final _StringsStringsAiInsightPrivacyScopeEn privacyScope = _StringsStringsAiInsightPrivacyScopeEn._(_root);
+	late final _StringsStringsAiInsightPromptSettingsEn promptSettings = _StringsStringsAiInsightPromptSettingsEn._(_root);
+	late final _StringsStringsAiInsightContentPreviewEn contentPreview = _StringsStringsAiInsightContentPreviewEn._(_root);
+	late final _StringsStringsAiInsightCardsEn cards = _StringsStringsAiInsightCardsEn._(_root);
 }
 
 // Path: strings.legacy
@@ -1598,6 +1618,97 @@ class _StringsStringsSettingsPreferencesEn {
 	String get borderColor => 'Border Color';
 }
 
+// Path: strings.aiInsight.common
+class _StringsStringsAiInsightCommonEn {
+	_StringsStringsAiInsightCommonEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get enabled => 'Enabled';
+	String get disabled => 'Disabled';
+}
+
+// Path: strings.aiInsight.timeRange
+class _StringsStringsAiInsightTimeRangeEn {
+	_StringsStringsAiInsightTimeRangeEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Time Range';
+	String get last3Days => 'Last 3 days';
+	String get last7Days => 'Last 7 days';
+	String get last30Days => 'Last 30 days';
+	String get customRange => 'Custom range';
+}
+
+// Path: strings.aiInsight.privacyScope
+class _StringsStringsAiInsightPrivacyScopeEn {
+	_StringsStringsAiInsightPrivacyScopeEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Privacy Scope';
+	String get includePrivateNotes => 'Include private notes';
+	String get description => 'If enabled, private notes will also be sent to the AI model for analysis.';
+}
+
+// Path: strings.aiInsight.promptSettings
+class _StringsStringsAiInsightPromptSettingsEn {
+	_StringsStringsAiInsightPromptSettingsEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Prompt Settings';
+	String get editPromptTemplate => 'Edit Prompt Template';
+	String get description => 'Allows advanced users to customize the AI prompt used for this insight.';
+	String get emptyTemplateHint => 'This insight does not have a prompt template yet. Add one before starting analysis.';
+	String editorDescription({required Object insight}) => 'This template will be used when running ${insight}.';
+	String get editorPlaceholder => 'Describe what the AI should focus on, compare, summarize, or highlight.';
+	String get clearTemplate => 'Clear';
+}
+
+// Path: strings.aiInsight.contentPreview
+class _StringsStringsAiInsightContentPreviewEn {
+	_StringsStringsAiInsightContentPreviewEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Content Preview';
+	String get sectionTitle => 'Content Preview';
+	String get notesToSend => 'Notes to send';
+	String get estimatedTokens => 'Estimated tokens';
+	String get previewContent => 'Preview content';
+	String get timeRange => 'Time range';
+	String get loading => 'Preparing preview…';
+	String get previewLoadFailed => 'Failed to prepare content preview.';
+	String get truncatedNotice => 'The content was truncated to stay within the current analysis limit.';
+	String get emptyState => 'No notes match the current settings. Try changing the time range or privacy scope.';
+	String noteCount({required Object count}) => '${count} notes';
+	String tokenCount({required Object count}) => '${count} tokens';
+}
+
+// Path: strings.aiInsight.cards
+class _StringsStringsAiInsightCardsEn {
+	_StringsStringsAiInsightCardsEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	late final _StringsStringsAiInsightCardsTodayCluesEn todayClues = _StringsStringsAiInsightCardsTodayCluesEn._(_root);
+	late final _StringsStringsAiInsightCardsEmotionMapEn emotionMap = _StringsStringsAiInsightCardsEmotionMapEn._(_root);
+	late final _StringsStringsAiInsightCardsThemeResonanceEn themeResonance = _StringsStringsAiInsightCardsThemeResonanceEn._(_root);
+	late final _StringsStringsAiInsightCardsThoughtTraceEn thoughtTrace = _StringsStringsAiInsightCardsThoughtTraceEn._(_root);
+	late final _StringsStringsAiInsightCardsBlindSpotDiscoveryEn blindSpotDiscovery = _StringsStringsAiInsightCardsBlindSpotDiscoveryEn._(_root);
+	late final _StringsStringsAiInsightCardsRelationshipViewEn relationshipView = _StringsStringsAiInsightCardsRelationshipViewEn._(_root);
+	late final _StringsStringsAiInsightCardsActionExtractionEn actionExtraction = _StringsStringsAiInsightCardsActionExtractionEn._(_root);
+	late final _StringsStringsAiInsightCardsLongTermTrajectoryEn longTermTrajectory = _StringsStringsAiInsightCardsLongTermTrajectoryEn._(_root);
+}
+
 // Path: strings.legacy.app_language
 class _StringsStringsLegacyAppLanguageEn {
 	_StringsStringsLegacyAppLanguageEn._(this._root);
@@ -1760,6 +1871,94 @@ class _StringsStringsLegacyAiSummaryEn {
 	String get error_empty_response => 'AI response is empty';
 	String get error_missing_content => 'AI response content is missing';
 	String get default_prompt => 'You are a minimalist note assistant. Extract key points and present them in a clean format. Keep the tone professional, warm, and concise. Prefer lists and short paragraphs.';
+}
+
+// Path: strings.aiInsight.cards.todayClues
+class _StringsStringsAiInsightCardsTodayCluesEn {
+	_StringsStringsAiInsightCardsTodayCluesEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Today Clues';
+	String get description => 'AI highlights the recent events, tensions, and open loops that deserve your attention first.';
+}
+
+// Path: strings.aiInsight.cards.emotionMap
+class _StringsStringsAiInsightCardsEmotionMapEn {
+	_StringsStringsAiInsightCardsEmotionMapEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Emotion Map';
+	String get description => 'Analyze the emotional flow in your notes and see what has been shaping your state lately.';
+}
+
+// Path: strings.aiInsight.cards.themeResonance
+class _StringsStringsAiInsightCardsThemeResonanceEn {
+	_StringsStringsAiInsightCardsThemeResonanceEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Theme Resonance';
+	String get description => 'Find repeated themes across recent notes and surface what you keep returning to.';
+}
+
+// Path: strings.aiInsight.cards.thoughtTrace
+class _StringsStringsAiInsightCardsThoughtTraceEn {
+	_StringsStringsAiInsightCardsThoughtTraceEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Thought Trace';
+	String get description => 'Reveal hidden assumptions, unresolved questions, and lines of thinking worth exploring further.';
+}
+
+// Path: strings.aiInsight.cards.blindSpotDiscovery
+class _StringsStringsAiInsightCardsBlindSpotDiscoveryEn {
+	_StringsStringsAiInsightCardsBlindSpotDiscoveryEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Blind Spot Discovery';
+	String get description => 'Spot overlooked signals or subtle patterns that are easy to miss while writing.';
+}
+
+// Path: strings.aiInsight.cards.relationshipView
+class _StringsStringsAiInsightCardsRelationshipViewEn {
+	_StringsStringsAiInsightCardsRelationshipViewEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Relationship View';
+	String get description => 'Reframe your notes through the lens of people, interactions, and changing relationship dynamics.';
+}
+
+// Path: strings.aiInsight.cards.actionExtraction
+class _StringsStringsAiInsightCardsActionExtractionEn {
+	_StringsStringsAiInsightCardsActionExtractionEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Action Extraction';
+	String get description => 'Turn reflections into concrete next actions you can try, test, or follow up on.';
+}
+
+// Path: strings.aiInsight.cards.longTermTrajectory
+class _StringsStringsAiInsightCardsLongTermTrajectoryEn {
+	_StringsStringsAiInsightCardsLongTermTrajectoryEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Long-term Trajectory';
+	String get description => 'Look across time and identify meaningful shifts, recurring cycles, and long-term change.';
 }
 
 // Path: strings.legacy.ai_summary.system
@@ -4706,6 +4905,7 @@ class _StringsStringsZhHans extends _StringsStringsEn {
 	@override late final _StringsStringsOnboardingZhHans onboarding = _StringsStringsOnboardingZhHans._(_root);
 	@override late final _StringsStringsLoginZhHans login = _StringsStringsLoginZhHans._(_root);
 	@override late final _StringsStringsSettingsZhHans settings = _StringsStringsSettingsZhHans._(_root);
+	@override late final _StringsStringsAiInsightZhHans aiInsight = _StringsStringsAiInsightZhHans._(_root);
 	@override late final _StringsStringsLegacyZhHans legacy = _StringsStringsLegacyZhHans._(_root);
 }
 
@@ -4808,6 +5008,25 @@ class _StringsStringsSettingsZhHans extends _StringsStringsSettingsEn {
 
 	// Translations
 	@override late final _StringsStringsSettingsPreferencesZhHans preferences = _StringsStringsSettingsPreferencesZhHans._(_root);
+}
+
+// Path: strings.aiInsight
+class _StringsStringsAiInsightZhHans extends _StringsStringsAiInsightEn {
+	_StringsStringsAiInsightZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'AI 思考室';
+	@override String get subtitle => '让 AI 帮你从不同角度理解你的记录';
+	@override String get settingsTitle => 'AI 分析设置';
+	@override String get startAnalysis => '开始分析';
+	@override late final _StringsStringsAiInsightCommonZhHans common = _StringsStringsAiInsightCommonZhHans._(_root);
+	@override late final _StringsStringsAiInsightTimeRangeZhHans timeRange = _StringsStringsAiInsightTimeRangeZhHans._(_root);
+	@override late final _StringsStringsAiInsightPrivacyScopeZhHans privacyScope = _StringsStringsAiInsightPrivacyScopeZhHans._(_root);
+	@override late final _StringsStringsAiInsightPromptSettingsZhHans promptSettings = _StringsStringsAiInsightPromptSettingsZhHans._(_root);
+	@override late final _StringsStringsAiInsightContentPreviewZhHans contentPreview = _StringsStringsAiInsightContentPreviewZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsZhHans cards = _StringsStringsAiInsightCardsZhHans._(_root);
 }
 
 // Path: strings.legacy
@@ -6137,6 +6356,97 @@ class _StringsStringsSettingsPreferencesZhHans extends _StringsStringsSettingsPr
 	@override String get borderColor => '边框色';
 }
 
+// Path: strings.aiInsight.common
+class _StringsStringsAiInsightCommonZhHans extends _StringsStringsAiInsightCommonEn {
+	_StringsStringsAiInsightCommonZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get enabled => '已开启';
+	@override String get disabled => '未开启';
+}
+
+// Path: strings.aiInsight.timeRange
+class _StringsStringsAiInsightTimeRangeZhHans extends _StringsStringsAiInsightTimeRangeEn {
+	_StringsStringsAiInsightTimeRangeZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '时间范围';
+	@override String get last3Days => '最近 3 天';
+	@override String get last7Days => '最近 7 天';
+	@override String get last30Days => '最近 30 天';
+	@override String get customRange => '自定义范围';
+}
+
+// Path: strings.aiInsight.privacyScope
+class _StringsStringsAiInsightPrivacyScopeZhHans extends _StringsStringsAiInsightPrivacyScopeEn {
+	_StringsStringsAiInsightPrivacyScopeZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '隐私范围';
+	@override String get includePrivateNotes => '包含私密记录';
+	@override String get description => '开启后，私密记录也会发送给 AI 模型进行分析。';
+}
+
+// Path: strings.aiInsight.promptSettings
+class _StringsStringsAiInsightPromptSettingsZhHans extends _StringsStringsAiInsightPromptSettingsEn {
+	_StringsStringsAiInsightPromptSettingsZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '提示词设置';
+	@override String get editPromptTemplate => '编辑提示词模板';
+	@override String get description => '允许高级用户自定义当前洞察卡使用的 AI 提示词。';
+	@override String get emptyTemplateHint => '这个洞察卡还没有可用的提示词模板，填写后才能开始分析。';
+	@override String editorDescription({required Object insight}) => '这个模板将用于「${insight}」的分析。';
+	@override String get editorPlaceholder => '填写希望 AI 重点关注、比较、总结或提醒你的内容。';
+	@override String get clearTemplate => '清空';
+}
+
+// Path: strings.aiInsight.contentPreview
+class _StringsStringsAiInsightContentPreviewZhHans extends _StringsStringsAiInsightContentPreviewEn {
+	_StringsStringsAiInsightContentPreviewZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '内容预览';
+	@override String get sectionTitle => '内容预览';
+	@override String get notesToSend => '发送记录数';
+	@override String get estimatedTokens => '预计 Token 数';
+	@override String get previewContent => '预览内容';
+	@override String get timeRange => '时间范围';
+	@override String get loading => '正在准备预览…';
+	@override String get previewLoadFailed => '内容预览加载失败。';
+	@override String get truncatedNotice => '为满足当前分析长度限制，发送内容已被截断。';
+	@override String get emptyState => '当前设置下没有可发送的记录，试试调整时间范围或隐私范围。';
+	@override String noteCount({required Object count}) => '${count} 条记录';
+	@override String tokenCount({required Object count}) => '${count} 个 Token';
+}
+
+// Path: strings.aiInsight.cards
+class _StringsStringsAiInsightCardsZhHans extends _StringsStringsAiInsightCardsEn {
+	_StringsStringsAiInsightCardsZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override late final _StringsStringsAiInsightCardsTodayCluesZhHans todayClues = _StringsStringsAiInsightCardsTodayCluesZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsEmotionMapZhHans emotionMap = _StringsStringsAiInsightCardsEmotionMapZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsThemeResonanceZhHans themeResonance = _StringsStringsAiInsightCardsThemeResonanceZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsThoughtTraceZhHans thoughtTrace = _StringsStringsAiInsightCardsThoughtTraceZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsBlindSpotDiscoveryZhHans blindSpotDiscovery = _StringsStringsAiInsightCardsBlindSpotDiscoveryZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsRelationshipViewZhHans relationshipView = _StringsStringsAiInsightCardsRelationshipViewZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsActionExtractionZhHans actionExtraction = _StringsStringsAiInsightCardsActionExtractionZhHans._(_root);
+	@override late final _StringsStringsAiInsightCardsLongTermTrajectoryZhHans longTermTrajectory = _StringsStringsAiInsightCardsLongTermTrajectoryZhHans._(_root);
+}
+
 // Path: strings.legacy.app_language
 class _StringsStringsLegacyAppLanguageZhHans extends _StringsStringsLegacyAppLanguageEn {
 	_StringsStringsLegacyAppLanguageZhHans._(_StringsZhHans root) : this._root = root, super._(root);
@@ -6299,6 +6609,94 @@ class _StringsStringsLegacyAiSummaryZhHans extends _StringsStringsLegacyAiSummar
 	@override String get error_empty_response => 'AI 响应为空';
 	@override String get error_missing_content => 'AI 响应内容缺失';
 	@override String get default_prompt => '你是一位极简主义的笔记助手，擅长提炼核心观点并以优雅的格式排版。在回复时，请保持专业、温和且简洁的语气。尽量使用列表和简短的段落。';
+}
+
+// Path: strings.aiInsight.cards.todayClues
+class _StringsStringsAiInsightCardsTodayCluesZhHans extends _StringsStringsAiInsightCardsTodayCluesEn {
+	_StringsStringsAiInsightCardsTodayCluesZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '今日线索';
+	@override String get description => 'AI 找出最近记录中最值得关注的事件、问题和悬而未决的线索。';
+}
+
+// Path: strings.aiInsight.cards.emotionMap
+class _StringsStringsAiInsightCardsEmotionMapZhHans extends _StringsStringsAiInsightCardsEmotionMapEn {
+	_StringsStringsAiInsightCardsEmotionMapZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '情绪地图';
+	@override String get description => '分析记录中的情绪流动，看看最近什么在持续影响你的状态。';
+}
+
+// Path: strings.aiInsight.cards.themeResonance
+class _StringsStringsAiInsightCardsThemeResonanceZhHans extends _StringsStringsAiInsightCardsThemeResonanceEn {
+	_StringsStringsAiInsightCardsThemeResonanceZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '主题谐鸣';
+	@override String get description => '识别最近反复出现的主题，帮你看见自己正在持续关注什么。';
+}
+
+// Path: strings.aiInsight.cards.thoughtTrace
+class _StringsStringsAiInsightCardsThoughtTraceZhHans extends _StringsStringsAiInsightCardsThoughtTraceEn {
+	_StringsStringsAiInsightCardsThoughtTraceZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '思维迹象';
+	@override String get description => '梳理记录中的思路、疑问与潜在假设，帮助你继续往下想。';
+}
+
+// Path: strings.aiInsight.cards.blindSpotDiscovery
+class _StringsStringsAiInsightCardsBlindSpotDiscoveryZhHans extends _StringsStringsAiInsightCardsBlindSpotDiscoveryEn {
+	_StringsStringsAiInsightCardsBlindSpotDiscoveryZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '盲点发现';
+	@override String get description => '找出记录里容易被忽视的信号、细节或隐藏模式。';
+}
+
+// Path: strings.aiInsight.cards.relationshipView
+class _StringsStringsAiInsightCardsRelationshipViewZhHans extends _StringsStringsAiInsightCardsRelationshipViewEn {
+	_StringsStringsAiInsightCardsRelationshipViewZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '关系视角';
+	@override String get description => '从人与关系的角度重新理解这些记录，看见互动中的变化。';
+}
+
+// Path: strings.aiInsight.cards.actionExtraction
+class _StringsStringsAiInsightCardsActionExtractionZhHans extends _StringsStringsAiInsightCardsActionExtractionEn {
+	_StringsStringsAiInsightCardsActionExtractionZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '行动提炼';
+	@override String get description => '从记录中提炼出值得尝试的行动，让反思更容易落地。';
+}
+
+// Path: strings.aiInsight.cards.longTermTrajectory
+class _StringsStringsAiInsightCardsLongTermTrajectoryZhHans extends _StringsStringsAiInsightCardsLongTermTrajectoryEn {
+	_StringsStringsAiInsightCardsLongTermTrajectoryZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '长期轨迹';
+	@override String get description => '从更长的时间跨度观察你的变化，识别阶段性趋势与循环。';
 }
 
 // Path: strings.legacy.ai_summary.system
@@ -8093,6 +8491,55 @@ extension on Translations {
 			case 'strings.settings.preferences.cardColor': return 'Card Color';
 			case 'strings.settings.preferences.border': return 'Border';
 			case 'strings.settings.preferences.borderColor': return 'Border Color';
+			case 'strings.aiInsight.title': return 'AI Insight Studio';
+			case 'strings.aiInsight.subtitle': return 'Let AI help you understand your notes from different angles.';
+			case 'strings.aiInsight.settingsTitle': return 'AI Analysis Settings';
+			case 'strings.aiInsight.startAnalysis': return 'Start Analysis';
+			case 'strings.aiInsight.common.enabled': return 'Enabled';
+			case 'strings.aiInsight.common.disabled': return 'Disabled';
+			case 'strings.aiInsight.timeRange.title': return 'Time Range';
+			case 'strings.aiInsight.timeRange.last3Days': return 'Last 3 days';
+			case 'strings.aiInsight.timeRange.last7Days': return 'Last 7 days';
+			case 'strings.aiInsight.timeRange.last30Days': return 'Last 30 days';
+			case 'strings.aiInsight.timeRange.customRange': return 'Custom range';
+			case 'strings.aiInsight.privacyScope.title': return 'Privacy Scope';
+			case 'strings.aiInsight.privacyScope.includePrivateNotes': return 'Include private notes';
+			case 'strings.aiInsight.privacyScope.description': return 'If enabled, private notes will also be sent to the AI model for analysis.';
+			case 'strings.aiInsight.promptSettings.title': return 'Prompt Settings';
+			case 'strings.aiInsight.promptSettings.editPromptTemplate': return 'Edit Prompt Template';
+			case 'strings.aiInsight.promptSettings.description': return 'Allows advanced users to customize the AI prompt used for this insight.';
+			case 'strings.aiInsight.promptSettings.emptyTemplateHint': return 'This insight does not have a prompt template yet. Add one before starting analysis.';
+			case 'strings.aiInsight.promptSettings.editorDescription': return ({required Object insight}) => 'This template will be used when running ${insight}.';
+			case 'strings.aiInsight.promptSettings.editorPlaceholder': return 'Describe what the AI should focus on, compare, summarize, or highlight.';
+			case 'strings.aiInsight.promptSettings.clearTemplate': return 'Clear';
+			case 'strings.aiInsight.contentPreview.title': return 'Content Preview';
+			case 'strings.aiInsight.contentPreview.sectionTitle': return 'Content Preview';
+			case 'strings.aiInsight.contentPreview.notesToSend': return 'Notes to send';
+			case 'strings.aiInsight.contentPreview.estimatedTokens': return 'Estimated tokens';
+			case 'strings.aiInsight.contentPreview.previewContent': return 'Preview content';
+			case 'strings.aiInsight.contentPreview.timeRange': return 'Time range';
+			case 'strings.aiInsight.contentPreview.loading': return 'Preparing preview…';
+			case 'strings.aiInsight.contentPreview.previewLoadFailed': return 'Failed to prepare content preview.';
+			case 'strings.aiInsight.contentPreview.truncatedNotice': return 'The content was truncated to stay within the current analysis limit.';
+			case 'strings.aiInsight.contentPreview.emptyState': return 'No notes match the current settings. Try changing the time range or privacy scope.';
+			case 'strings.aiInsight.contentPreview.noteCount': return ({required Object count}) => '${count} notes';
+			case 'strings.aiInsight.contentPreview.tokenCount': return ({required Object count}) => '${count} tokens';
+			case 'strings.aiInsight.cards.todayClues.title': return 'Today Clues';
+			case 'strings.aiInsight.cards.todayClues.description': return 'AI highlights the recent events, tensions, and open loops that deserve your attention first.';
+			case 'strings.aiInsight.cards.emotionMap.title': return 'Emotion Map';
+			case 'strings.aiInsight.cards.emotionMap.description': return 'Analyze the emotional flow in your notes and see what has been shaping your state lately.';
+			case 'strings.aiInsight.cards.themeResonance.title': return 'Theme Resonance';
+			case 'strings.aiInsight.cards.themeResonance.description': return 'Find repeated themes across recent notes and surface what you keep returning to.';
+			case 'strings.aiInsight.cards.thoughtTrace.title': return 'Thought Trace';
+			case 'strings.aiInsight.cards.thoughtTrace.description': return 'Reveal hidden assumptions, unresolved questions, and lines of thinking worth exploring further.';
+			case 'strings.aiInsight.cards.blindSpotDiscovery.title': return 'Blind Spot Discovery';
+			case 'strings.aiInsight.cards.blindSpotDiscovery.description': return 'Spot overlooked signals or subtle patterns that are easy to miss while writing.';
+			case 'strings.aiInsight.cards.relationshipView.title': return 'Relationship View';
+			case 'strings.aiInsight.cards.relationshipView.description': return 'Reframe your notes through the lens of people, interactions, and changing relationship dynamics.';
+			case 'strings.aiInsight.cards.actionExtraction.title': return 'Action Extraction';
+			case 'strings.aiInsight.cards.actionExtraction.description': return 'Turn reflections into concrete next actions you can try, test, or follow up on.';
+			case 'strings.aiInsight.cards.longTermTrajectory.title': return 'Long-term Trajectory';
+			case 'strings.aiInsight.cards.longTermTrajectory.description': return 'Look across time and identify meaningful shifts, recurring cycles, and long-term change.';
 			case 'strings.legacy.msg_memos_backend_docs': return 'Memos Backend Docs';
 			case 'strings.legacy.msg_remember_moment_feel_warmth_life_take': return 'Remember the moment, feel the warmth of life.\\nTake a quick review every day.';
 			case 'strings.legacy.msg_sure_want_delete_shortcut': return 'Are you sure you want to delete this shortcut?';
@@ -11732,6 +12179,55 @@ extension on _StringsZhHans {
 			case 'strings.settings.preferences.cardColor': return '卡片色';
 			case 'strings.settings.preferences.border': return '边框';
 			case 'strings.settings.preferences.borderColor': return '边框色';
+			case 'strings.aiInsight.title': return 'AI 思考室';
+			case 'strings.aiInsight.subtitle': return '让 AI 帮你从不同角度理解你的记录';
+			case 'strings.aiInsight.settingsTitle': return 'AI 分析设置';
+			case 'strings.aiInsight.startAnalysis': return '开始分析';
+			case 'strings.aiInsight.common.enabled': return '已开启';
+			case 'strings.aiInsight.common.disabled': return '未开启';
+			case 'strings.aiInsight.timeRange.title': return '时间范围';
+			case 'strings.aiInsight.timeRange.last3Days': return '最近 3 天';
+			case 'strings.aiInsight.timeRange.last7Days': return '最近 7 天';
+			case 'strings.aiInsight.timeRange.last30Days': return '最近 30 天';
+			case 'strings.aiInsight.timeRange.customRange': return '自定义范围';
+			case 'strings.aiInsight.privacyScope.title': return '隐私范围';
+			case 'strings.aiInsight.privacyScope.includePrivateNotes': return '包含私密记录';
+			case 'strings.aiInsight.privacyScope.description': return '开启后，私密记录也会发送给 AI 模型进行分析。';
+			case 'strings.aiInsight.promptSettings.title': return '提示词设置';
+			case 'strings.aiInsight.promptSettings.editPromptTemplate': return '编辑提示词模板';
+			case 'strings.aiInsight.promptSettings.description': return '允许高级用户自定义当前洞察卡使用的 AI 提示词。';
+			case 'strings.aiInsight.promptSettings.emptyTemplateHint': return '这个洞察卡还没有可用的提示词模板，填写后才能开始分析。';
+			case 'strings.aiInsight.promptSettings.editorDescription': return ({required Object insight}) => '这个模板将用于「${insight}」的分析。';
+			case 'strings.aiInsight.promptSettings.editorPlaceholder': return '填写希望 AI 重点关注、比较、总结或提醒你的内容。';
+			case 'strings.aiInsight.promptSettings.clearTemplate': return '清空';
+			case 'strings.aiInsight.contentPreview.title': return '内容预览';
+			case 'strings.aiInsight.contentPreview.sectionTitle': return '内容预览';
+			case 'strings.aiInsight.contentPreview.notesToSend': return '发送记录数';
+			case 'strings.aiInsight.contentPreview.estimatedTokens': return '预计 Token 数';
+			case 'strings.aiInsight.contentPreview.previewContent': return '预览内容';
+			case 'strings.aiInsight.contentPreview.timeRange': return '时间范围';
+			case 'strings.aiInsight.contentPreview.loading': return '正在准备预览…';
+			case 'strings.aiInsight.contentPreview.previewLoadFailed': return '内容预览加载失败。';
+			case 'strings.aiInsight.contentPreview.truncatedNotice': return '为满足当前分析长度限制，发送内容已被截断。';
+			case 'strings.aiInsight.contentPreview.emptyState': return '当前设置下没有可发送的记录，试试调整时间范围或隐私范围。';
+			case 'strings.aiInsight.contentPreview.noteCount': return ({required Object count}) => '${count} 条记录';
+			case 'strings.aiInsight.contentPreview.tokenCount': return ({required Object count}) => '${count} 个 Token';
+			case 'strings.aiInsight.cards.todayClues.title': return '今日线索';
+			case 'strings.aiInsight.cards.todayClues.description': return 'AI 找出最近记录中最值得关注的事件、问题和悬而未决的线索。';
+			case 'strings.aiInsight.cards.emotionMap.title': return '情绪地图';
+			case 'strings.aiInsight.cards.emotionMap.description': return '分析记录中的情绪流动，看看最近什么在持续影响你的状态。';
+			case 'strings.aiInsight.cards.themeResonance.title': return '主题谐鸣';
+			case 'strings.aiInsight.cards.themeResonance.description': return '识别最近反复出现的主题，帮你看见自己正在持续关注什么。';
+			case 'strings.aiInsight.cards.thoughtTrace.title': return '思维迹象';
+			case 'strings.aiInsight.cards.thoughtTrace.description': return '梳理记录中的思路、疑问与潜在假设，帮助你继续往下想。';
+			case 'strings.aiInsight.cards.blindSpotDiscovery.title': return '盲点发现';
+			case 'strings.aiInsight.cards.blindSpotDiscovery.description': return '找出记录里容易被忽视的信号、细节或隐藏模式。';
+			case 'strings.aiInsight.cards.relationshipView.title': return '关系视角';
+			case 'strings.aiInsight.cards.relationshipView.description': return '从人与关系的角度重新理解这些记录，看见互动中的变化。';
+			case 'strings.aiInsight.cards.actionExtraction.title': return '行动提炼';
+			case 'strings.aiInsight.cards.actionExtraction.description': return '从记录中提炼出值得尝试的行动，让反思更容易落地。';
+			case 'strings.aiInsight.cards.longTermTrajectory.title': return '长期轨迹';
+			case 'strings.aiInsight.cards.longTermTrajectory.description': return '从更长的时间跨度观察你的变化，识别阶段性趋势与循环。';
 			case 'strings.legacy.msg_memos_backend_docs': return 'memos后端使用文档';
 			case 'strings.legacy.msg_remember_moment_feel_warmth_life_take': return '记住这一刻，感受生活的温度。\\n每天来一次随机漫步。';
 			case 'strings.legacy.msg_sure_want_delete_shortcut': return '确定要删除该快捷筛选吗？';

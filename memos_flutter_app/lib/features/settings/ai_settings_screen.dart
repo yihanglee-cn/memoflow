@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/app_localization.dart';
 import '../../core/memoflow_palette.dart';
 import 'ai_provider_settings_screen.dart';
 import 'ai_user_profile_screen.dart';
@@ -14,10 +13,16 @@ class AiSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? MemoFlowPalette.backgroundDark : MemoFlowPalette.backgroundLight;
+    final bg = isDark
+        ? MemoFlowPalette.backgroundDark
+        : MemoFlowPalette.backgroundLight;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
-    final textMain = isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
+    final textMain = isDark
+        ? MemoFlowPalette.textDark
+        : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
 
     return Scaffold(
       backgroundColor: bg,
@@ -46,11 +51,7 @@ class AiSettingsScreen extends StatelessWidget {
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xFF0B0B0B),
-                      bg,
-                      bg,
-                    ],
+                    colors: [const Color(0xFF0B0B0B), bg, bg],
                   ),
                 ),
               ),
@@ -60,13 +61,38 @@ class AiSettingsScreen extends StatelessWidget {
             children: [
               _CardRow(
                 card: card,
-                title: context.t.strings.legacy.msg_ai_provider,
-                subtitle: context.t.strings.legacy.msg_help_ai_understand_better,
+                title: isZh ? 'LLM 模型' : 'LLM Model',
+                subtitle: isZh
+                    ? '用于总结、结构化分析与最终生成'
+                    : 'Used for summaries, structured analysis, and final generation.',
                 textMain: textMain,
                 textMuted: textMuted,
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => const AiProviderSettingsScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const AiProviderSettingsScreen(
+                        mode: AiProviderSettingsMode.generation,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+              _CardRow(
+                card: card,
+                title: isZh ? '向量模型' : 'Embedding Model',
+                subtitle: isZh
+                    ? '用于检索、召回、相似度匹配与证据引用'
+                    : 'Used for retrieval, recall, similarity matching, and evidence links.',
+                textMain: textMain,
+                textMuted: textMuted,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const AiProviderSettingsScreen(
+                        mode: AiProviderSettingsMode.embedding,
+                      ),
+                    ),
                   );
                 },
               ),
@@ -79,7 +105,9 @@ class AiSettingsScreen extends StatelessWidget {
                 textMuted: textMuted,
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => const AiUserProfileScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const AiUserProfileScreen(),
+                    ),
                   );
                 },
               ),
@@ -137,15 +165,24 @@ class _CardRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(fontWeight: FontWeight.w800, color: textMain)),
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: textMain,
+                      ),
+                    ),
                     if (subtitle.isNotEmpty) ...[
                       const SizedBox(height: 4),
-                      Text(subtitle, style: TextStyle(fontSize: 12, color: textMuted)),
+                      Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 12, color: textMuted),
+                      ),
                     ],
                   ],
                 ),
               ),
-              Icon(Icons.chevron_right, size: 20, color: textMuted),
+              Icon(Icons.chevron_right_rounded, color: textMuted),
             ],
           ),
         ),

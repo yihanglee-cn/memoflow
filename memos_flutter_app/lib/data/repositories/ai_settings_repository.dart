@@ -4,6 +4,68 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../core/app_localization.dart';
 import '../../state/settings/preferences_provider.dart';
+
+enum AiBackendKind { remoteApi, localApi }
+
+enum AiProviderKind { openAiCompatible, anthropicCompatible }
+
+String _backendKindToStorage(AiBackendKind value) => switch (value) {
+  AiBackendKind.remoteApi => 'remote_api',
+  AiBackendKind.localApi => 'local_api',
+};
+
+AiBackendKind _backendKindFromStorage(String value) {
+  return switch (value.trim().toLowerCase()) {
+    'local_api' => AiBackendKind.localApi,
+    _ => AiBackendKind.remoteApi,
+  };
+}
+
+String _providerKindToStorage(AiProviderKind value) => switch (value) {
+  AiProviderKind.openAiCompatible => 'openai_compatible',
+  AiProviderKind.anthropicCompatible => 'anthropic_compatible',
+};
+
+AiProviderKind _providerKindFromStorage(String value) {
+  return switch (value.trim().toLowerCase()) {
+    'anthropic_compatible' => AiProviderKind.anthropicCompatible,
+    _ => AiProviderKind.openAiCompatible,
+  };
+}
+
+AiBackendKind inferBackendKindFromBaseUrl(String baseUrl) {
+  final trimmed = baseUrl.trim().toLowerCase();
+  if (trimmed.isEmpty) return AiBackendKind.remoteApi;
+  final uri = Uri.tryParse(trimmed);
+  final host = uri?.host.toLowerCase() ?? '';
+  if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+    return AiBackendKind.localApi;
+  }
+  if (host.startsWith('192.168.') ||
+      host.startsWith('10.') ||
+      host.startsWith('172.16.') ||
+      host.startsWith('172.17.') ||
+      host.startsWith('172.18.') ||
+      host.startsWith('172.19.') ||
+      host.startsWith('172.2')) {
+    return AiBackendKind.localApi;
+  }
+  return AiBackendKind.remoteApi;
+}
+
+AiProviderKind inferGenerationProviderKind({
+  required String baseUrl,
+  required String model,
+}) {
+  final normalizedUrl = baseUrl.trim().toLowerCase();
+  final normalizedModel = model.trim().toLowerCase();
+  if (normalizedUrl.contains('anthropic') ||
+      normalizedModel.contains('claude')) {
+    return AiProviderKind.anthropicCompatible;
+  }
+  return AiProviderKind.openAiCompatible;
+}
+
 class AiQuickPrompt {
   const AiQuickPrompt({
     required this.title,
@@ -17,11 +79,7 @@ class AiQuickPrompt {
   final String content;
   final String iconKey;
 
-  AiQuickPrompt copyWith({
-    String? title,
-    String? content,
-    String? iconKey,
-  }) {
+  AiQuickPrompt copyWith({String? title, String? content, String? iconKey}) {
     return AiQuickPrompt(
       title: title ?? this.title,
       content: content ?? this.content,
@@ -30,10 +88,10 @@ class AiQuickPrompt {
   }
 
   Map<String, dynamic> toJson() => {
-        'title': title,
-        'content': content,
-        'iconKey': iconKey,
-      };
+    'title': title,
+    'content': content,
+    'iconKey': iconKey,
+  };
 
   factory AiQuickPrompt.fromJson(Map<String, dynamic> json) {
     String readString(String key, String fallback) {
@@ -58,82 +116,66 @@ class AiQuickPrompt {
   }
 }
 
-class AiSettings {
-  static const defaultModelOptions = <String>[
-    'deepseek-chat',
-    'Claude 3.5 Sonnet',
-    'Claude 3.5 Haiku',
-    'Claude 3 Opus',
-    'GPT-4o mini',
-    'GPT-4o',
-  ];
-
-  static AiSettings defaultsFor(AppLanguage language) {
-    return AiSettings(
-      apiUrl: 'https://api.deepseek.com',
-      apiKey: '',
-      model: 'deepseek-chat',
-      modelOptions: defaultModelOptions,
-      prompt: trByLanguageKey(
-        language: language,
-        key: 'legacy.ai_summary.default_prompt',
-      ),
-      userProfile: '',
-      quickPrompts: const <AiQuickPrompt>[],
-    );
-  }
-
-  static final defaults = defaultsFor(AppLanguage.en);
-
-  const AiSettings({
-    required this.apiUrl,
+class AiGenerationProfile {
+  const AiGenerationProfile({
+    required this.profileKey,
+    required this.displayName,
+    required this.backendKind,
+    required this.providerKind,
+    required this.baseUrl,
     required this.apiKey,
     required this.model,
     required this.modelOptions,
-    required this.prompt,
-    required this.userProfile,
-    required this.quickPrompts,
+    required this.enabled,
   });
 
-  final String apiUrl;
+  final String profileKey;
+  final String displayName;
+  final AiBackendKind backendKind;
+  final AiProviderKind providerKind;
+  final String baseUrl;
   final String apiKey;
   final String model;
   final List<String> modelOptions;
-  final String prompt;
-  final String userProfile;
-  final List<AiQuickPrompt> quickPrompts;
+  final bool enabled;
 
-  AiSettings copyWith({
-    String? apiUrl,
+  AiGenerationProfile copyWith({
+    String? profileKey,
+    String? displayName,
+    AiBackendKind? backendKind,
+    AiProviderKind? providerKind,
+    String? baseUrl,
     String? apiKey,
     String? model,
     List<String>? modelOptions,
-    String? prompt,
-    String? userProfile,
-    List<AiQuickPrompt>? quickPrompts,
+    bool? enabled,
   }) {
-    return AiSettings(
-      apiUrl: apiUrl ?? this.apiUrl,
+    return AiGenerationProfile(
+      profileKey: profileKey ?? this.profileKey,
+      displayName: displayName ?? this.displayName,
+      backendKind: backendKind ?? this.backendKind,
+      providerKind: providerKind ?? this.providerKind,
+      baseUrl: baseUrl ?? this.baseUrl,
       apiKey: apiKey ?? this.apiKey,
       model: model ?? this.model,
       modelOptions: modelOptions ?? this.modelOptions,
-      prompt: prompt ?? this.prompt,
-      userProfile: userProfile ?? this.userProfile,
-      quickPrompts: quickPrompts ?? this.quickPrompts,
+      enabled: enabled ?? this.enabled,
     );
   }
 
   Map<String, dynamic> toJson() => {
-    'apiUrl': apiUrl,
+    'profileKey': profileKey,
+    'displayName': displayName,
+    'backendKind': _backendKindToStorage(backendKind),
+    'providerKind': _providerKindToStorage(providerKind),
+    'baseUrl': baseUrl,
     'apiKey': apiKey,
     'model': model,
     'modelOptions': modelOptions,
-    'prompt': prompt,
-    'userProfile': userProfile,
-    'quickPrompts': quickPrompts.map((p) => p.toJson()).toList(growable: false),
+    'enabled': enabled,
   };
 
-  factory AiSettings.fromJson(Map<String, dynamic> json) {
+  factory AiGenerationProfile.fromJson(Map<String, dynamic> json) {
     String readString(String key, String fallback) {
       final raw = json[key];
       if (raw is String && raw.trim().isNotEmpty) return raw.trim();
@@ -149,19 +191,377 @@ class AiSettings {
         if (item is! String) continue;
         final trimmed = item.trim();
         if (trimmed.isEmpty) continue;
-        final normalized = trimmed.toLowerCase();
-        if (seen.add(normalized)) {
+        if (seen.add(trimmed.toLowerCase())) {
           options.add(trimmed);
         }
       }
-      if (options.isEmpty) return fallback;
-      return options;
+      return options.isEmpty ? fallback : List.unmodifiable(options);
     }
 
-    bool containsModel(List<String> options, String model) {
-      final normalized = model.trim().toLowerCase();
-      if (normalized.isEmpty) return false;
-      return options.any((option) => option.trim().toLowerCase() == normalized);
+    bool readBool(String key, bool fallback) {
+      final raw = json[key];
+      if (raw is bool) return raw;
+      if (raw is num) return raw != 0;
+      if (raw is String) {
+        final normalized = raw.trim().toLowerCase();
+        if (normalized == 'true' || normalized == '1') return true;
+        if (normalized == 'false' || normalized == '0') return false;
+      }
+      return fallback;
+    }
+
+    final baseUrl = readString('baseUrl', 'https://api.deepseek.com');
+    final model = readString('model', 'deepseek-chat');
+    return AiGenerationProfile(
+      profileKey: readString('profileKey', 'default_generation'),
+      displayName: readString('displayName', 'Default Generation'),
+      backendKind: _backendKindFromStorage(
+        readString(
+          'backendKind',
+          _backendKindToStorage(inferBackendKindFromBaseUrl(baseUrl)),
+        ),
+      ),
+      providerKind: _providerKindFromStorage(
+        readString(
+          'providerKind',
+          _providerKindToStorage(
+            inferGenerationProviderKind(baseUrl: baseUrl, model: model),
+          ),
+        ),
+      ),
+      baseUrl: baseUrl,
+      apiKey: readString('apiKey', ''),
+      model: model,
+      modelOptions: readModelOptions('modelOptions', const <String>[
+        "deepseek-chat",
+      ]),
+      enabled: readBool('enabled', true),
+    );
+  }
+}
+
+class AiEmbeddingProfile {
+  const AiEmbeddingProfile({
+    required this.profileKey,
+    required this.displayName,
+    required this.backendKind,
+    required this.providerKind,
+    required this.baseUrl,
+    required this.apiKey,
+    required this.model,
+    required this.enabled,
+  });
+
+  final String profileKey;
+  final String displayName;
+  final AiBackendKind backendKind;
+  final AiProviderKind providerKind;
+  final String baseUrl;
+  final String apiKey;
+  final String model;
+  final bool enabled;
+
+  AiEmbeddingProfile copyWith({
+    String? profileKey,
+    String? displayName,
+    AiBackendKind? backendKind,
+    AiProviderKind? providerKind,
+    String? baseUrl,
+    String? apiKey,
+    String? model,
+    bool? enabled,
+  }) {
+    return AiEmbeddingProfile(
+      profileKey: profileKey ?? this.profileKey,
+      displayName: displayName ?? this.displayName,
+      backendKind: backendKind ?? this.backendKind,
+      providerKind: providerKind ?? this.providerKind,
+      baseUrl: baseUrl ?? this.baseUrl,
+      apiKey: apiKey ?? this.apiKey,
+      model: model ?? this.model,
+      enabled: enabled ?? this.enabled,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'profileKey': profileKey,
+    'displayName': displayName,
+    'backendKind': _backendKindToStorage(backendKind),
+    'providerKind': _providerKindToStorage(providerKind),
+    'baseUrl': baseUrl,
+    'apiKey': apiKey,
+    'model': model,
+    'enabled': enabled,
+  };
+
+  factory AiEmbeddingProfile.fromJson(Map<String, dynamic> json) {
+    String readString(String key, String fallback) {
+      final raw = json[key];
+      if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+      return fallback;
+    }
+
+    bool readBool(String key, bool fallback) {
+      final raw = json[key];
+      if (raw is bool) return raw;
+      if (raw is num) return raw != 0;
+      if (raw is String) {
+        final normalized = raw.trim().toLowerCase();
+        if (normalized == 'true' || normalized == '1') return true;
+        if (normalized == 'false' || normalized == '0') return false;
+      }
+      return fallback;
+    }
+
+    final baseUrl = readString('baseUrl', '');
+    return AiEmbeddingProfile(
+      profileKey: readString('profileKey', 'default_embedding'),
+      displayName: readString('displayName', 'Default Embedding'),
+      backendKind: _backendKindFromStorage(
+        readString(
+          'backendKind',
+          _backendKindToStorage(inferBackendKindFromBaseUrl(baseUrl)),
+        ),
+      ),
+      providerKind: _providerKindFromStorage(
+        readString(
+          'providerKind',
+          _providerKindToStorage(AiProviderKind.openAiCompatible),
+        ),
+      ),
+      baseUrl: baseUrl,
+      apiKey: readString('apiKey', ''),
+      model: readString('model', ''),
+      enabled: readBool('enabled', true),
+    );
+  }
+}
+
+class AiSettings {
+  static const defaultModelOptions = <String>[
+    'deepseek-chat',
+    'Claude 3.5 Sonnet',
+    'Claude 3.5 Haiku',
+    'Claude 3 Opus',
+    'GPT-4o mini',
+    'GPT-4o',
+  ];
+
+  static AiSettings defaultsFor(AppLanguage language) {
+    const defaultGenerationKey = 'default_generation';
+    return AiSettings(
+      generationProfiles: const <AiGenerationProfile>[
+        AiGenerationProfile(
+          profileKey: defaultGenerationKey,
+          displayName: 'Default Generation',
+          backendKind: AiBackendKind.remoteApi,
+          providerKind: AiProviderKind.openAiCompatible,
+          baseUrl: 'https://api.deepseek.com',
+          apiKey: '',
+          model: 'deepseek-chat',
+          modelOptions: defaultModelOptions,
+          enabled: true,
+        ),
+      ],
+      selectedGenerationProfileKey: defaultGenerationKey,
+      embeddingProfiles: const <AiEmbeddingProfile>[],
+      selectedEmbeddingProfileKey: null,
+      prompt: trByLanguageKey(
+        language: language,
+        key: 'legacy.ai_summary.default_prompt',
+      ),
+      userProfile: '',
+      quickPrompts: const <AiQuickPrompt>[],
+      analysisPromptTemplates: const <String, String>{},
+    );
+  }
+
+  static final defaults = defaultsFor(AppLanguage.en);
+
+  const AiSettings({
+    required this.generationProfiles,
+    required this.selectedGenerationProfileKey,
+    required this.embeddingProfiles,
+    required this.selectedEmbeddingProfileKey,
+    required this.prompt,
+    required this.userProfile,
+    required this.quickPrompts,
+    required this.analysisPromptTemplates,
+  });
+
+  final List<AiGenerationProfile> generationProfiles;
+  final String selectedGenerationProfileKey;
+  final List<AiEmbeddingProfile> embeddingProfiles;
+  final String? selectedEmbeddingProfileKey;
+  final String prompt;
+  final String userProfile;
+  final List<AiQuickPrompt> quickPrompts;
+  final Map<String, String> analysisPromptTemplates;
+
+  AiGenerationProfile get selectedGenerationProfile {
+    final normalized = selectedGenerationProfileKey.trim();
+    if (normalized.isNotEmpty) {
+      for (final profile in generationProfiles) {
+        if (profile.profileKey.trim() == normalized) return profile;
+      }
+    }
+    return generationProfiles.firstOrNull ??
+        AiSettings.defaults.generationProfiles.first;
+  }
+
+  AiEmbeddingProfile? get selectedEmbeddingProfile {
+    final normalized = selectedEmbeddingProfileKey?.trim() ?? '';
+    if (normalized.isNotEmpty) {
+      for (final profile in embeddingProfiles) {
+        if (profile.profileKey.trim() == normalized) return profile;
+      }
+    }
+    return embeddingProfiles.firstOrNull;
+  }
+
+  List<AiEmbeddingProfile> get enabledEmbeddingProfiles => embeddingProfiles
+      .where((profile) => profile.enabled)
+      .toList(growable: false);
+
+  bool get hasEnabledEmbeddingProfile => enabledEmbeddingProfiles.isNotEmpty;
+
+  String get apiUrl => selectedGenerationProfile.baseUrl;
+  String get apiKey => selectedGenerationProfile.apiKey;
+  String get model => selectedGenerationProfile.model;
+  List<String> get modelOptions => selectedGenerationProfile.modelOptions;
+  Map<String, String> get insightPromptTemplates => analysisPromptTemplates;
+
+  String get embeddingBaseUrl => selectedEmbeddingProfile?.baseUrl ?? '';
+  String get embeddingApiKey => selectedEmbeddingProfile?.apiKey ?? '';
+  String get embeddingModel => selectedEmbeddingProfile?.model ?? '';
+
+  AiSettings copyWith({
+    List<AiGenerationProfile>? generationProfiles,
+    String? selectedGenerationProfileKey,
+    List<AiEmbeddingProfile>? embeddingProfiles,
+    Object? selectedEmbeddingProfileKey = _unset,
+    String? prompt,
+    String? userProfile,
+    List<AiQuickPrompt>? quickPrompts,
+    Map<String, String>? analysisPromptTemplates,
+    Map<String, String>? insightPromptTemplates,
+    String? apiUrl,
+    String? apiKey,
+    String? model,
+    List<String>? modelOptions,
+    String? embeddingBaseUrl,
+    String? embeddingApiKey,
+    String? embeddingModel,
+  }) {
+    var nextGenerationProfiles = generationProfiles ?? this.generationProfiles;
+    final nextSelectedGenerationKey =
+        selectedGenerationProfileKey ?? this.selectedGenerationProfileKey;
+
+    if (apiUrl != null ||
+        apiKey != null ||
+        model != null ||
+        modelOptions != null) {
+      final current = _resolveSelectedGeneration(
+        profiles: nextGenerationProfiles,
+        key: nextSelectedGenerationKey,
+      );
+      final replacement = current.copyWith(
+        baseUrl: apiUrl,
+        apiKey: apiKey,
+        model: model,
+        modelOptions: modelOptions,
+        backendKind: apiUrl != null
+            ? inferBackendKindFromBaseUrl(apiUrl)
+            : null,
+        providerKind: (apiUrl != null || model != null)
+            ? inferGenerationProviderKind(
+                baseUrl: apiUrl ?? current.baseUrl,
+                model: model ?? current.model,
+              )
+            : null,
+      );
+      nextGenerationProfiles = _replaceGenerationProfile(
+        profiles: nextGenerationProfiles,
+        replacement: replacement,
+      );
+    }
+
+    var nextEmbeddingProfiles = embeddingProfiles ?? this.embeddingProfiles;
+    final resolvedSelectedEmbeddingKey =
+        identical(selectedEmbeddingProfileKey, _unset)
+        ? this.selectedEmbeddingProfileKey
+        : selectedEmbeddingProfileKey as String?;
+    if (embeddingBaseUrl != null ||
+        embeddingApiKey != null ||
+        embeddingModel != null) {
+      final current = _resolveSelectedEmbedding(
+        profiles: nextEmbeddingProfiles,
+        key: resolvedSelectedEmbeddingKey,
+      );
+      final replacement =
+          (current ??
+                  AiEmbeddingProfile(
+                    profileKey: 'default_embedding',
+                    displayName: 'Default Embedding',
+                    backendKind: inferBackendKindFromBaseUrl(
+                      embeddingBaseUrl ?? '',
+                    ),
+                    providerKind: AiProviderKind.openAiCompatible,
+                    baseUrl: embeddingBaseUrl ?? '',
+                    apiKey: embeddingApiKey ?? '',
+                    model: embeddingModel ?? '',
+                    enabled: true,
+                  ))
+              .copyWith(
+                baseUrl: embeddingBaseUrl,
+                apiKey: embeddingApiKey,
+                model: embeddingModel,
+                backendKind: embeddingBaseUrl != null
+                    ? inferBackendKindFromBaseUrl(embeddingBaseUrl)
+                    : null,
+              );
+      nextEmbeddingProfiles = _replaceEmbeddingProfile(
+        profiles: nextEmbeddingProfiles,
+        replacement: replacement,
+      );
+    }
+
+    return AiSettings(
+      generationProfiles: nextGenerationProfiles,
+      selectedGenerationProfileKey: nextSelectedGenerationKey,
+      embeddingProfiles: nextEmbeddingProfiles,
+      selectedEmbeddingProfileKey: resolvedSelectedEmbeddingKey,
+      prompt: prompt ?? this.prompt,
+      userProfile: userProfile ?? this.userProfile,
+      quickPrompts: quickPrompts ?? this.quickPrompts,
+      analysisPromptTemplates:
+          analysisPromptTemplates ??
+          insightPromptTemplates ??
+          this.analysisPromptTemplates,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'generationProfiles': generationProfiles
+        .map((p) => p.toJson())
+        .toList(growable: false),
+    'selectedGenerationProfileKey': selectedGenerationProfileKey,
+    'embeddingProfiles': embeddingProfiles
+        .map((p) => p.toJson())
+        .toList(growable: false),
+    'selectedEmbeddingProfileKey': selectedEmbeddingProfileKey,
+    'prompt': prompt,
+    'userProfile': userProfile,
+    'quickPrompts': quickPrompts.map((p) => p.toJson()).toList(growable: false),
+    'analysisPromptTemplates': analysisPromptTemplates,
+    'insightPromptTemplates': analysisPromptTemplates,
+  };
+
+  factory AiSettings.fromJson(Map<String, dynamic> json) {
+    String readString(String key, String fallback) {
+      final raw = json[key];
+      if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+      return fallback;
     }
 
     List<AiQuickPrompt> readQuickPrompts(
@@ -186,31 +586,108 @@ class AiSettings {
         if (prompt.title.trim().isEmpty && prompt.content.trim().isEmpty) {
           continue;
         }
-        final key = '${prompt.title}|${prompt.content}|${prompt.iconKey}';
-        if (seen.add(key)) {
+        final dedupeKey = '${prompt.title}|${prompt.content}|${prompt.iconKey}';
+        if (seen.add(dedupeKey)) {
           prompts.add(prompt);
         }
       }
-      if (prompts.isEmpty) return fallback;
-      return prompts.toList(growable: false);
+      return prompts.isEmpty ? fallback : List.unmodifiable(prompts);
     }
 
-    final model = readString('model', AiSettings.defaults.model);
-    var modelOptions = readModelOptions(
-      'modelOptions',
-      AiSettings.defaults.modelOptions,
-    );
-    if (model.trim().isNotEmpty && !containsModel(modelOptions, model)) {
-      modelOptions = [model, ...modelOptions];
+    Map<String, String> readPromptTemplates() {
+      final raw =
+          json['analysisPromptTemplates'] ?? json['insightPromptTemplates'];
+      if (raw is! Map) return const <String, String>{};
+      final templates = <String, String>{};
+      raw.forEach((templateKey, templateValue) {
+        final normalizedKey = templateKey.toString().trim();
+        final normalizedValue = templateValue is String
+            ? templateValue.trim()
+            : templateValue?.toString().trim() ?? '';
+        if (normalizedKey.isEmpty || normalizedValue.isEmpty) return;
+        templates[normalizedKey] = normalizedValue;
+      });
+      return Map.unmodifiable(templates);
     }
+
+    List<AiGenerationProfile> readGenerationProfiles() {
+      final raw = json['generationProfiles'];
+      if (raw is List) {
+        final profiles = raw
+            .whereType<Map>()
+            .map(
+              (item) =>
+                  AiGenerationProfile.fromJson(item.cast<String, dynamic>()),
+            )
+            .toList(growable: false);
+        if (profiles.isNotEmpty) return profiles;
+      }
+
+      final legacyBaseUrl = readString('apiUrl', AiSettings.defaults.apiUrl);
+      final legacyApiKey = (json['apiKey'] is String)
+          ? (json['apiKey'] as String).trim()
+          : '';
+      final legacyModel = readString('model', AiSettings.defaults.model);
+      final legacyOptionsRaw = json['modelOptions'];
+      final legacyOptions = legacyOptionsRaw is List
+          ? legacyOptionsRaw
+                .whereType<String>()
+                .map((e) => e.trim())
+                .where((e) => e.isNotEmpty)
+                .toList(growable: false)
+          : AiSettings.defaults.modelOptions;
+      return <AiGenerationProfile>[
+        AiGenerationProfile(
+          profileKey: 'default_generation',
+          displayName: 'Default Generation',
+          backendKind: inferBackendKindFromBaseUrl(legacyBaseUrl),
+          providerKind: inferGenerationProviderKind(
+            baseUrl: legacyBaseUrl,
+            model: legacyModel,
+          ),
+          baseUrl: legacyBaseUrl,
+          apiKey: legacyApiKey,
+          model: legacyModel,
+          modelOptions: legacyOptions.isEmpty
+              ? AiSettings.defaultModelOptions
+              : List.unmodifiable(legacyOptions),
+          enabled: true,
+        ),
+      ];
+    }
+
+    List<AiEmbeddingProfile> readEmbeddingProfiles() {
+      final raw = json['embeddingProfiles'];
+      if (raw is! List) return const <AiEmbeddingProfile>[];
+      final profiles = raw
+          .whereType<Map>()
+          .map(
+            (item) => AiEmbeddingProfile.fromJson(item.cast<String, dynamic>()),
+          )
+          .toList(growable: false);
+      return profiles;
+    }
+
+    final generationProfiles = readGenerationProfiles();
+    final selectedGenerationKey = readString(
+      'selectedGenerationProfileKey',
+      generationProfiles.first.profileKey,
+    );
+    final embeddingProfiles = readEmbeddingProfiles();
+    final selectedEmbeddingKeyRaw = json['selectedEmbeddingProfileKey'];
+    final selectedEmbeddingKey =
+        selectedEmbeddingKeyRaw is String &&
+            selectedEmbeddingKeyRaw.trim().isNotEmpty
+        ? selectedEmbeddingKeyRaw.trim()
+        : (embeddingProfiles.isNotEmpty
+              ? embeddingProfiles.first.profileKey
+              : null);
 
     return AiSettings(
-      apiUrl: readString('apiUrl', AiSettings.defaults.apiUrl),
-      apiKey: (json['apiKey'] is String)
-          ? (json['apiKey'] as String).trim()
-          : AiSettings.defaults.apiKey,
-      model: model,
-      modelOptions: modelOptions,
+      generationProfiles: generationProfiles,
+      selectedGenerationProfileKey: selectedGenerationKey,
+      embeddingProfiles: embeddingProfiles,
+      selectedEmbeddingProfileKey: selectedEmbeddingKey,
       prompt: readString('prompt', AiSettings.defaults.prompt),
       userProfile: (json['userProfile'] is String)
           ? (json['userProfile'] as String).trim()
@@ -219,12 +696,76 @@ class AiSettings {
         'quickPrompts',
         AiSettings.defaults.quickPrompts,
       ),
+      analysisPromptTemplates: readPromptTemplates(),
     );
+  }
+
+  static AiGenerationProfile _resolveSelectedGeneration({
+    required List<AiGenerationProfile> profiles,
+    required String key,
+  }) {
+    final normalized = key.trim();
+    for (final profile in profiles) {
+      if (profile.profileKey.trim() == normalized) return profile;
+    }
+    return profiles.firstOrNull ?? AiSettings.defaults.generationProfiles.first;
+  }
+
+  static AiEmbeddingProfile? _resolveSelectedEmbedding({
+    required List<AiEmbeddingProfile> profiles,
+    required String? key,
+  }) {
+    final normalized = key?.trim() ?? '';
+    if (normalized.isNotEmpty) {
+      for (final profile in profiles) {
+        if (profile.profileKey.trim() == normalized) return profile;
+      }
+    }
+    return profiles.firstOrNull;
+  }
+
+  static List<AiGenerationProfile> _replaceGenerationProfile({
+    required List<AiGenerationProfile> profiles,
+    required AiGenerationProfile replacement,
+  }) {
+    if (profiles.isEmpty) return <AiGenerationProfile>[replacement];
+    final next = <AiGenerationProfile>[];
+    var replaced = false;
+    for (final profile in profiles) {
+      if (profile.profileKey.trim() == replacement.profileKey.trim()) {
+        next.add(replacement);
+        replaced = true;
+      } else {
+        next.add(profile);
+      }
+    }
+    if (!replaced) next.add(replacement);
+    return List.unmodifiable(next);
+  }
+
+  static List<AiEmbeddingProfile> _replaceEmbeddingProfile({
+    required List<AiEmbeddingProfile> profiles,
+    required AiEmbeddingProfile replacement,
+  }) {
+    if (profiles.isEmpty) return <AiEmbeddingProfile>[replacement];
+    final next = <AiEmbeddingProfile>[];
+    var replaced = false;
+    for (final profile in profiles) {
+      if (profile.profileKey.trim() == replacement.profileKey.trim()) {
+        next.add(replacement);
+        replaced = true;
+      } else {
+        next.add(profile);
+      }
+    }
+    if (!replaced) next.add(replacement);
+    return List.unmodifiable(next);
   }
 }
 
 class AiSettingsRepository {
-  AiSettingsRepository(this._storage, {required String? accountKey}) : _accountKey = accountKey;
+  AiSettingsRepository(this._storage, {required String? accountKey})
+    : _accountKey = accountKey;
 
   static const _kPrefix = 'ai_settings_v2_';
   static const _kLegacyKey = 'ai_settings_v1';
@@ -284,4 +825,10 @@ class AiSettingsRepository {
     } catch (_) {}
     return null;
   }
+}
+
+const Object _unset = Object();
+
+extension _IterableFirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

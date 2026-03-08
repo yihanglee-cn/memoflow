@@ -13,7 +13,7 @@ class AppDatabase {
   AppDatabase({String dbName = 'memos_app.db'}) : _dbName = dbName;
 
   final String _dbName;
-  static const _dbVersion = 13;
+  static const _dbVersion = 14;
   static const int outboxStatePending = 0;
   static const int outboxStateRunning = 1;
   static const int outboxStateRetry = 2;
@@ -164,6 +164,8 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
             'CREATE INDEX IF NOT EXISTS idx_recycle_bin_items_expire_time ON recycle_bin_items(expire_time ASC);',
           );
 
+          await _ensureAiTables(db);
+
           await _ensureStatsCache(db, rebuild: true);
           await _ensureFts(db, rebuild: true);
         },
@@ -280,6 +282,9 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
             await _normalizeStoredTags(db);
             await _backfillTagsFromMemos(db);
             await _ensureStatsCache(db, rebuild: true);
+          }
+          if (oldVersion < 14) {
+            await _ensureAiTables(db);
           }
         },
         onOpen: (db) async {
@@ -2547,6 +2552,192 @@ CREATE TABLE IF NOT EXISTS memos_fts (
   static String _quoteIdentifier(String identifier) {
     final escaped = identifier.replaceAll('"', '""');
     return '"$escaped"';
+  }
+
+  static Future<void> _ensureAiTables(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_memo_policy (
+  memo_uid TEXT PRIMARY KEY,
+  allow_ai INTEGER NOT NULL DEFAULT 1,
+  updated_time INTEGER NOT NULL,
+  FOREIGN KEY (memo_uid) REFERENCES memos(uid) ON DELETE CASCADE ON UPDATE CASCADE
+);
+''');
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  memo_uid TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  memo_content_hash TEXT NOT NULL,
+  char_start INTEGER NOT NULL,
+  char_end INTEGER NOT NULL,
+  token_estimate INTEGER NOT NULL,
+  memo_create_time INTEGER NOT NULL,
+  memo_update_time INTEGER NOT NULL,
+  memo_visibility TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  invalidated_time INTEGER,
+  created_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  FOREIGN KEY (memo_uid) REFERENCES memos(uid) ON DELETE CASCADE ON UPDATE CASCADE
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_chunks_memo_active_idx ON ai_chunks(memo_uid, is_active, chunk_index);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_chunks_time_active ON ai_chunks(memo_create_time DESC, is_active);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_chunks_content_hash ON ai_chunks(content_hash);',
+    );
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chunk_id INTEGER NOT NULL,
+  backend_kind TEXT NOT NULL,
+  provider_kind TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  model TEXT NOT NULL,
+  model_version TEXT NOT NULL DEFAULT '',
+  dimensions INTEGER NOT NULL,
+  vector_blob BLOB,
+  status TEXT NOT NULL,
+  error_text TEXT,
+  created_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  FOREIGN KEY (chunk_id) REFERENCES ai_chunks(id) ON DELETE CASCADE
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_embeddings_chunk_status ON ai_embeddings(chunk_id, status);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_embeddings_model_status ON ai_embeddings(model, status);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_embeddings_profile ON ai_embeddings(base_url, model, chunk_id);',
+    );
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_index_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  memo_uid TEXT,
+  reason TEXT NOT NULL,
+  memo_content_hash TEXT NOT NULL DEFAULT '',
+  embedding_profile_key TEXT NOT NULL,
+  status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 100,
+  retry_at INTEGER,
+  error_text TEXT,
+  created_time INTEGER NOT NULL,
+  started_time INTEGER,
+  finished_time INTEGER
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_index_jobs_status_priority ON ai_index_jobs(status, priority, created_time);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_index_jobs_memo_profile_hash ON ai_index_jobs(memo_uid, embedding_profile_key, memo_content_hash);',
+    );
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_analysis_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_uid TEXT NOT NULL UNIQUE,
+  analysis_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  range_start INTEGER NOT NULL,
+  range_end_exclusive INTEGER NOT NULL,
+  include_private INTEGER NOT NULL DEFAULT 0,
+  include_protected INTEGER NOT NULL DEFAULT 0,
+  prompt_template TEXT NOT NULL,
+  generation_profile_key TEXT NOT NULL,
+  embedding_profile_key TEXT NOT NULL,
+  retrieval_profile_json TEXT NOT NULL,
+  error_text TEXT,
+  mailbox_delivery_state TEXT NOT NULL DEFAULT 'hidden',
+  mailbox_open_state TEXT NOT NULL DEFAULT 'unread',
+  reply_animation_state TEXT NOT NULL DEFAULT 'idle',
+  created_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  completed_time INTEGER
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_tasks_status_time ON ai_analysis_tasks(status, created_time DESC);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_tasks_type_time ON ai_analysis_tasks(analysis_type, created_time DESC);',
+    );
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_analysis_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL UNIQUE,
+  schema_version INTEGER NOT NULL,
+  analysis_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  follow_up_suggestions_json TEXT NOT NULL,
+  raw_response_text TEXT NOT NULL DEFAULT '',
+  normalized_result_json TEXT NOT NULL,
+  is_stale INTEGER NOT NULL DEFAULT 0,
+  created_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES ai_analysis_tasks(id) ON DELETE CASCADE
+);
+''');
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_analysis_sections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  result_id INTEGER NOT NULL,
+  section_key TEXT NOT NULL,
+  section_order INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_time INTEGER NOT NULL,
+  FOREIGN KEY (result_id) REFERENCES ai_analysis_results(id) ON DELETE CASCADE,
+  UNIQUE(result_id, section_key)
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_sections_result_order ON ai_analysis_sections(result_id, section_order);',
+    );
+
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS ai_analysis_evidences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  result_id INTEGER NOT NULL,
+  section_id INTEGER NOT NULL,
+  evidence_order INTEGER NOT NULL,
+  memo_uid TEXT NOT NULL,
+  chunk_id INTEGER NOT NULL,
+  quote_text TEXT NOT NULL,
+  char_start INTEGER NOT NULL,
+  char_end INTEGER NOT NULL,
+  relevance_score REAL NOT NULL,
+  created_time INTEGER NOT NULL,
+  FOREIGN KEY (result_id) REFERENCES ai_analysis_results(id) ON DELETE CASCADE,
+  FOREIGN KEY (section_id) REFERENCES ai_analysis_sections(id) ON DELETE CASCADE,
+  FOREIGN KEY (chunk_id) REFERENCES ai_chunks(id) ON DELETE CASCADE
+);
+''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_evidences_result_section_order ON ai_analysis_evidences(result_id, section_id, evidence_order);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_evidences_memo_uid ON ai_analysis_evidences(memo_uid);',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_ai_analysis_evidences_chunk_id ON ai_analysis_evidences(chunk_id);',
+    );
   }
 }
 

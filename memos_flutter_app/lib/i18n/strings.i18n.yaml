@@ -109,6 +109,71 @@ settings:
     border: "Border"
     borderColor: "Border Color"
 
+aiInsight:
+  title: "AI Insight Studio"
+  subtitle: "Let AI help you understand your notes from different angles."
+  settingsTitle: "AI Analysis Settings"
+  startAnalysis: "Start Analysis"
+  common:
+    enabled: "Enabled"
+    disabled: "Disabled"
+  timeRange:
+    title: "Time Range"
+    last3Days: "Last 3 days"
+    last7Days: "Last 7 days"
+    last30Days: "Last 30 days"
+    customRange: "Custom range"
+  privacyScope:
+    title: "Privacy Scope"
+    includePrivateNotes: "Include private notes"
+    description: "If enabled, private notes will also be sent to the AI model for analysis."
+  promptSettings:
+    title: "Prompt Settings"
+    editPromptTemplate: "Edit Prompt Template"
+    description: "Allows advanced users to customize the AI prompt used for this insight."
+    emptyTemplateHint: "This insight does not have a prompt template yet. Add one before starting analysis."
+    editorDescription: "This template will be used when running $insight."
+    editorPlaceholder: "Describe what the AI should focus on, compare, summarize, or highlight."
+    clearTemplate: "Clear"
+  contentPreview:
+    title: "Content Preview"
+    sectionTitle: "Content Preview"
+    notesToSend: "Notes to send"
+    estimatedTokens: "Estimated tokens"
+    previewContent: "Preview content"
+    timeRange: "Time range"
+    loading: "Preparing preview…"
+    previewLoadFailed: "Failed to prepare content preview."
+    truncatedNotice: "The content was truncated to stay within the current analysis limit."
+    emptyState: "No notes match the current settings. Try changing the time range or privacy scope."
+    noteCount: "$count notes"
+    tokenCount: "$count tokens"
+  cards:
+    todayClues:
+      title: "Today Clues"
+      description: "AI highlights the recent events, tensions, and open loops that deserve your attention first."
+    emotionMap:
+      title: "Emotion Map"
+      description: "Analyze the emotional flow in your notes and see what has been shaping your state lately."
+    themeResonance:
+      title: "Theme Resonance"
+      description: "Find repeated themes across recent notes and surface what you keep returning to."
+    thoughtTrace:
+      title: "Thought Trace"
+      description: "Reveal hidden assumptions, unresolved questions, and lines of thinking worth exploring further."
+    blindSpotDiscovery:
+      title: "Blind Spot Discovery"
+      description: "Spot overlooked signals or subtle patterns that are easy to miss while writing."
+    relationshipView:
+      title: "Relationship View"
+      description: "Reframe your notes through the lens of people, interactions, and changing relationship dynamics."
+    actionExtraction:
+      title: "Action Extraction"
+      description: "Turn reflections into concrete next actions you can try, test, or follow up on."
+    longTermTrajectory:
+      title: "Long-term Trajectory"
+      description: "Look across time and identify meaningful shifts, recurring cycles, and long-term change."
+
 legacy:
   msg_memos_backend_docs: "Memos Backend Docs"
   msg_remember_moment_feel_warmth_life_take: "Remember the moment, feel the warmth of life.\\\\nTake a quick review every day."

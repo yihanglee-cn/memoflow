@@ -109,6 +109,70 @@ settings:
     border: "边框"
     borderColor: "边框色"
 
+aiInsight:
+  title: "AI 思考室"
+  subtitle: "让 AI 帮你从不同角度理解你的记录"
+  settingsTitle: "AI 分析设置"
+  startAnalysis: "开始分析"
+  common:
+    enabled: "已开启"
+    disabled: "未开启"
+  timeRange:
+    title: "时间范围"
+    last3Days: "最近 3 天"
+    last7Days: "最近 7 天"
+    last30Days: "最近 30 天"
+    customRange: "自定义范围"
+  privacyScope:
+    title: "隐私范围"
+    includePrivateNotes: "包含私密记录"
+    description: "开启后，私密记录也会发送给 AI 模型进行分析。"
+  promptSettings:
+    title: "提示词设置"
+    editPromptTemplate: "编辑提示词模板"
+    description: "允许高级用户自定义当前洞察卡使用的 AI 提示词。"
+    emptyTemplateHint: "这个洞察卡还没有可用的提示词模板，填写后才能开始分析。"
+    editorDescription: "这个模板将用于「$insight」的分析。"
+    editorPlaceholder: "填写希望 AI 重点关注、比较、总结或提醒你的内容。"
+    clearTemplate: "清空"
+  contentPreview:
+    title: "内容预览"
+    sectionTitle: "内容预览"
+    notesToSend: "发送记录数"
+    estimatedTokens: "预计 Token 数"
+    previewContent: "预览内容"
+    timeRange: "时间范围"
+    loading: "正在准备预览…"
+    previewLoadFailed: "内容预览加载失败。"
+    truncatedNotice: "为满足当前分析长度限制，发送内容已被截断。"
+    emptyState: "当前设置下没有可发送的记录，试试调整时间范围或隐私范围。"
+    noteCount: "$count 条记录"
+    tokenCount: "$count 个 Token"
+  cards:
+    todayClues:
+      title: "今日线索"
+      description: "AI 找出最近记录中最值得关注的事件、问题和悬而未决的线索。"
+    emotionMap:
+      title: "情绪地图"
+      description: "分析记录中的情绪流动，看看最近什么在持续影响你的状态。"
+    themeResonance:
+      title: "主题谐鸣"
+      description: "识别最近反复出现的主题，帮你看见自己正在持续关注什么。"
+    thoughtTrace:
+      title: "思维迹象"
+      description: "梳理记录中的思路、疑问与潜在假设，帮助你继续往下想。"
+    blindSpotDiscovery:
+      title: "盲点发现"
+      description: "找出记录里容易被忽视的信号、细节或隐藏模式。"
+    relationshipView:
+      title: "关系视角"
+      description: "从人与关系的角度重新理解这些记录，看见互动中的变化。"
+    actionExtraction:
+      title: "行动提炼"
+      description: "从记录中提炼出值得尝试的行动，让反思更容易落地。"
+    longTermTrajectory:
+      title: "长期轨迹"
+      description: "从更长的时间跨度观察你的变化，识别阶段性趋势与循环。"
 legacy:
   msg_memos_backend_docs: "memos后端使用文档"
   msg_remember_moment_feel_warmth_life_take: "记住这一刻，感受生活的温度。\\\\n每天来一次随机漫步。"
