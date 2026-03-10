@@ -591,10 +591,13 @@ class MemoMarkdown extends StatelessWidget {
             ? Padding(padding: const EdgeInsets.only(right: 6), child: hitBox)
             : Padding(
                 padding: const EdgeInsets.only(right: 6),
-                child: InkWell(
-                  onTap: onTap,
-                  borderRadius: BorderRadius.circular(4),
-                  child: hitBox,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    onTap: onTap,
+                    borderRadius: BorderRadius.circular(4),
+                    child: hitBox,
+                  ),
                 ),
               );
         return InlineCustomWidget(
@@ -1670,12 +1673,14 @@ String stripTaskListToggleHint(String content) {
   if (content.isEmpty) return content;
 
   final lines = content.split('\n');
-  final filtered = lines.map((line) {
-    final match = _taskListToggleHintPattern.firstMatch(line);
-    if (match == null) return line;
-    final leadingWhitespace = match.group(1) ?? '';
-    return '${leadingWhitespace}任务列表';
-  }).toList(growable: false);
+  final filtered = lines
+      .map((line) {
+        final match = _taskListToggleHintPattern.firstMatch(line);
+        if (match == null) return line;
+        final leadingWhitespace = match.group(1) ?? '';
+        return '$leadingWhitespace任务列表';
+      })
+      .toList(growable: false);
 
   return filtered.join('\n');
 }

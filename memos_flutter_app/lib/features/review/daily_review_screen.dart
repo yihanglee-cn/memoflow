@@ -53,7 +53,7 @@ class DailyReviewScreen extends ConsumerStatefulWidget {
 }
 
 class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
-  static const double _collapsedFilterTagMaxHeight = 76;
+  static const double _collapsedFilterTagMaxHeight = 112;
 
   final _random = math.Random();
   late final _memosProvider = memosStreamProvider((
@@ -696,6 +696,13 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
       final softTagBackground = colors?.background.withValues(
         alpha: isDark ? 0.24 : 0.14,
       );
+      final unselectedBackground = softTagBackground ?? chipBg;
+      final selectedBackground = colors?.background ?? defaultSelectedColor;
+      final visibleBackground = Color.alphaBlend(
+        selected ? selectedBackground : unselectedBackground,
+        sheetBg,
+      );
+      final labelColor = resolveReadableTextColor(visibleBackground);
       return FilterChip(
         label: Text('#$tag'),
         selected: selected,
@@ -708,20 +715,15 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
             }
           });
         },
-        backgroundColor: softTagBackground ?? chipBg,
-        selectedColor: colors?.background ?? defaultSelectedColor,
+        backgroundColor: unselectedBackground,
+        selectedColor: selectedBackground,
         side: BorderSide(
           color: selected
               ? (colors?.border ?? defaultSelectedBorder)
               : (colors?.border.withValues(alpha: isDark ? 0.55 : 0.45) ??
                     border),
         ),
-        labelStyle: TextStyle(
-          color: selected
-              ? (colors?.text ?? accent)
-              : (colors?.border ?? textMain),
-          fontWeight: FontWeight.w600,
-        ),
+        labelStyle: TextStyle(color: labelColor, fontWeight: FontWeight.w600),
         showCheckmark: false,
       );
     }
@@ -736,7 +738,6 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
             final bottomInset = MediaQuery.of(context).viewInsets.bottom;
             final screenSize = MediaQuery.sizeOf(context);
             final dialogHeight = math.min(screenSize.height * 0.78, 720.0);
-
             return Dialog(
               backgroundColor: sheetBg,
               surfaceTintColor: Colors.transparent,
@@ -786,274 +787,289 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
                         ),
                         const SizedBox(height: 16),
                         Expanded(
-                          child: SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final collapsedTagHeight = math.min(
+                                math.max(
+                                  _collapsedFilterTagMaxHeight,
+                                  constraints.maxHeight * 0.34,
+                                ),
+                                168.0,
+                              );
+
+                              Widget buildTagViewport() {
+                                return Stack(
                                   children: [
-                                    Expanded(
+                                    ClipRect(
+                                      child: ScrollConfiguration(
+                                        behavior: const MaterialScrollBehavior()
+                                            .copyWith(scrollbars: false),
+                                        child: SingleChildScrollView(
+                                          physics: tagsExpanded
+                                              ? const ClampingScrollPhysics()
+                                              : const NeverScrollableScrollPhysics(),
+                                          child: Align(
+                                            alignment: Alignment.topLeft,
+                                            child: Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: [
+                                                FilterChip(
+                                                  label: Text(
+                                                    context
+                                                        .t
+                                                        .strings
+                                                        .legacy
+                                                        .msg_all_2,
+                                                  ),
+                                                  selected: draftTags.isEmpty,
+                                                  onSelected: (_) {
+                                                    setModalState(() {
+                                                      draftTags.clear();
+                                                    });
+                                                  },
+                                                  backgroundColor: chipBg,
+                                                  selectedColor: accent
+                                                      .withValues(
+                                                        alpha: isDark
+                                                            ? 0.24
+                                                            : 0.15,
+                                                      ),
+                                                  side: BorderSide(
+                                                    color: draftTags.isEmpty
+                                                        ? accent.withValues(
+                                                            alpha: isDark
+                                                                ? 0.62
+                                                                : 0.55,
+                                                          )
+                                                        : border,
+                                                  ),
+                                                  labelStyle: TextStyle(
+                                                    color: draftTags.isEmpty
+                                                        ? accent
+                                                        : textMain,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                  showCheckmark: false,
+                                                ),
+                                                for (final tag in availableTags)
+                                                  buildTagFilterChip(
+                                                    tag,
+                                                    setModalState,
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 0,
+                                      height: 28,
+                                      child: IgnorePointer(
+                                        child: AnimatedOpacity(
+                                          opacity: tagsExpanded ? 0 : 1,
+                                          duration: const Duration(
+                                            milliseconds: 160,
+                                          ),
+                                          curve: Curves.easeOut,
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              gradient: LinearGradient(
+                                                begin: Alignment.topCenter,
+                                                end: Alignment.bottomCenter,
+                                                colors: [
+                                                  sheetBg.withAlpha(0),
+                                                  sheetBg,
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          context
+                                              .t
+                                              .strings
+                                              .legacy
+                                              .msg_select_tags,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: textMuted,
+                                          ),
+                                        ),
+                                      ),
+                                      TextButton.icon(
+                                        onPressed: () {
+                                          setModalState(() {
+                                            tagsExpanded = !tagsExpanded;
+                                          });
+                                        },
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          minimumSize: const Size(0, 0),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                          visualDensity: VisualDensity.compact,
+                                        ),
+                                        icon: AnimatedRotation(
+                                          turns: tagsExpanded ? 0.5 : 0,
+                                          duration: const Duration(
+                                            milliseconds: 180,
+                                          ),
+                                          curve: Curves.easeOutCubic,
+                                          child: const Icon(
+                                            Icons.expand_more_rounded,
+                                            size: 18,
+                                          ),
+                                        ),
+                                        label: Text(
+                                          tagsExpanded
+                                              ? context
+                                                    .t
+                                                    .strings
+                                                    .legacy
+                                                    .msg_collapse
+                                              : context
+                                                    .t
+                                                    .strings
+                                                    .legacy
+                                                    .msg_expand,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  if (availableTags.isEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
                                       child: Text(
                                         context
                                             .t
                                             .strings
                                             .legacy
-                                            .msg_select_tags,
+                                            .msg_no_tags_yet,
                                         style: TextStyle(
                                           fontSize: 13,
-                                          fontWeight: FontWeight.w600,
+                                          fontWeight: FontWeight.w500,
                                           color: textMuted,
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: TextButton.icon(
-                                    onPressed: () {
-                                      setModalState(() {
-                                        tagsExpanded = !tagsExpanded;
-                                      });
-                                    },
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      minimumSize: const Size(0, 0),
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    icon: AnimatedRotation(
-                                      turns: tagsExpanded ? 0.5 : 0,
+                                    )
+                                  else if (tagsExpanded)
+                                    Expanded(child: buildTagViewport())
+                                  else
+                                    AnimatedContainer(
                                       duration: const Duration(
                                         milliseconds: 180,
                                       ),
                                       curve: Curves.easeOutCubic,
-                                      child: const Icon(
-                                        Icons.expand_more_rounded,
-                                        size: 18,
-                                      ),
+                                      height: collapsedTagHeight,
+                                      child: buildTagViewport(),
                                     ),
-                                    label: Text(
-                                      tagsExpanded
-                                          ? context
-                                                .t
-                                                .strings
-                                                .legacy
-                                                .msg_collapse
-                                          : context.t.strings.legacy.msg_expand,
+                                  const SizedBox(height: 18),
+                                  Text(
+                                    context
+                                        .t
+                                        .strings
+                                        .legacy
+                                        .msg_select_date_range,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: textMuted,
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 8),
-                                if (availableTags.isEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Text(
-                                      context.t.strings.legacy.msg_no_tags_yet,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w500,
-                                        color: textMuted,
-                                      ),
+                                  const SizedBox(height: 10),
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      10,
+                                      10,
+                                      10,
                                     ),
-                                  )
-                                else
-                                  Stack(
-                                    children: [
-                                      ClipRect(
-                                        child: AnimatedSize(
-                                          duration: const Duration(
-                                            milliseconds: 180,
-                                          ),
-                                          curve: Curves.easeOutCubic,
-                                          alignment: Alignment.topCenter,
-                                          clipBehavior: Clip.hardEdge,
-                                          child: SizedBox(
-                                            width: double.infinity,
-                                            height: tagsExpanded
-                                                ? null
-                                                : _collapsedFilterTagMaxHeight,
-                                            child: SingleChildScrollView(
-                                              physics:
-                                                  const NeverScrollableScrollPhysics(),
-                                              child: Align(
-                                                alignment: Alignment.topLeft,
-                                                child: Wrap(
-                                                  spacing: 8,
-                                                  runSpacing: 8,
-                                                  children: [
-                                                    FilterChip(
-                                                      label: Text(
-                                                        context
-                                                            .t
-                                                            .strings
-                                                            .legacy
-                                                            .msg_all_2,
-                                                      ),
-                                                      selected:
-                                                          draftTags.isEmpty,
-                                                      onSelected: (_) {
-                                                        setModalState(() {
-                                                          draftTags.clear();
-                                                        });
-                                                      },
-                                                      backgroundColor: chipBg,
-                                                      selectedColor: accent
-                                                          .withValues(
-                                                            alpha: isDark
-                                                                ? 0.24
-                                                                : 0.15,
-                                                          ),
-                                                      side: BorderSide(
-                                                        color: draftTags.isEmpty
-                                                            ? accent.withValues(
-                                                                alpha: isDark
-                                                                    ? 0.62
-                                                                    : 0.55,
-                                                              )
-                                                            : border,
-                                                      ),
-                                                      labelStyle: TextStyle(
-                                                        color: draftTags.isEmpty
-                                                            ? accent
-                                                            : textMain,
-                                                        fontWeight:
-                                                            FontWeight.w600,
-                                                      ),
-                                                      showCheckmark: false,
-                                                    ),
-                                                    for (final tag
-                                                        in availableTags)
-                                                      buildTagFilterChip(
-                                                        tag,
-                                                        setModalState,
-                                                      ),
-                                                  ],
-                                                ),
-                                              ),
+                                    decoration: BoxDecoration(
+                                      color: chipBg,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: border),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.date_range_outlined,
+                                          size: 18,
+                                          color: textMuted,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            _formatRangeLabel(
+                                              draftRange,
+                                              context,
+                                            ),
+                                            style: TextStyle(
+                                              color: draftRange == null
+                                                  ? textMuted
+                                                  : textMain,
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
                                         ),
-                                      ),
-                                      Positioned(
-                                        left: 0,
-                                        right: 0,
-                                        bottom: 0,
-                                        height: 28,
-                                        child: IgnorePointer(
-                                          child: AnimatedOpacity(
-                                            opacity: tagsExpanded ? 0 : 1,
-                                            duration: const Duration(
-                                              milliseconds: 160,
-                                            ),
-                                            curve: Curves.easeOut,
-                                            child: DecoratedBox(
-                                              decoration: BoxDecoration(
-                                                gradient: LinearGradient(
-                                                  begin: Alignment.topCenter,
-                                                  end: Alignment.bottomCenter,
-                                                  colors: [
-                                                    sheetBg.withAlpha(0),
-                                                    sheetBg,
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                const SizedBox(height: 18),
-                                Text(
-                                  context
-                                      .t
-                                      .strings
-                                      .legacy
-                                      .msg_select_date_range,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: textMuted,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.fromLTRB(
-                                    12,
-                                    10,
-                                    10,
-                                    10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: chipBg,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(color: border),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.date_range_outlined,
-                                        size: 18,
-                                        color: textMuted,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          _formatRangeLabel(
-                                            draftRange,
-                                            context,
-                                          ),
-                                          style: TextStyle(
-                                            color: draftRange == null
-                                                ? textMuted
-                                                : textMain,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                      TextButton(
-                                        onPressed: () async {
-                                          final picked = await _pickDateRange(
-                                            draftRange,
-                                          );
-                                          if (picked == null) return;
-                                          setModalState(() {
-                                            draftRange = _normalizeRange(
-                                              picked,
-                                            );
-                                          });
-                                        },
-                                        child: Text(
-                                          context.t.strings.legacy.msg_select,
-                                        ),
-                                      ),
-                                      if (draftRange != null)
                                         TextButton(
-                                          onPressed: () {
+                                          onPressed: () async {
+                                            final picked = await _pickDateRange(
+                                              draftRange,
+                                            );
+                                            if (picked == null) return;
                                             setModalState(() {
-                                              draftRange = null;
+                                              draftRange = _normalizeRange(
+                                                picked,
+                                              );
                                             });
                                           },
                                           child: Text(
-                                            context
-                                                .t
-                                                .strings
-                                                .legacy
-                                                .msg_clear_2,
+                                            context.t.strings.legacy.msg_select,
                                           ),
                                         ),
-                                    ],
+                                        if (draftRange != null)
+                                          TextButton(
+                                            onPressed: () {
+                                              setModalState(() {
+                                                draftRange = null;
+                                              });
+                                            },
+                                            child: Text(
+                                              context
+                                                  .t
+                                                  .strings
+                                                  .legacy
+                                                  .msg_clear_2,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                         const SizedBox(height: 18),
@@ -1257,6 +1273,7 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
                             _ActiveFilterChip(
                               label: '#$tag',
                               isDark: isDark,
+                              surfaceColor: bg,
                               colors: tagColors.resolveChipColorsByPath(
                                 tag,
                                 surfaceColor: card,
@@ -1270,6 +1287,7 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
                                 context,
                               ),
                               isDark: isDark,
+                              surfaceColor: bg,
                             ),
                         ],
                       ),
@@ -1400,11 +1418,13 @@ class _ActiveFilterChip extends StatelessWidget {
   const _ActiveFilterChip({
     required this.label,
     required this.isDark,
+    required this.surfaceColor,
     this.colors,
   });
 
   final String label;
   final bool isDark;
+  final Color surfaceColor;
   final TagChipColors? colors;
 
   @override
@@ -1414,7 +1434,8 @@ class _ActiveFilterChip extends StatelessWidget {
         colors?.background ?? accent.withValues(alpha: isDark ? 0.22 : 0.12);
     final borderColor =
         colors?.border ?? accent.withValues(alpha: isDark ? 0.6 : 0.5);
-    final textColor = colors?.text ?? accent;
+    final visibleBackground = Color.alphaBlend(bg, surfaceColor);
+    final textColor = resolveReadableTextColor(visibleBackground);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
