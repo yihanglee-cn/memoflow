@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/app_localization.dart';
 import '../../core/attachment_toast.dart';
+import '../../core/desktop_window_controls.dart';
 import '../../core/drawer_navigation.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
@@ -1198,6 +1199,7 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
               ),
               onPressed: _openFilterSheet,
             ),
+            if (enableWindowsDragToMove) const DesktopWindowControls(),
           ],
         ),
         body: () {

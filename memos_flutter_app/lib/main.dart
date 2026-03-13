@@ -24,6 +24,9 @@ import 'core/desktop_quick_input_channel.dart';
 import 'features/desktop/quick_input/desktop_quick_input_window.dart';
 import 'features/settings/desktop_settings_window_app.dart';
 
+const String _kMediaKitNativeReferenceHolderPrefix =
+    'com.alexmercerind.media_kit.NativeReferenceHolder.';
+
 void _initializeDesktopDatabaseFactory() {
   if (kIsWeb) return;
   switch (defaultTargetPlatform) {
@@ -46,10 +49,53 @@ void _schedulePostFirstFrameInit() {
   });
 }
 
+Future<void> _cleanupStaleMediaKitDebugFiles() async {
+  if (!kDebugMode || kIsWeb || !Platform.isWindows) {
+    return;
+  }
+
+  try {
+    final files = await Directory.systemTemp
+        .list()
+        .where(
+          (entity) =>
+              entity is File &&
+              entity.path
+                  .split(Platform.pathSeparator)
+                  .last
+                  .startsWith(_kMediaKitNativeReferenceHolderPrefix),
+        )
+        .cast<File>()
+        .toList();
+
+    var deletedCount = 0;
+    for (final file in files) {
+      try {
+        await file.delete();
+        deletedCount += 1;
+      } catch (_) {}
+    }
+
+    if (deletedCount > 0) {
+      LogManager.instance.info(
+        'MediaKit debug temp cleanup',
+        context: {'deletedFiles': deletedCount},
+      );
+    }
+  } catch (error, stackTrace) {
+    LogManager.instance.warn(
+      'MediaKit debug temp cleanup failed',
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+}
+
 Future<void> _postFirstFrameInit() async {
   try {
     await LogManager.instance.init();
   } catch (_) {}
+  await _cleanupStaleMediaKitDebugFiles();
   try {
     VideoPlayerMediaKit.ensureInitialized(windows: true, linux: false);
   } catch (_) {}

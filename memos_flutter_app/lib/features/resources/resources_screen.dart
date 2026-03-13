@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/drawer_navigation.dart';
+import '../../core/desktop_window_controls.dart';
 import '../../core/platform_layout.dart';
 import '../../core/top_toast.dart';
 import '../../core/url.dart';
@@ -398,6 +399,7 @@ class ResourcesScreen extends ConsumerWidget {
               ),
             ),
           ),
+          actions: [if (enableWindowsDragToMove) const DesktopWindowControls()],
         ),
         body: (() {
           final pageBody = entriesAsync.when(
