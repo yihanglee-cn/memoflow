@@ -16,6 +16,7 @@ import '../../core/app_localization.dart';
 import '../../core/markdown_editing.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
+import '../../core/scene_micro_guide_widgets.dart';
 import '../../core/tags.dart';
 import '../../core/top_toast.dart';
 import '../../core/uid.dart';
@@ -25,12 +26,14 @@ import '../../data/models/local_memo.dart';
 import '../../data/models/memo.dart';
 import '../../data/models/memo_location.dart';
 import '../../data/models/memo_template_settings.dart';
+import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../state/settings/location_settings_provider.dart';
 import '../../state/memos/memo_editor_draft_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/memo_editor_providers.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/system/session_provider.dart';
+import '../../state/system/scene_micro_guide_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import 'attachment_gallery_screen.dart';
 import 'link_memo_sheet.dart';
@@ -170,6 +173,9 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
 
   void _syncTagAutocompleteState() {
     final activeQuery = detectActiveTagQuery(_contentController.value);
+    if (activeQuery != null) {
+      _markSceneGuideSeen(SceneMicroGuideId.memoEditorTagAutocomplete);
+    }
     final token = activeQuery == null
         ? null
         : '${activeQuery.start}:${activeQuery.query.toLowerCase()}';
@@ -198,6 +204,10 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     final activeQuery = detectActiveTagQuery(_contentController.value);
     if (activeQuery == null) return const <TagStat>[];
     return buildTagSuggestions(_currentTagStats(), query: activeQuery.query);
+  }
+
+  void _markSceneGuideSeen(SceneMicroGuideId id) {
+    unawaited(ref.read(sceneMicroGuideProvider.notifier).markSeen(id));
   }
 
   KeyEventResult _handleTagAutocompleteKeyEvent(
@@ -844,6 +854,7 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
 
   void _startTagAutocomplete() {
     if (_saving) return;
+    _markSceneGuideSeen(SceneMicroGuideId.memoEditorTagAutocomplete);
     final activeQuery = detectActiveTagQuery(_contentController.value);
     if (activeQuery == null) {
       _insertText('#');
@@ -854,6 +865,7 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
   }
 
   void _applyTagSuggestion(ActiveTagQuery query, TagStat tag) {
+    _markSceneGuideSeen(SceneMicroGuideId.memoEditorTagAutocomplete);
     final value = _contentController.value;
     final selection = value.selection;
     final end = selection.isValid && selection.isCollapsed
@@ -1064,9 +1076,7 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     showTopToast(
       context,
       context.t.strings.legacy.msg_location_updated(
-        next_displayText_fractionDigits_6: next.displayText(
-          fractionDigits: 6,
-        ),
+        next_displayText_fractionDigits_6: next.displayText(fractionDigits: 6),
       ),
       duration: const Duration(seconds: 2),
     );
@@ -2186,6 +2196,24 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     final tagSuggestions = activeTagQuery == null
         ? const <TagStat>[]
         : buildTagSuggestions(tagStats, query: activeTagQuery.query);
+    final sceneGuideState = ref.watch(sceneMicroGuideProvider);
+    final showTagAutocompleteGuide =
+        sceneGuideState.loaded &&
+        !sceneGuideState.isSeen(SceneMicroGuideId.memoEditorTagAutocomplete) &&
+        _editorFocusNode.hasFocus &&
+        tagStats.isNotEmpty;
+    final tagAutocompleteGuideMessage =
+        Platform.isWindows || Platform.isLinux || Platform.isMacOS
+        ? context
+              .t
+              .strings
+              .legacy
+              .msg_scene_micro_guide_editor_tag_autocomplete_desktop
+        : context
+              .t
+              .strings
+              .legacy
+              .msg_scene_micro_guide_editor_tag_autocomplete_mobile;
     final highlightedTagSuggestionIndex = tagSuggestions.isEmpty
         ? 0
         : _tagAutocompleteIndex.clamp(0, tagSuggestions.length - 1).toInt();
@@ -2254,6 +2282,15 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
                                 rebaseAbsoluteFileUrlForV024,
                                 attachAuthForSameOriginAbsolute,
                               ),
+                              if (showTagAutocompleteGuide) ...[
+                                SceneMicroGuideBanner(
+                                  message: tagAutocompleteGuideMessage,
+                                  onDismiss: () => _markSceneGuideSeen(
+                                    SceneMicroGuideId.memoEditorTagAutocomplete,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
                               Expanded(
                                 child: Stack(
                                   clipBehavior: Clip.none,

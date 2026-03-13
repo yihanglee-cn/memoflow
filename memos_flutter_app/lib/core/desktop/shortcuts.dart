@@ -473,6 +473,20 @@ String desktopShortcutBindingLabel(DesktopShortcutBinding binding) {
   return segments.join(' + ');
 }
 
+String desktopShortcutGuideBindingLabel(
+  Map<DesktopShortcutAction, DesktopShortcutBinding> bindings,
+  DesktopShortcutAction action,
+) {
+  final resolved = normalizeDesktopShortcutBindings(bindings);
+  final binding = resolved[action];
+  if (binding == null) return '';
+  final label = desktopShortcutBindingLabel(binding);
+  if (action == DesktopShortcutAction.shortcutOverview && label != 'F1') {
+    return '$label / F1';
+  }
+  return label;
+}
+
 String _desktopShortcutKeyLabel(LogicalKeyboardKey key) {
   if (key == LogicalKeyboardKey.enter) return 'Enter';
   if (key == LogicalKeyboardKey.pageUp) return 'PageUp';

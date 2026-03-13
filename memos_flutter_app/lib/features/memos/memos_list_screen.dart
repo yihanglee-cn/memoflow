@@ -29,6 +29,7 @@ import '../../core/location_launcher.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
+import '../../core/scene_micro_guide_widgets.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
 import '../../core/tag_badge.dart';
@@ -47,6 +48,7 @@ import '../../data/models/memo.dart';
 import '../../data/models/memo_location.dart';
 import '../../data/models/memo_template_settings.dart';
 import '../../data/models/shortcut.dart';
+import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../state/settings/app_lock_provider.dart';
 import '../home/app_drawer.dart';
 import '../../state/system/debug_screenshot_mode_provider.dart';
@@ -62,6 +64,7 @@ import '../../state/settings/preferences_provider.dart';
 import '../../state/system/reminder_providers.dart';
 import '../../state/settings/reminder_settings_provider.dart';
 import '../../state/memos/search_history_provider.dart';
+import '../../state/system/scene_micro_guide_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../about/about_screen.dart';
@@ -364,6 +367,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   String? _selectedShortcutId;
   QuickSearchKind? _selectedQuickSearchKind;
   String? _activeTagFilter;
+  SceneMicroGuideId? _presentedListGuideId;
   var _sortOption = _MemoSortOption.createDesc;
   List<LocalMemo> _animatedMemos = [];
   String _listSignature = '';
@@ -1642,6 +1646,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         action: DesktopShortcutAction.shortcutOverview,
         reason: key == LogicalKeyboardKey.f1 ? 'f1_fallback' : null,
       );
+      _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
       _openShortcutOverviewPage();
       showTopToast(
         context,
@@ -1657,6 +1662,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         pressedKeys: pressed,
         action: DesktopShortcutAction.search,
       );
+      _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
       _focusSearchFromShortcut();
       return true;
     }
@@ -1681,6 +1687,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           action: DesktopShortcutAction.quickRecord,
           reason: 'in_window_dialog',
         );
+        _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
         unawaited(_openQuickRecordFromShortcut());
       } else {
         _logDesktopShortcutEvent(
@@ -1690,6 +1697,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           action: DesktopShortcutAction.quickRecord,
           reason: 'handled_by_app_hotkey_manager',
         );
+        _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
       }
       return true;
     }
@@ -2475,6 +2483,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _openSearch() {
+    _markSceneGuideSeen(SceneMicroGuideId.memoListSearchAndShortcuts);
     setState(() => _searching = true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -2484,6 +2493,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
 
   void _openWindowsHeaderSearch() {
     if (!Platform.isWindows || !widget.enableSearch) return;
+    _markSceneGuideSeen(SceneMicroGuideId.memoListSearchAndShortcuts);
     if (_windowsHeaderSearchExpanded) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -2562,6 +2572,95 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       if (shortcut.shortcutId == id) return shortcut;
     }
     return null;
+  }
+
+  void _markSceneGuideSeen(SceneMicroGuideId id) {
+    unawaited(ref.read(sceneMicroGuideProvider.notifier).markSeen(id));
+  }
+
+  bool _isListGuideEligible(
+    SceneMicroGuideId id, {
+    required SceneMicroGuideState guideState,
+    required bool hasVisibleMemos,
+    required bool canShowSearchShortcutGuide,
+    required bool canShowDesktopShortcutGuide,
+  }) {
+    if (!guideState.loaded || guideState.isSeen(id)) return false;
+    switch (id) {
+      case SceneMicroGuideId.desktopGlobalShortcuts:
+        return canShowDesktopShortcutGuide;
+      case SceneMicroGuideId.memoListSearchAndShortcuts:
+        return canShowSearchShortcutGuide;
+      case SceneMicroGuideId.memoListGestures:
+        return !_searching && hasVisibleMemos;
+      case SceneMicroGuideId.memoEditorTagAutocomplete:
+      case SceneMicroGuideId.attachmentGalleryControls:
+        return false;
+    }
+  }
+
+  SceneMicroGuideId? _resolveListRouteGuide({
+    required SceneMicroGuideState guideState,
+    required bool hasVisibleMemos,
+    required bool canShowSearchShortcutGuide,
+    required bool canShowDesktopShortcutGuide,
+  }) {
+    final presented = _presentedListGuideId;
+    if (presented != null) {
+      return _isListGuideEligible(
+            presented,
+            guideState: guideState,
+            hasVisibleMemos: hasVisibleMemos,
+            canShowSearchShortcutGuide: canShowSearchShortcutGuide,
+            canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
+          )
+          ? presented
+          : null;
+    }
+    final candidates = <SceneMicroGuideId>[
+      SceneMicroGuideId.desktopGlobalShortcuts,
+      SceneMicroGuideId.memoListSearchAndShortcuts,
+      SceneMicroGuideId.memoListGestures,
+    ];
+    for (final candidate in candidates) {
+      if (!_isListGuideEligible(
+        candidate,
+        guideState: guideState,
+        hasVisibleMemos: hasVisibleMemos,
+        canShowSearchShortcutGuide: canShowSearchShortcutGuide,
+        canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
+      )) {
+        continue;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _presentedListGuideId != null) return;
+        setState(() => _presentedListGuideId = candidate);
+      });
+      return candidate;
+    }
+    return null;
+  }
+
+  String _desktopGlobalShortcutsGuideMessage(BuildContext context) {
+    final bindings = ref.read(appPreferencesProvider).desktopShortcutBindings;
+    final searchLabel = desktopShortcutGuideBindingLabel(
+      bindings,
+      DesktopShortcutAction.search,
+    );
+    final quickRecordLabel = desktopShortcutGuideBindingLabel(
+      bindings,
+      DesktopShortcutAction.quickRecord,
+    );
+    final overviewLabel = desktopShortcutGuideBindingLabel(
+      bindings,
+      DesktopShortcutAction.shortcutOverview,
+    );
+    return context.t.strings.legacy
+        .msg_scene_micro_guide_desktop_global_shortcuts(
+          search: searchLabel,
+          quickRecord: quickRecordLabel,
+          overview: overviewLabel,
+        );
   }
 
   String _formatShortcutLoadError(BuildContext context, Object error) {
@@ -4826,6 +4925,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final accounts = session?.accounts ?? const [];
     final showShortcuts = _isAllMemos && session?.currentAccount != null;
     if (!showShortcuts && accounts.length < 2) return;
+    if (showShortcuts) {
+      _markSceneGuideSeen(SceneMicroGuideId.memoListSearchAndShortcuts);
+    }
 
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -5465,12 +5567,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           ? () {}
           : () {
               maybeHaptic();
+              _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
               unawaited(_handleMemoAction(memo, _MemoCardAction.edit));
             },
       onLongPress: removing
           ? () {}
           : () async {
               maybeHaptic();
+              _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
               await Clipboard.setData(ClipboardData(text: memo.content));
               if (!context.mounted) return;
               showTopToast(
@@ -5748,6 +5852,30 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         : false;
     final session = ref.watch(appSessionProvider).valueOrNull;
     final currentLocalLibrary = ref.watch(currentLocalLibraryProvider);
+    final sceneGuideState = ref.watch(sceneMicroGuideProvider);
+    final canShowSearchShortcutGuide =
+        _isAllMemos &&
+        widget.enableSearch &&
+        widget.enableTitleMenu &&
+        !_searching &&
+        session?.currentAccount != null;
+    final canShowDesktopShortcutGuide =
+        isDesktopShortcutEnabled() && _isAllMemos && !_searching;
+    final activeListGuideId = _resolveListRouteGuide(
+      guideState: sceneGuideState,
+      hasVisibleMemos: visibleMemos.isNotEmpty,
+      canShowSearchShortcutGuide: canShowSearchShortcutGuide,
+      canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
+    );
+    final activeListGuideMessage = switch (activeListGuideId) {
+      SceneMicroGuideId.desktopGlobalShortcuts =>
+        _desktopGlobalShortcutsGuideMessage(context),
+      SceneMicroGuideId.memoListSearchAndShortcuts =>
+        context.t.strings.legacy.msg_scene_micro_guide_list_search_shortcuts,
+      SceneMicroGuideId.memoListGestures =>
+        context.t.strings.legacy.msg_scene_micro_guide_list_gestures,
+      _ => null,
+    };
     if (kDebugMode) {
       final currentKey = session?.currentKey;
       final resolvedDb = (currentKey == null || currentKey.trim().isEmpty)
@@ -6167,6 +6295,18 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                             )
                                           : null)),
                         ),
+                        if (activeListGuideId != null &&
+                            activeListGuideMessage != null)
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                              child: SceneMicroGuideBanner(
+                                message: activeListGuideMessage,
+                                onDismiss: () =>
+                                    _markSceneGuideSeen(activeListGuideId),
+                              ),
+                            ),
+                          ),
                         if (useInlineCompose)
                           SliverToBoxAdapter(
                             child: Padding(

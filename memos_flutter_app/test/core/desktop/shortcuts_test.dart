@@ -90,4 +90,24 @@ void main() {
       'PageDown',
     );
   });
+
+  test('guide binding label uses the active search shortcut', () {
+    expect(
+      desktopShortcutGuideBindingLabel(
+        desktopShortcutDefaultBindings,
+        DesktopShortcutAction.search,
+      ),
+      'Ctrl + K',
+    );
+  });
+
+  test('guide binding label keeps F1 fallback for shortcut overview', () {
+    expect(
+      desktopShortcutGuideBindingLabel(
+        desktopShortcutDefaultBindings,
+        DesktopShortcutAction.shortcutOverview,
+      ),
+      'Shift + / / F1',
+    );
+  });
 }

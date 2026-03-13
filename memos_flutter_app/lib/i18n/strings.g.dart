@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 6473 (1294 per locale)
+/// Strings: 6508 (1301 per locale)
 ///
-/// Built on 2026-03-10 at 23:42 UTC
+/// Built on 2026-03-13 at 13:47 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -1421,6 +1421,13 @@ class _StringsStringsLegacyEn {
 	String get msg_meaning => 'Meaning';
 	String get msg_example => 'Example';
 	String get msg_got_it => 'Got it';
+	String get msg_scene_micro_guide_list_gestures => 'Long press to copy a memo, double-tap to quickly edit';
+	String get msg_scene_micro_guide_list_search_shortcuts => 'Tap search for titles, content, and tags; tap the title for shortcut filters';
+	String get msg_scene_micro_guide_editor_tag_autocomplete_desktop => 'Type # for tag suggestions, use ?? to choose, and press Enter to insert';
+	String get msg_scene_micro_guide_editor_tag_autocomplete_mobile => 'Type # or tap the tag button to choose a suggested tag';
+	String get msg_scene_micro_guide_gallery_controls_desktop => '?/? switch ? Esc closes ? double-tap resets';
+	String get msg_scene_micro_guide_gallery_controls_mobile => 'Double-tap to reset';
+	String msg_scene_micro_guide_desktop_global_shortcuts({required Object search, required Object quickRecord, required Object overview}) => '${search} Search ? ${quickRecord} Quick record ? ${overview} View shortcuts';
 	String get msg_new_template => 'Add template';
 	String get msg_edit_template => 'Edit template';
 	String get msg_template_name => 'Template name';
@@ -2585,6 +2592,13 @@ class _StringsStringsLegacyDe extends _StringsStringsLegacyEn {
 	@override String get msg_edit => 'Bearbeiten';
 	@override String msg_text({required Object shortUserName_item_sender}) => 'Von ${shortUserName_item_sender}';
 	@override String get msg_got => 'Verstanden';
+	@override String get msg_scene_micro_guide_list_gestures => 'Langes Drücken zum Kopieren einer Notiz, Doppeltippen zum schnellen Bearbeiten';
+	@override String get msg_scene_micro_guide_list_search_shortcuts => 'Tippe auf Suche fur Titel, Inhalt und Tags; tippe auf den Titel fur Shortcut-Filter';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_desktop => 'Gib # ein fur Tag-Vorschlage, nutze ?? zum Wahlen und Enter zum Einfugen';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_mobile => 'Gib # ein oder tippe auf die Tag-Schaltflache, um Vorschlage zu wahlen';
+	@override String get msg_scene_micro_guide_gallery_controls_desktop => '?/? wechseln ? Esc schliesst ? Doppeltipp setzt zuruck';
+	@override String get msg_scene_micro_guide_gallery_controls_mobile => 'Doppeltipp zum Zurucksetzen';
+	@override String msg_scene_micro_guide_desktop_global_shortcuts({required Object search, required Object quickRecord, required Object overview}) => '${search} Suche ? ${quickRecord} Schnellnotiz ? ${overview} Shortcuts anzeigen';
 	@override String get msg_web_api_key => 'Web-API-Schlüssel';
 	@override String get msg_preview => 'Vorschau';
 	@override String get msg_enter_password => 'Bitte Passwort eingeben';
@@ -4043,6 +4057,13 @@ class _StringsStringsLegacyJa extends _StringsStringsLegacyEn {
 	@override String get msg_edit => '編集';
 	@override String msg_text({required Object shortUserName_item_sender}) => '${shortUserName_item_sender} から';
 	@override String get msg_got => '了解';
+	@override String get msg_scene_micro_guide_list_gestures => '長押しでメモをコピー、ダブルタップですばやく編集';
+	@override String get msg_scene_micro_guide_list_search_shortcuts => '検索でタイトル・本文・タグを検索、タイトルでショートカット絞り込み';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_desktop => '# を入力するとタグ候補、↑↓ で選択、Enter で挿入';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_mobile => '# を入力するかタグボタンを押して候補を選択';
+	@override String get msg_scene_micro_guide_gallery_controls_desktop => '←/→ で切替 · Esc で閉じる · ダブルタップでリセット';
+	@override String get msg_scene_micro_guide_gallery_controls_mobile => 'ダブルタップでリセット';
+	@override String msg_scene_micro_guide_desktop_global_shortcuts({required Object search, required Object quickRecord, required Object overview}) => '${search} 検索 · ${quickRecord} クイック記録 · ${overview} ショートカット表示';
 	@override String get msg_web_api_key => 'Web API キー';
 	@override String get msg_preview => 'プレビュー';
 	@override String get msg_enter_password => 'パスワードを入力してください';
@@ -5097,7 +5118,7 @@ class _StringsStringsAiInsightZhHans extends _StringsStringsAiInsightEn {
 	@override final _StringsZhHans _root; // ignore: unused_field
 
 	// Translations
-	@override String get title => 'AI \u603B\u7ED3';
+	@override String get title => 'AI 总结';
 	@override String get subtitle => '让 AI 帮你从不同角度理解你的记录';
 	@override String get settingsTitle => 'AI 分析设置';
 	@override String get startAnalysis => '开始分析';
@@ -6219,6 +6240,13 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override String get msg_meaning => '含义';
 	@override String get msg_example => '示例';
 	@override String get msg_got_it => '知道了';
+	@override String get msg_scene_micro_guide_list_gestures => '长按复制笔记，双击快速编辑笔记';
+	@override String get msg_scene_micro_guide_list_search_shortcuts => '点搜索查标题、内容、标签；点标题打开快捷筛选';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_desktop => '输入 # 触发标签联想，↑↓ 选择，Enter 插入';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_mobile => '输入 # 或点标签按钮，选择联想标签';
+	@override String get msg_scene_micro_guide_gallery_controls_desktop => '←/→ 切换 · Esc 关闭 · 双击重置';
+	@override String get msg_scene_micro_guide_gallery_controls_mobile => '双击重置';
+	@override String msg_scene_micro_guide_desktop_global_shortcuts({required Object search, required Object quickRecord, required Object overview}) => '${search} 搜索 · ${quickRecord} 快速记录 · ${overview} 查看快捷键';
 	@override String get msg_new_template => '添加模板';
 	@override String get msg_edit_template => '编辑模板';
 	@override String get msg_template_name => '模板名称';
@@ -8081,6 +8109,13 @@ class _StringsStringsLegacyZhHantTw extends _StringsStringsLegacyEn {
 	@override String get msg_meaning => '含義';
 	@override String get msg_example => '範例';
 	@override String get msg_got_it => '知道了';
+	@override String get msg_scene_micro_guide_list_gestures => '長按複製筆記，雙擊快速編輯筆記';
+	@override String get msg_scene_micro_guide_list_search_shortcuts => '點搜尋查標題、內容、標籤；點標題打開快捷篩選';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_desktop => '輸入 # 觸發標籤聯想，↑↓ 選擇，Enter 插入';
+	@override String get msg_scene_micro_guide_editor_tag_autocomplete_mobile => '輸入 # 或點標籤按鈕，選擇聯想標籤';
+	@override String get msg_scene_micro_guide_gallery_controls_desktop => '←/→ 切換 · Esc 關閉 · 雙擊重置';
+	@override String get msg_scene_micro_guide_gallery_controls_mobile => '雙擊重置';
+	@override String msg_scene_micro_guide_desktop_global_shortcuts({required Object search, required Object quickRecord, required Object overview}) => '${search} 搜尋 · ${quickRecord} 快速記錄 · ${overview} 查看快捷鍵';
 	@override String get msg_new_template => '新增模板';
 	@override String get msg_edit_template => '編輯模板';
 	@override String get msg_template_name => '模板名稱';
@@ -9800,6 +9835,13 @@ extension on Translations {
 			case 'strings.legacy.msg_meaning': return 'Meaning';
 			case 'strings.legacy.msg_example': return 'Example';
 			case 'strings.legacy.msg_got_it': return 'Got it';
+			case 'strings.legacy.msg_scene_micro_guide_list_gestures': return 'Long press to copy a memo, double-tap to quickly edit';
+			case 'strings.legacy.msg_scene_micro_guide_list_search_shortcuts': return 'Tap search for titles, content, and tags; tap the title for shortcut filters';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_desktop': return 'Type # for tag suggestions, use ?? to choose, and press Enter to insert';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_mobile': return 'Type # or tap the tag button to choose a suggested tag';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_desktop': return '?/? switch ? Esc closes ? double-tap resets';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_mobile': return 'Double-tap to reset';
+			case 'strings.legacy.msg_scene_micro_guide_desktop_global_shortcuts': return ({required Object search, required Object quickRecord, required Object overview}) => '${search} Search ? ${quickRecord} Quick record ? ${overview} View shortcuts';
 			case 'strings.legacy.msg_new_template': return 'Add template';
 			case 'strings.legacy.msg_edit_template': return 'Edit template';
 			case 'strings.legacy.msg_template_name': return 'Template name';
@@ -10428,6 +10470,13 @@ extension on _StringsDe {
 			case 'strings.legacy.msg_edit': return 'Bearbeiten';
 			case 'strings.legacy.msg_text': return ({required Object shortUserName_item_sender}) => 'Von ${shortUserName_item_sender}';
 			case 'strings.legacy.msg_got': return 'Verstanden';
+			case 'strings.legacy.msg_scene_micro_guide_list_gestures': return 'Langes Drücken zum Kopieren einer Notiz, Doppeltippen zum schnellen Bearbeiten';
+			case 'strings.legacy.msg_scene_micro_guide_list_search_shortcuts': return 'Tippe auf Suche fur Titel, Inhalt und Tags; tippe auf den Titel fur Shortcut-Filter';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_desktop': return 'Gib # ein fur Tag-Vorschlage, nutze ?? zum Wahlen und Enter zum Einfugen';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_mobile': return 'Gib # ein oder tippe auf die Tag-Schaltflache, um Vorschlage zu wahlen';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_desktop': return '?/? wechseln ? Esc schliesst ? Doppeltipp setzt zuruck';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_mobile': return 'Doppeltipp zum Zurucksetzen';
+			case 'strings.legacy.msg_scene_micro_guide_desktop_global_shortcuts': return ({required Object search, required Object quickRecord, required Object overview}) => '${search} Suche ? ${quickRecord} Schnellnotiz ? ${overview} Shortcuts anzeigen';
 			case 'strings.legacy.msg_web_api_key': return 'Web-API-Schlüssel';
 			case 'strings.legacy.msg_preview': return 'Vorschau';
 			case 'strings.legacy.msg_enter_password': return 'Bitte Passwort eingeben';
@@ -11576,6 +11625,13 @@ extension on _StringsJa {
 			case 'strings.legacy.msg_edit': return '編集';
 			case 'strings.legacy.msg_text': return ({required Object shortUserName_item_sender}) => '${shortUserName_item_sender} から';
 			case 'strings.legacy.msg_got': return '了解';
+			case 'strings.legacy.msg_scene_micro_guide_list_gestures': return '長押しでメモをコピー、ダブルタップですばやく編集';
+			case 'strings.legacy.msg_scene_micro_guide_list_search_shortcuts': return '検索でタイトル・本文・タグを検索、タイトルでショートカット絞り込み';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_desktop': return '# を入力するとタグ候補、↑↓ で選択、Enter で挿入';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_mobile': return '# を入力するかタグボタンを押して候補を選択';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_desktop': return '←/→ で切替 · Esc で閉じる · ダブルタップでリセット';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_mobile': return 'ダブルタップでリセット';
+			case 'strings.legacy.msg_scene_micro_guide_desktop_global_shortcuts': return ({required Object search, required Object quickRecord, required Object overview}) => '${search} 検索 · ${quickRecord} クイック記録 · ${overview} ショートカット表示';
 			case 'strings.legacy.msg_web_api_key': return 'Web API キー';
 			case 'strings.legacy.msg_preview': return 'プレビュー';
 			case 'strings.legacy.msg_enter_password': return 'パスワードを入力してください';
@@ -12319,7 +12375,7 @@ extension on _StringsZhHans {
 			case 'strings.locationPicker.providerMissingBaiduKey': return '选择位置前需要先配置百度地图 AK。';
 			case 'strings.locationPicker.providerMissingGoogleKey': return '选择位置前需要先配置 Google Maps API Key。';
 			case 'strings.locationPicker.providerUnsupportedPlatform': return '嵌入式地图选点仅支持 Android 和 Windows。';
-			case 'strings.aiInsight.title': return 'AI \u603B\u7ED3';
+			case 'strings.aiInsight.title': return 'AI 总结';
 			case 'strings.aiInsight.subtitle': return '让 AI 帮你从不同角度理解你的记录';
 			case 'strings.aiInsight.settingsTitle': return 'AI 分析设置';
 			case 'strings.aiInsight.startAnalysis': return '开始分析';
@@ -13518,6 +13574,13 @@ extension on _StringsZhHans {
 			case 'strings.legacy.msg_meaning': return '含义';
 			case 'strings.legacy.msg_example': return '示例';
 			case 'strings.legacy.msg_got_it': return '知道了';
+			case 'strings.legacy.msg_scene_micro_guide_list_gestures': return '长按复制笔记，双击快速编辑笔记';
+			case 'strings.legacy.msg_scene_micro_guide_list_search_shortcuts': return '点搜索查标题、内容、标签；点标题打开快捷筛选';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_desktop': return '输入 # 触发标签联想，↑↓ 选择，Enter 插入';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_mobile': return '输入 # 或点标签按钮，选择联想标签';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_desktop': return '←/→ 切换 · Esc 关闭 · 双击重置';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_mobile': return '双击重置';
+			case 'strings.legacy.msg_scene_micro_guide_desktop_global_shortcuts': return ({required Object search, required Object quickRecord, required Object overview}) => '${search} 搜索 · ${quickRecord} 快速记录 · ${overview} 查看快捷键';
 			case 'strings.legacy.msg_new_template': return '添加模板';
 			case 'strings.legacy.msg_edit_template': return '编辑模板';
 			case 'strings.legacy.msg_template_name': return '模板名称';
@@ -14891,6 +14954,13 @@ extension on _StringsZhHantTw {
 			case 'strings.legacy.msg_meaning': return '含義';
 			case 'strings.legacy.msg_example': return '範例';
 			case 'strings.legacy.msg_got_it': return '知道了';
+			case 'strings.legacy.msg_scene_micro_guide_list_gestures': return '長按複製筆記，雙擊快速編輯筆記';
+			case 'strings.legacy.msg_scene_micro_guide_list_search_shortcuts': return '點搜尋查標題、內容、標籤；點標題打開快捷篩選';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_desktop': return '輸入 # 觸發標籤聯想，↑↓ 選擇，Enter 插入';
+			case 'strings.legacy.msg_scene_micro_guide_editor_tag_autocomplete_mobile': return '輸入 # 或點標籤按鈕，選擇聯想標籤';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_desktop': return '←/→ 切換 · Esc 關閉 · 雙擊重置';
+			case 'strings.legacy.msg_scene_micro_guide_gallery_controls_mobile': return '雙擊重置';
+			case 'strings.legacy.msg_scene_micro_guide_desktop_global_shortcuts': return ({required Object search, required Object quickRecord, required Object overview}) => '${search} 搜尋 · ${quickRecord} 快速記錄 · ${overview} 查看快捷鍵';
 			case 'strings.legacy.msg_new_template': return '新增模板';
 			case 'strings.legacy.msg_edit_template': return '編輯模板';
 			case 'strings.legacy.msg_template_name': return '模板名稱';

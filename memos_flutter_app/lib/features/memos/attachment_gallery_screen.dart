@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_editor_plus/image_editor_plus.dart';
@@ -18,8 +20,11 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/image_formats.dart';
 import '../../core/image_error_logger.dart';
+import '../../core/scene_micro_guide_widgets.dart';
 import '../../core/top_toast.dart';
+import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../i18n/strings.g.dart';
+import '../../state/system/scene_micro_guide_provider.dart';
 import 'attachment_video_screen.dart';
 import 'memo_video_grid.dart';
 
@@ -68,7 +73,7 @@ class EditedImageResult {
   final int size;
 }
 
-class AttachmentGalleryScreen extends StatefulWidget {
+class AttachmentGalleryScreen extends ConsumerStatefulWidget {
   const AttachmentGalleryScreen({
     super.key,
     required this.images,
@@ -87,11 +92,12 @@ class AttachmentGalleryScreen extends StatefulWidget {
   final String albumName;
 
   @override
-  State<AttachmentGalleryScreen> createState() =>
+  ConsumerState<AttachmentGalleryScreen> createState() =>
       _AttachmentGalleryScreenState();
 }
 
-class _AttachmentGalleryScreenState extends State<AttachmentGalleryScreen> {
+class _AttachmentGalleryScreenState
+    extends ConsumerState<AttachmentGalleryScreen> {
   static const double _minScale = 1;
   static const double _maxScale = 4;
   static const Duration _pageAnimationDuration = Duration(milliseconds: 180);
@@ -155,21 +161,34 @@ class _AttachmentGalleryScreenState extends State<AttachmentGalleryScreen> {
     navigator.maybePop();
   }
 
+  void _markSceneGuideSeen(SceneMicroGuideId id) {
+    unawaited(ref.read(sceneMicroGuideProvider.notifier).markSeen(id));
+  }
+
   KeyEventResult _handleGalleryKeyEvent(KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.escape) {
+      if (_currentImage != null) {
+        _markSceneGuideSeen(SceneMicroGuideId.attachmentGalleryControls);
+      }
       _closeGallery();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.arrowUp) {
+      if (_currentImage != null) {
+        _markSceneGuideSeen(SceneMicroGuideId.attachmentGalleryControls);
+      }
       _showPreviousPage();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.arrowDown) {
+      if (_currentImage != null) {
+        _markSceneGuideSeen(SceneMicroGuideId.attachmentGalleryControls);
+      }
       _showNextPage();
       return KeyEventResult.handled;
     }
@@ -644,6 +663,8 @@ class _AttachmentGalleryScreenState extends State<AttachmentGalleryScreen> {
         minScale: _minScale,
         maxScale: _maxScale,
         enableWheelZoom: _isDesktopGallery,
+        onReset: () =>
+            _markSceneGuideSeen(SceneMicroGuideId.attachmentGalleryControls),
         child: Center(child: _buildImage(source)),
       ),
     );
@@ -677,6 +698,22 @@ class _AttachmentGalleryScreenState extends State<AttachmentGalleryScreen> {
     final current = _items.isEmpty ? null : _items[_index];
     final canEdit = widget.onReplace != null && (current?.isImage ?? false);
     final canDownload = widget.enableDownload && (current?.isImage ?? false);
+    final sceneGuideState = ref.watch(sceneMicroGuideProvider);
+    final showControlsGuide =
+        current?.isImage == true &&
+        sceneGuideState.loaded &&
+        !sceneGuideState.isSeen(SceneMicroGuideId.attachmentGalleryControls);
+    final controlsGuideMessage = _isDesktopGallery
+        ? context
+              .t
+              .strings
+              .legacy
+              .msg_scene_micro_guide_gallery_controls_desktop
+        : context
+              .t
+              .strings
+              .legacy
+              .msg_scene_micro_guide_gallery_controls_mobile;
     final scaffold = _items.isEmpty
         ? Scaffold(
             backgroundColor: Colors.black,
@@ -748,6 +785,21 @@ class _AttachmentGalleryScreenState extends State<AttachmentGalleryScreen> {
                     ],
                   ),
                 ),
+                if (showControlsGuide)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: MediaQuery.paddingOf(context).bottom + 18,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: SceneMicroGuideOverlayPill(
+                        message: controlsGuideMessage,
+                        onDismiss: () => _markSceneGuideSeen(
+                          SceneMicroGuideId.attachmentGalleryControls,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           );
@@ -767,12 +819,14 @@ class _AttachmentGalleryZoomableImage extends StatefulWidget {
     required this.minScale,
     required this.maxScale,
     required this.enableWheelZoom,
+    this.onReset,
   });
 
   final Widget child;
   final double minScale;
   final double maxScale;
   final bool enableWheelZoom;
+  final VoidCallback? onReset;
 
   @override
   State<_AttachmentGalleryZoomableImage> createState() =>
@@ -821,6 +875,7 @@ class _AttachmentGalleryZoomableImageState
 
   void _resetTransform() {
     _transformationController.value = Matrix4.identity();
+    widget.onReset?.call();
   }
 
   @override
