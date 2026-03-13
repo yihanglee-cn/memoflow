@@ -146,6 +146,7 @@ flutter:
     - assets/splash/splash_screen_light.png
     - assets/splash/splash_logo.png
     - assets/splash/splash_logo_native.png
+    - assets/ai_providers/
     - assets/location_picker/
     - assets/images/streamline--wind-flow-1-remix.png
     - assets/images/donation_qr.png

@@ -221,6 +221,9 @@ class AiEvidenceCandidate {
   const AiEvidenceCandidate({
     required this.evidenceKey,
     required this.sectionKey,
+    this.threadKey,
+    this.threadHint,
+    this.sourceThemeKey,
     required this.memoUid,
     required this.chunkId,
     required this.quoteText,
@@ -233,6 +236,9 @@ class AiEvidenceCandidate {
 
   final String evidenceKey;
   final String sectionKey;
+  final String? threadKey;
+  final String? threadHint;
+  final String? sourceThemeKey;
   final String memoUid;
   final int chunkId;
   final String quoteText;
@@ -245,6 +251,10 @@ class AiEvidenceCandidate {
   Map<String, dynamic> toJson() => {
     'evidence_key': evidenceKey,
     'section_key': sectionKey,
+    if ((threadKey ?? '').trim().isNotEmpty) 'thread_key': threadKey,
+    if ((threadHint ?? '').trim().isNotEmpty) 'thread_hint': threadHint,
+    if ((sourceThemeKey ?? '').trim().isNotEmpty)
+      'source_theme_key': sourceThemeKey,
     'memo_uid': memoUid,
     'chunk_id': chunkId,
     'quote_text': quoteText,
@@ -408,5 +418,35 @@ class AiSavedAnalysisReport {
   final List<AiAnalysisSectionData> sections;
   final List<AiAnalysisEvidenceData> evidences;
   final List<String> followUpSuggestions;
+  final bool isStale;
+}
+
+class AiSavedAnalysisHistoryEntry {
+  const AiSavedAnalysisHistoryEntry({
+    required this.taskId,
+    required this.taskUid,
+    required this.status,
+    required this.summary,
+    required this.promptTemplate,
+    required this.rangeStart,
+    required this.rangeEndExclusive,
+    required this.includePublic,
+    required this.includePrivate,
+    required this.includeProtected,
+    required this.createdTime,
+    required this.isStale,
+  });
+
+  final int taskId;
+  final String taskUid;
+  final AiTaskStatus status;
+  final String summary;
+  final String promptTemplate;
+  final int rangeStart;
+  final int rangeEndExclusive;
+  final bool includePublic;
+  final bool includePrivate;
+  final bool includeProtected;
+  final int createdTime;
   final bool isStale;
 }

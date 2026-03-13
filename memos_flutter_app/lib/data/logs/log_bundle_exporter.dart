@@ -14,6 +14,17 @@ import 'debug_log_store.dart';
 import 'log_manager.dart';
 import 'network_log_store.dart';
 
+const List<String> _aiExportLogPrefixes = <String>[
+  'AI settings ',
+  'AI adapter ',
+];
+
+List<String> extractAiExportLogLines(Iterable<String> lines) {
+  return lines
+      .where((line) => _aiExportLogPrefixes.any(line.contains))
+      .toList(growable: false);
+}
+
 class LogBundleExporter {
   LogBundleExporter({
     required LogManager logManager,
@@ -88,6 +99,18 @@ class LogBundleExporter {
       sanitizedLogLines.join('\n'),
       includedFiles,
     );
+
+    final aiLogLines = extractAiExportLogLines(
+      logLines,
+    ).map((line) => _sanitizeTextLine(line, maxLogLineChars)).toList();
+    if (aiLogLines.isNotEmpty) {
+      _addTextFile(
+        archive,
+        'ai_settings.log',
+        aiLogLines.join('\n'),
+        includedFiles,
+      );
+    }
 
     final logDir = await _resolveLogsDirectory();
     if (includeDebugStore) {

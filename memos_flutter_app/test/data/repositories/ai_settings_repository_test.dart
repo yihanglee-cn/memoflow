@@ -91,4 +91,93 @@ void main() {
       'emotion_map': 'Summarize emotional patterns.',
     });
   });
+
+  test('AiSettingsMigration migrates legacy profiles into services and routes', () {
+    final legacy = AiSettings.fromJson(<String, dynamic>{
+      'apiUrl': 'https://api.deepseek.com',
+      'apiKey': 'sk-test',
+      'model': 'deepseek-chat',
+      'modelOptions': <String>['deepseek-chat', 'deepseek-reasoner'],
+      'embeddingProfiles': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'profileKey': 'legacy_embed',
+          'displayName': 'Legacy Embedding',
+          'baseUrl': 'http://127.0.0.1:11434',
+          'apiKey': '',
+          'model': 'bge-m3',
+          'enabled': true,
+        },
+      ],
+      'selectedEmbeddingProfileKey': 'legacy_embed',
+      'prompt': 'Base prompt',
+    });
+
+    final normalized = AiSettingsMigration.normalize(legacy);
+
+    expect(normalized.schemaVersion, AiSettings.currentSchemaVersion);
+    expect(normalized.services, hasLength(2));
+    expect(
+      normalized.taskRouteBindings.map((binding) => binding.routeId),
+      containsAll(<AiTaskRouteId>[
+        AiTaskRouteId.summary,
+        AiTaskRouteId.analysisReport,
+        AiTaskRouteId.quickPrompt,
+        AiTaskRouteId.embeddingRetrieval,
+      ]),
+    );
+    expect(normalized.selectedGenerationProfile.model, 'deepseek-chat');
+    expect(normalized.selectedEmbeddingProfile?.model, 'bge-m3');
+  });
+
+  test('AiSettingsRepository writes v3 services and route bindings', () async {
+    final storage = _MemorySecureStorage();
+    final repository = AiSettingsRepository(storage, accountKey: 'user-2');
+    final settings = AiSettings.defaultsFor(AppLanguage.en).copyWith(
+      services: const <AiServiceInstance>[
+        AiServiceInstance(
+          serviceId: 'svc_test',
+          templateId: aiTemplateOpenAi,
+          adapterKind: AiProviderAdapterKind.openAiCompatible,
+          displayName: 'OpenAI Main',
+          enabled: true,
+          baseUrl: 'https://api.openai.com',
+          apiKey: 'sk-test',
+          customHeaders: <String, String>{'x-test': '1'},
+          models: <AiModelEntry>[
+            AiModelEntry(
+              modelId: 'mdl_chat',
+              displayName: 'gpt-4o-mini',
+              modelKey: 'gpt-4o-mini',
+              capabilities: <AiCapability>[AiCapability.chat],
+              source: AiModelSource.manual,
+              enabled: true,
+            ),
+          ],
+          lastValidatedAt: null,
+          lastValidationStatus: AiValidationStatus.unknown,
+          lastValidationMessage: null,
+        ),
+      ],
+      taskRouteBindings: const <AiTaskRouteBinding>[
+        AiTaskRouteBinding(
+          routeId: AiTaskRouteId.summary,
+          serviceId: 'svc_test',
+          modelId: 'mdl_chat',
+          capability: AiCapability.chat,
+        ),
+      ],
+    );
+
+    await repository.write(settings);
+    final raw = await storage.read(key: 'ai_settings_v2_user-2');
+    final decoded = jsonDecode(raw!) as Map<String, dynamic>;
+
+    expect(decoded['schemaVersion'], AiSettings.currentSchemaVersion);
+    expect(decoded['services'], isA<List<dynamic>>());
+    expect(decoded['taskRouteBindings'], isA<List<dynamic>>());
+
+    final restored = await repository.read(language: AppLanguage.en);
+    expect(restored.services.single.displayName, 'OpenAI Main');
+    expect(restored.taskRouteBindings.single.routeId, AiTaskRouteId.summary);
+  });
 }

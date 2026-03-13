@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/ai/ai_analysis_models.dart';
+import 'package:memos_flutter_app/data/ai/ai_analysis_repository.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
@@ -250,9 +251,9 @@ Future<void> main() async {
     await tester.pumpAndSettle();
 
     expect(find.text('AI Insight Studio'), findsNWidgets(2));
-    expect(find.text('Emotion Map'), findsOneWidget);
+    expect(find.text('Letter Back'), findsOneWidget);
 
-    await tester.tap(find.text('Emotion Map'));
+    await tester.tap(find.text('Letter Back'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -274,11 +275,102 @@ Future<void> main() async {
     expect(startButton.onPressed, isNull);
   });
 
-  testWidgets('prompt editor save enables Start Analysis in the sheet', (
+  testWidgets('history button opens saved insight history', (tester) async {
+    final db = AppDatabase(
+      dbName:
+          'ai_summary_history_test_${DateTime.now().microsecondsSinceEpoch}.db',
+    );
+    final repository = AiAnalysisRepository(db);
+    final taskId = await repository.createAnalysisTask(
+      taskUid: 'task-history-1',
+      analysisType: AiAnalysisType.emotionMap,
+      status: AiTaskStatus.completed,
+      rangeStart: DateTime.utc(2026, 3, 1).millisecondsSinceEpoch ~/ 1000,
+      rangeEndExclusive:
+          DateTime.utc(2026, 3, 8).millisecondsSinceEpoch ~/ 1000,
+      includePublic: true,
+      includePrivate: true,
+      includeProtected: false,
+      promptTemplate: 'Reflect on the week with care.',
+      generationProfileKey: 'gen-default',
+      embeddingProfileKey: 'embed-default',
+      retrievalProfile: const <String, dynamic>{'include_public': true},
+    );
+    await repository.saveAnalysisResult(
+      taskId: taskId,
+      result: const AiStructuredAnalysisResult(
+        schemaVersion: 1,
+        analysisType: AiAnalysisType.emotionMap,
+        summary: 'A saved thought about the week.',
+        sections: <AiAnalysisSectionData>[
+          AiAnalysisSectionData(
+            sectionKey: 'main',
+            title: '',
+            body: 'You were slowly finding your footing again.',
+            evidenceKeys: <String>[],
+          ),
+        ],
+        evidences: <AiAnalysisEvidenceData>[],
+        followUpSuggestions: <String>[],
+        rawResponseText: '{}',
+      ),
+    );
+
+    final aiRepository = _MemoryAiSettingsRepository(
+      AiSettings.defaultsFor(AppLanguage.en),
+    );
+    final prefsRepository = _MemoryAppPreferencesRepository(
+      AppPreferences.defaultsForLanguage(AppLanguage.en),
+    );
+
+    addTearDown(() async {
+      await db.close();
+    });
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        child: const AiSummaryScreen(),
+        overrides: [
+          appSessionProvider.overrideWith((ref) => _TestSessionController()),
+          databaseProvider.overrideWithValue(db),
+          aiSettingsProvider.overrideWith(
+            (ref) => _TestAiSettingsController(ref, aiRepository),
+          ),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref, prefsRepository),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('History'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Insight History'), findsOneWidget);
+    expect(find.text('A saved thought about the week.'), findsOneWidget);
+  });
+
+  testWidgets('prompt editor save keeps Start Analysis enabled in the sheet', (
     tester,
   ) async {
     final aiRepository = _MemoryAiSettingsRepository(
       AiSettings.defaultsFor(AppLanguage.en).copyWith(
+        generationProfiles: const <AiGenerationProfile>[
+          AiGenerationProfile(
+            profileKey: 'default_generation',
+            displayName: 'Default Generation',
+            backendKind: AiBackendKind.remoteApi,
+            providerKind: AiProviderKind.openAiCompatible,
+            baseUrl: 'https://example.com',
+            apiKey: 'key',
+            model: 'gpt-4o-mini',
+            modelOptions: <String>['gpt-4o-mini'],
+            enabled: true,
+          ),
+        ],
+        selectedGenerationProfileKey: 'default_generation',
         embeddingProfiles: const <AiEmbeddingProfile>[
           AiEmbeddingProfile(
             profileKey: 'default_embedding',
@@ -297,39 +389,11 @@ Future<void> main() async {
     final prefsRepository = _MemoryAppPreferencesRepository(
       AppPreferences.defaultsForLanguage(AppLanguage.en),
     );
-    final previewPayload = AiAnalysisPreviewPayload(
-      totalMatchingMemos: 1,
-      candidateChunks: 1,
-      embeddingReady: 1,
-      embeddingPending: 0,
-      embeddingFailed: 0,
-      isSampled: false,
-      items: <AiPreviewMemoItem>[
-        AiPreviewMemoItem(
-          memoUid: 'memo-1',
-          chunkId: 1,
-          createdAt: DateTime(2026, 3, 7),
-          content: 'Example note',
-          visibility: 'PRIVATE',
-          embeddingStatus: AiEmbeddingStatus.ready,
-        ),
-      ],
-    );
 
     await tester.pumpWidget(
       _buildTestApp(
         child: AiInsightSettingsSheet(
           definition: visibleAiInsightDefinitions.first,
-          previewLoader:
-              ({
-                required range,
-                required customRange,
-                required allowPublic,
-                required allowPrivate,
-                required allowProtected,
-              }) async {
-                return previewPayload;
-              },
         ),
         scaffoldBody: true,
         overrides: [
@@ -349,7 +413,7 @@ Future<void> main() async {
       find.widgetWithText(FilledButton, 'Start Analysis'),
     );
 
-    expect(startButton().onPressed, isNull);
+    expect(startButton().onPressed, isNotNull);
 
     await tester.ensureVisible(find.text('Edit Prompt Template'));
     await tester.tap(find.text('Edit Prompt Template'));
@@ -365,47 +429,68 @@ Future<void> main() async {
     expect(startButton().onPressed, isNotNull);
   });
 
-  testWidgets('custom range picker refreshes preview payload', (tester) async {
+  testWidgets('local AI providers without API keys can start analysis', (
+    tester,
+  ) async {
     final aiRepository = _MemoryAiSettingsRepository(
       AiSettings.defaultsFor(AppLanguage.en).copyWith(
-        insightPromptTemplates: const <String, String>{
-          'emotion_map': 'Focus on recent shifts.',
-        },
+        services: const <AiServiceInstance>[
+          AiServiceInstance(
+            serviceId: 'svc_local',
+            templateId: aiTemplateOllama,
+            adapterKind: AiProviderAdapterKind.ollama,
+            displayName: 'Local Ollama',
+            enabled: true,
+            baseUrl: 'http://127.0.0.1:11434',
+            apiKey: '',
+            customHeaders: <String, String>{},
+            models: <AiModelEntry>[
+              AiModelEntry(
+                modelId: 'mdl_chat',
+                displayName: 'llama3.1',
+                modelKey: 'llama3.1',
+                capabilities: <AiCapability>[AiCapability.chat],
+                source: AiModelSource.manual,
+                enabled: true,
+              ),
+              AiModelEntry(
+                modelId: 'mdl_embed',
+                displayName: 'bge-m3',
+                modelKey: 'bge-m3',
+                capabilities: <AiCapability>[AiCapability.embedding],
+                source: AiModelSource.manual,
+                enabled: true,
+              ),
+            ],
+            lastValidatedAt: null,
+            lastValidationStatus: AiValidationStatus.unknown,
+            lastValidationMessage: null,
+          ),
+        ],
+        taskRouteBindings: const <AiTaskRouteBinding>[
+          AiTaskRouteBinding(
+            routeId: AiTaskRouteId.analysisReport,
+            serviceId: 'svc_local',
+            modelId: 'mdl_chat',
+            capability: AiCapability.chat,
+          ),
+          AiTaskRouteBinding(
+            routeId: AiTaskRouteId.embeddingRetrieval,
+            serviceId: 'svc_local',
+            modelId: 'mdl_embed',
+            capability: AiCapability.embedding,
+          ),
+        ],
       ),
     );
     final prefsRepository = _MemoryAppPreferencesRepository(
       AppPreferences.defaultsForLanguage(AppLanguage.en),
-    );
-    final calls = <({AiInsightRange range, DateTimeRange? customRange})>[];
-    final pickedRange = DateTimeRange(
-      start: DateTime(2026, 2, 1),
-      end: DateTime(2026, 2, 10),
     );
 
     await tester.pumpWidget(
       _buildTestApp(
         child: AiInsightSettingsSheet(
           definition: visibleAiInsightDefinitions.first,
-          customRangePicker: (context, currentRange) async => pickedRange,
-          previewLoader:
-              ({
-                required range,
-                required customRange,
-                required allowPublic,
-                required allowPrivate,
-                required allowProtected,
-              }) async {
-                calls.add((range: range, customRange: customRange));
-                return const AiAnalysisPreviewPayload(
-                  totalMatchingMemos: 1,
-                  candidateChunks: 1,
-                  embeddingReady: 1,
-                  embeddingPending: 0,
-                  embeddingFailed: 0,
-                  isSampled: false,
-                  items: <AiPreviewMemoItem>[],
-                );
-              },
         ),
         scaffoldBody: true,
         overrides: [
@@ -420,15 +505,53 @@ Future<void> main() async {
     );
 
     await tester.pumpAndSettle();
-    expect(calls, hasLength(1));
-    expect(calls.single.range, AiInsightRange.last7Days);
+
+    final startButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Start Analysis'),
+    );
+    expect(startButton.onPressed, isNotNull);
+  });
+
+  testWidgets('custom range picker refreshes preview payload', (tester) async {
+    final aiRepository = _MemoryAiSettingsRepository(
+      AiSettings.defaultsFor(AppLanguage.en).copyWith(
+        insightPromptTemplates: const <String, String>{
+          'emotion_map': 'Focus on recent shifts.',
+        },
+      ),
+    );
+    final prefsRepository = _MemoryAppPreferencesRepository(
+      AppPreferences.defaultsForLanguage(AppLanguage.en),
+    );
+    final pickedRange = DateTimeRange(
+      start: DateTime(2026, 2, 1),
+      end: DateTime(2026, 2, 10),
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        child: AiInsightSettingsSheet(
+          definition: visibleAiInsightDefinitions.first,
+          customRangePicker: (context, currentRange) async => pickedRange,
+        ),
+        scaffoldBody: true,
+        overrides: [
+          aiSettingsProvider.overrideWith(
+            (ref) => _TestAiSettingsController(ref, aiRepository),
+          ),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref, prefsRepository),
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Custom range'));
     await tester.pumpAndSettle();
 
-    expect(calls, hasLength(2));
-    expect(calls.last.range, AiInsightRange.custom);
-    expect(calls.last.customRange, pickedRange);
+    expect(find.text('2026.02.01 - 2026.02.10'), findsOneWidget);
   });
 
   testWidgets('preview screen shows note counts and truncation notice', (

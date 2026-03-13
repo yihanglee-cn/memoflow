@@ -122,7 +122,7 @@ locationPicker:
   providerUnsupportedPlatform: "嵌入式地图选点仅支持 Android 和 Windows。"
 
 aiInsight:
-  title: "AI 思考室"
+  title: "AI \u603B\u7ED3"
   subtitle: "让 AI 帮你从不同角度理解你的记录"
   settingsTitle: "AI 分析设置"
   startAnalysis: "开始分析"

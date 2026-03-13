@@ -5097,7 +5097,7 @@ class _StringsStringsAiInsightZhHans extends _StringsStringsAiInsightEn {
 	@override final _StringsZhHans _root; // ignore: unused_field
 
 	// Translations
-	@override String get title => 'AI 思考室';
+	@override String get title => 'AI \u603B\u7ED3';
 	@override String get subtitle => '让 AI 帮你从不同角度理解你的记录';
 	@override String get settingsTitle => 'AI 分析设置';
 	@override String get startAnalysis => '开始分析';
@@ -12319,7 +12319,7 @@ extension on _StringsZhHans {
 			case 'strings.locationPicker.providerMissingBaiduKey': return '选择位置前需要先配置百度地图 AK。';
 			case 'strings.locationPicker.providerMissingGoogleKey': return '选择位置前需要先配置 Google Maps API Key。';
 			case 'strings.locationPicker.providerUnsupportedPlatform': return '嵌入式地图选点仅支持 Android 和 Windows。';
-			case 'strings.aiInsight.title': return 'AI 思考室';
+			case 'strings.aiInsight.title': return 'AI \u603B\u7ED3';
 			case 'strings.aiInsight.subtitle': return '让 AI 帮你从不同角度理解你的记录';
 			case 'strings.aiInsight.settingsTitle': return 'AI 分析设置';
 			case 'strings.aiInsight.startAnalysis': return '开始分析';

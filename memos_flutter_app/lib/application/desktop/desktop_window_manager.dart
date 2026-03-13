@@ -13,6 +13,7 @@ import '../../core/desktop/shortcuts.dart';
 import 'desktop_tray_controller.dart';
 import 'desktop_exit_coordinator.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
+import '../../state/settings/ai_settings_provider.dart';
 import 'desktop_quick_input_controller.dart';
 
 typedef DesktopQuickInputLauncher =
@@ -243,6 +244,20 @@ class DesktopWindowManager {
           },
         );
         return reloadOk && (!hasKey || setKeyOk);
+      case desktopMainReloadAiSettingsMethod:
+        final log = _bootstrapAdapter.readLogManager(_ref);
+        try {
+          await _ref.read(aiSettingsProvider.notifier).reloadFromStorage();
+          log.info('Desktop AI settings reload handled');
+          return true;
+        } catch (error, stackTrace) {
+          log.error(
+            'Desktop AI settings reload failed',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          return false;
+        }
       case desktopHomeShowLoadingOverlayMethod:
         _bootstrapAdapter.forceHomeLoadingOverlay(_ref);
         return true;

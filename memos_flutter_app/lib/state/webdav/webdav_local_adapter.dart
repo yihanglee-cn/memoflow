@@ -28,7 +28,9 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
   @override
   Future<WebDavSyncLocalSnapshot> readSnapshot() async {
     final prefs = _ref.read(appPreferencesProvider);
-    final ai = _ref.read(aiSettingsProvider);
+    final ai = await _ref
+        .read(aiSettingsRepositoryProvider)
+        .read(language: prefs.language);
     final reminder = _ref.read(reminderSettingsProvider);
     final imageBed = _ref.read(imageBedSettingsProvider);
     final imageCompression = _ref.read(imageCompressionSettingsProvider);

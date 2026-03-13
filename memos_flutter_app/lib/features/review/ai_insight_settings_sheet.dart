@@ -2,21 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/memoflow_palette.dart';
+import '../../data/ai/ai_provider_models.dart';
+import '../../data/ai/ai_route_config.dart';
+import '../../data/ai/ai_settings_models.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/settings/ai_settings_provider.dart';
 import '../../state/settings/preferences_provider.dart';
-import 'ai_analysis_preview_screen.dart';
+import '../settings/ai_settings_screen.dart';
 import 'ai_insight_models.dart';
 import 'ai_insight_prompt_editor_screen.dart';
-
-typedef AiInsightPreviewLoader =
-    Future<AiAnalysisPreviewPayload> Function({
-      required AiInsightRange range,
-      required DateTimeRange? customRange,
-      required bool allowPublic,
-      required bool allowPrivate,
-      required bool allowProtected,
-    });
 
 typedef AiInsightCustomRangePicker =
     Future<DateTimeRange?> Function(
@@ -28,13 +22,15 @@ class AiInsightSettingsSheet extends ConsumerStatefulWidget {
   const AiInsightSettingsSheet({
     super.key,
     required this.definition,
-    required this.previewLoader,
+    this.customTitle,
+    this.customTemplateMode = false,
     this.customRangePicker,
     this.analysisLoading = false,
   });
 
   final AiInsightDefinition definition;
-  final AiInsightPreviewLoader previewLoader;
+  final String? customTitle;
+  final bool customTemplateMode;
   final AiInsightCustomRangePicker? customRangePicker;
   final bool analysisLoading;
 
@@ -51,24 +47,54 @@ class _AiInsightSettingsSheetState
   var _allowPublic = true;
   late bool _allowPrivate;
   var _allowProtected = false;
-  var _isPreviewLoading = true;
-  Object? _previewError;
-  AiAnalysisPreviewPayload _previewPayload = AiAnalysisPreviewPayload.empty;
-  var _previewRequestId = 0;
+  var _didSeedPromptTemplate = false;
+
+  bool get _isCustomTemplateMode => widget.customTemplateMode;
+
+  String get _displayTitle {
+    final override = widget.customTitle?.trim() ?? '';
+    if (override.isNotEmpty) return override;
+    return widget.definition.title(context);
+  }
 
   @override
   void initState() {
     super.initState();
     _range = AiInsightRange.last7Days;
     _allowPrivate = ref.read(appPreferencesProvider).aiSummaryAllowPrivateMemos;
-    _loadPreview();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isCustomTemplateMode || _didSeedPromptTemplate) {
+      return;
+    }
+    _didSeedPromptTemplate = true;
+    final defaultTemplate = defaultInsightPromptTemplate(
+      context,
+      widget.definition.id,
+    );
+    Future.microtask(() async {
+      await ref
+          .read(aiSettingsProvider.notifier)
+          .ensureInsightPromptTemplateInitialized(
+            widget.definition.id.storageKey,
+            defaultTemplate,
+          );
+    });
   }
 
   String get _promptTemplate {
     final settings = ref.read(aiSettingsProvider);
-    return settings.insightPromptTemplates[widget.definition.id.storageKey]
-            ?.trim() ??
-        '';
+    if (_isCustomTemplateMode) {
+      return settings.customInsightTemplate.promptTemplate.trim();
+    }
+    return resolveInsightPromptTemplate(
+      context,
+      insightId: widget.definition.id,
+      templates: settings.insightPromptTemplates,
+    );
   }
 
   DateTimeRange get _effectiveRange =>
@@ -78,33 +104,19 @@ class _AiInsightSettingsSheetState
     return formatAiInsightRangeLabel(_effectiveRange);
   }
 
-  Future<void> _loadPreview() async {
-    final requestId = ++_previewRequestId;
-    setState(() {
-      _isPreviewLoading = true;
-      _previewError = null;
-    });
-    try {
-      final payload = await widget.previewLoader(
-        range: _range,
-        customRange: _customRange,
-        allowPublic: _allowPublic,
-        allowPrivate: _allowPrivate,
-        allowProtected: _allowProtected,
-      );
-      if (!mounted || requestId != _previewRequestId) return;
-      setState(() {
-        _previewPayload = payload;
-        _isPreviewLoading = false;
-      });
-    } catch (error) {
-      if (!mounted || requestId != _previewRequestId) return;
-      setState(() {
-        _previewError = error;
-        _previewPayload = AiAnalysisPreviewPayload.empty;
-        _isPreviewLoading = false;
-      });
-    }
+  bool _hasGenerationConfig(AiSettings settings) {
+    return hasConfiguredChatRoute(
+      settings,
+      routeId: AiTaskRouteId.analysisReport,
+    );
+  }
+
+  bool _hasEmbeddingConfig(AiSettings settings) {
+    return hasConfiguredEmbeddingRoute(settings);
+  }
+
+  bool _hasRequiredAiConfig(AiSettings settings) {
+    return _hasGenerationConfig(settings) && _hasEmbeddingConfig(settings);
   }
 
   Future<DateTimeRange?> _pickCustomRange() {
@@ -145,61 +157,47 @@ class _AiInsightSettingsSheetState
         _customRange = picked;
         _range = AiInsightRange.custom;
       });
-      await _loadPreview();
       return;
     }
     setState(() {
       _range = nextRange;
       _lastNonCustomRange = nextRange;
     });
-    await _loadPreview();
   }
 
-  Future<void> _toggleAllowPublic(bool value) async {
+  void _toggleAllowPublic(bool value) {
     setState(() => _allowPublic = value);
-    if (!mounted) return;
-    await _loadPreview();
   }
 
-  Future<void> _toggleAllowPrivate(bool value) async {
+  void _toggleAllowPrivate(bool value) {
     setState(() => _allowPrivate = value);
     ref
         .read(appPreferencesProvider.notifier)
         .setAiSummaryAllowPrivateMemos(value);
-    if (!mounted) return;
-    await _loadPreview();
   }
 
-  Future<void> _toggleAllowProtected(bool value) async {
+  void _toggleAllowProtected(bool value) {
     setState(() => _allowProtected = value);
-    if (!mounted) return;
-    await _loadPreview();
   }
 
   Future<void> _openPromptEditor() async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (_) =>
-            AiInsightPromptEditorScreen(insightId: widget.definition.id),
+        builder: (_) => _isCustomTemplateMode
+            ? const AiInsightPromptEditorScreen.custom()
+            : AiInsightPromptEditorScreen(insightId: widget.definition.id),
       ),
     );
     if (!mounted) return;
     setState(() {});
   }
 
-  Future<void> _openPreviewScreen() async {
+  Future<void> _openAiSettings() async {
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => AiAnalysisPreviewScreen(
-          definition: widget.definition,
-          payload: _previewPayload,
-          allowPublic: _allowPublic,
-          allowPrivate: _allowPrivate,
-          allowProtected: _allowProtected,
-          rangeLabel: _rangeLabel(),
-        ),
-      ),
+      MaterialPageRoute<void>(builder: (_) => const AiSettingsScreen()),
     );
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _startAnalysis() {
@@ -212,28 +210,67 @@ class _AiInsightSettingsSheetState
         allowPublic: _allowPublic,
         allowPrivate: _allowPrivate,
         allowProtected: _allowProtected,
-        previewPayload: _previewPayload,
+        previewPayload: AiAnalysisPreviewPayload.empty,
         promptTemplate: _promptTemplate,
       ),
     );
   }
 
   bool get _canStartAnalysis {
-    final hasEmbeddingProfile = ref
-        .read(aiSettingsProvider)
-        .hasEnabledEmbeddingProfile;
+    final settings = ref.read(aiSettingsProvider);
     return !widget.analysisLoading &&
-        !_isPreviewLoading &&
-        _previewError == null &&
-        hasEmbeddingProfile &&
+        _hasRequiredAiConfig(settings) &&
         (_allowPublic || _allowPrivate || _allowProtected) &&
-        _previewPayload.hasContent &&
-        _previewPayload.embeddingReady > 0 &&
         _promptTemplate.trim().isNotEmpty;
+  }
+
+  String _aiConfigTitle(bool isZh) {
+    return isZh
+        ? 'AI \u8bbe\u7f6e\u8fd8\u6ca1\u914d\u597d'
+        : 'AI settings are incomplete';
+  }
+
+  String _aiConfigDescription({
+    required bool isZh,
+    required bool hasGeneration,
+    required bool hasEmbedding,
+  }) {
+    if (!hasGeneration && !hasEmbedding) {
+      return isZh
+          ? '\u8bf7\u5148\u8865\u5168\u751f\u6210\u6a21\u578b\u548c embedding \u8bbe\u7f6e\uff0c\u518d\u5f00\u59cb\u5206\u6790\u3002'
+          : 'Set up the generation model and embedding model before starting analysis.';
+    }
+    if (!hasGeneration) {
+      return isZh
+          ? '\u8bf7\u5148\u8865\u5168\u751f\u6210\u6a21\u578b\u914d\u7f6e\uff0c\u5305\u62ec API URL\u3001API Key \u548c\u6a21\u578b\u3002'
+          : 'Finish the generation model setup, including API URL, API key, and model.';
+    }
+    return isZh
+        ? '\u8bf7\u5148\u914d\u7f6e embedding \u670d\u52a1\u548c\u6a21\u578b\uff0c\u7136\u540e\u518d\u5f00\u59cb\u5206\u6790\u3002'
+        : 'Configure the embedding service and model before starting analysis.';
+  }
+
+  String _promptSectionTitle(bool isZh) {
+    if (_isCustomTemplateMode) {
+      return isZh
+          ? '\u7f16\u8f91\u81ea\u5b9a\u4e49\u6a21\u677f'
+          : 'Edit Custom Template';
+    }
+    return context.t.strings.aiInsight.promptSettings.editPromptTemplate;
+  }
+
+  String _promptSectionDescription(bool isZh) {
+    if (_isCustomTemplateMode) {
+      return isZh
+          ? '\u4fee\u6539\u6807\u9898\u3001\u63d0\u793a\u8bcd\u3001\u56fe\u6807\u548c\u8bf4\u660e\u3002'
+          : 'Update the title, prompt, icon, and note.';
+    }
+    return context.t.strings.aiInsight.promptSettings.description;
   }
 
   @override
   Widget build(BuildContext context) {
+    final settings = ref.watch(aiSettingsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
     final border = isDark
@@ -247,30 +284,11 @@ class _AiInsightSettingsSheetState
     final mediaQuery = MediaQuery.of(context);
     final maxHeight = mediaQuery.size.height * 0.8;
     final minHeight = mediaQuery.size.height * 0.5;
-    final promptTemplate = ref.watch(
-      aiSettingsProvider.select(
-        (settings) =>
-            settings.insightPromptTemplates[widget.definition.id.storageKey]
-                ?.trim() ??
-            '',
-      ),
-    );
-    final hasEmbeddingProfile = ref.watch(
-      aiSettingsProvider.select(
-        (settings) => settings.hasEnabledEmbeddingProfile,
-      ),
-    );
+    final hasGeneration = _hasGenerationConfig(settings);
+    final hasEmbedding = _hasEmbeddingConfig(settings);
+    final hasRequiredAiConfig = _hasRequiredAiConfig(settings);
     final isZh =
         Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
-    final previewTitle = isZh ? '检索预览' : 'Retrieval Preview';
-    final matchingMemosLabel = isZh ? '匹配笔记数' : 'Matching memos';
-    final candidateChunksLabel = isZh ? '候选分片数' : 'Candidate chunks';
-    final readyLabel = isZh ? '向量已就绪' : 'Embeddings ready';
-    final pendingLabel = isZh ? '向量处理中' : 'Embeddings pending';
-    final failedLabel = isZh ? '向量失败数' : 'Embeddings failed';
-    final embeddingHint = isZh
-        ? '请先在 AI 设置中配置 embedding 服务和模型。'
-        : 'Configure an embedding provider and model in AI settings first.';
 
     return SafeArea(
       child: Center(
@@ -308,7 +326,7 @@ class _AiInsightSettingsSheetState
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          widget.definition.title(context),
+                          _displayTitle,
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -335,6 +353,7 @@ class _AiInsightSettingsSheetState
                                   .last3Days,
                               activeColor: MemoFlowPalette.primary,
                               textColor: textMain,
+                              borderColor: border,
                               onTap: () =>
                                   _selectRange(AiInsightRange.last3Days),
                             ),
@@ -348,6 +367,7 @@ class _AiInsightSettingsSheetState
                                   .last7Days,
                               activeColor: MemoFlowPalette.primary,
                               textColor: textMain,
+                              borderColor: border,
                               onTap: () =>
                                   _selectRange(AiInsightRange.last7Days),
                             ),
@@ -361,6 +381,7 @@ class _AiInsightSettingsSheetState
                                   .last30Days,
                               activeColor: MemoFlowPalette.primary,
                               textColor: textMain,
+                              borderColor: border,
                               onTap: () =>
                                   _selectRange(AiInsightRange.last30Days),
                             ),
@@ -374,24 +395,21 @@ class _AiInsightSettingsSheetState
                                   .customRange,
                               activeColor: MemoFlowPalette.primary,
                               textColor: textMain,
+                              borderColor: border,
                               onTap: () => _selectRange(AiInsightRange.custom),
                             ),
                           ],
                         ),
-                        if (_range == AiInsightRange.custom &&
-                            _customRange != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Text(
-                              _rangeLabel(),
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: textMuted,
-                              ),
-                            ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _rangeLabel(),
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.5,
+                            color: textMuted,
                           ),
-                        const SizedBox(height: 8),
+                        ),
+                        const SizedBox(height: 16),
                         Divider(color: border),
                         const SizedBox(height: 16),
                         _SectionTitle(
@@ -434,8 +452,8 @@ class _AiInsightSettingsSheetState
                             const SizedBox(height: 10),
                             Text(
                               isZh
-                                  ? '\u52fe\u9009\u540e\uff0c\u6240\u9009\u53ef\u89c1\u6027\u7684\u7b14\u8bb0\u4f1a\u8fdb\u5165\u68c0\u7d22\u4e0e\u5206\u6790\u3002'
-                                  : 'Checked visibilities will be included in retrieval and analysis.',
+                                  ? '\u52fe\u9009\u540e\uff0c\u6240\u9009\u53ef\u89c1\u6027\u7684\u7b14\u8bb0\u4f1a\u76f4\u63a5\u8fdb\u5165\u5206\u6790\u3002'
+                                  : 'Checked visibilities will be sent directly into the analysis.',
                               style: TextStyle(
                                 fontSize: 13,
                                 height: 1.5,
@@ -444,7 +462,6 @@ class _AiInsightSettingsSheetState
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 16),
                         Divider(color: border),
                         const SizedBox(height: 16),
@@ -471,12 +488,7 @@ class _AiInsightSettingsSheetState
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        context
-                                            .t
-                                            .strings
-                                            .aiInsight
-                                            .promptSettings
-                                            .editPromptTemplate,
+                                        _promptSectionTitle(isZh),
                                         style: TextStyle(
                                           fontSize: 15,
                                           fontWeight: FontWeight.w600,
@@ -485,12 +497,7 @@ class _AiInsightSettingsSheetState
                                       ),
                                       const SizedBox(height: 6),
                                       Text(
-                                        context
-                                            .t
-                                            .strings
-                                            .aiInsight
-                                            .promptSettings
-                                            .description,
+                                        _promptSectionDescription(isZh),
                                         style: TextStyle(
                                           fontSize: 13,
                                           height: 1.5,
@@ -508,165 +515,79 @@ class _AiInsightSettingsSheetState
                             ),
                           ),
                         ),
-                        if (promptTemplate.trim().isEmpty) ...[
-                          const SizedBox(height: 10),
-                          Text(
-                            context
-                                .t
-                                .strings
-                                .aiInsight
-                                .promptSettings
-                                .emptyTemplateHint,
-                            style: TextStyle(
-                              fontSize: 13,
-                              height: 1.5,
-                              color: textMuted,
+                        if (!hasRequiredAiConfig) ...[
+                          const SizedBox(height: 16),
+                          Divider(color: border),
+                          const SizedBox(height: 16),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: card,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: border),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.settings_suggest_rounded,
+                                      color: MemoFlowPalette.primary,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _aiConfigTitle(isZh),
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: textMain,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  _aiConfigDescription(
+                                    isZh: isZh,
+                                    hasGeneration: hasGeneration,
+                                    hasEmbedding: hasEmbedding,
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.5,
+                                    color: textMuted,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                OutlinedButton.icon(
+                                  onPressed: _openAiSettings,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: MemoFlowPalette.primary,
+                                    side: BorderSide(
+                                      color: MemoFlowPalette.primary.withValues(
+                                        alpha: 0.32,
+                                      ),
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                  ),
+                                  icon: const Icon(Icons.open_in_new_rounded),
+                                  label: Text(
+                                    isZh
+                                        ? '\u53bb AI \u8bbe\u7f6e'
+                                        : 'Open AI Settings',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
-                        const SizedBox(height: 16),
-                        Divider(color: border),
-                        const SizedBox(height: 16),
-                        _SectionTitle(title: previewTitle, textColor: textMain),
-                        const SizedBox(height: 10),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (_isPreviewLoading)
-                                    Row(
-                                      children: [
-                                        SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                  MemoFlowPalette.primary,
-                                                ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Text(
-                                          context
-                                              .t
-                                              .strings
-                                              .aiInsight
-                                              .contentPreview
-                                              .loading,
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color: textMain,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  else if (_previewError != null)
-                                    Text(
-                                      context
-                                          .t
-                                          .strings
-                                          .aiInsight
-                                          .contentPreview
-                                          .previewLoadFailed,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        height: 1.5,
-                                        color: textMuted,
-                                      ),
-                                    )
-                                  else if (!hasEmbeddingProfile)
-                                    Text(
-                                      embeddingHint,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        height: 1.5,
-                                        color: textMuted,
-                                      ),
-                                    )
-                                  else ...[
-                                    _PreviewStatLine(
-                                      label: matchingMemosLabel,
-                                      value:
-                                          '${_previewPayload.totalMatchingMemos}',
-                                      textColor: textMain,
-                                      mutedColor: textMuted,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _PreviewStatLine(
-                                      label: candidateChunksLabel,
-                                      value:
-                                          '${_previewPayload.candidateChunks}',
-                                      textColor: textMain,
-                                      mutedColor: textMuted,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _PreviewStatLine(
-                                      label: readyLabel,
-                                      value:
-                                          '${_previewPayload.embeddingReady}',
-                                      textColor: textMain,
-                                      mutedColor: textMuted,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _PreviewStatLine(
-                                      label: pendingLabel,
-                                      value:
-                                          '${_previewPayload.embeddingPending}',
-                                      textColor: textMain,
-                                      mutedColor: textMuted,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    _PreviewStatLine(
-                                      label: failedLabel,
-                                      value:
-                                          '${_previewPayload.embeddingFailed}',
-                                      textColor: textMain,
-                                      mutedColor: textMuted,
-                                    ),
-                                    if (_previewPayload.isSampled) ...[
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        isZh
-                                            ? 'The candidate set exceeded the limit, so this preview is sampled.'
-                                            : 'The candidate set exceeded the limit, so this preview is sampled.',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          height: 1.45,
-                                          color: textMuted,
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            OutlinedButton(
-                              onPressed: _openPreviewScreen,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: textMain,
-                                side: BorderSide(color: border),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              child: Text(
-                                context
-                                    .t
-                                    .strings
-                                    .aiInsight
-                                    .contentPreview
-                                    .previewContent,
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),
@@ -744,7 +665,7 @@ class _SectionTitle extends StatelessWidget {
     return Text(
       title,
       style: TextStyle(
-        fontSize: 14,
+        fontSize: 15,
         fontWeight: FontWeight.w700,
         color: textColor,
       ),
@@ -758,6 +679,7 @@ class _RangeOptionTile extends StatelessWidget {
     required this.title,
     required this.activeColor,
     required this.textColor,
+    required this.borderColor,
     required this.onTap,
   });
 
@@ -765,28 +687,39 @@ class _RangeOptionTile extends StatelessWidget {
   final String title;
   final Color activeColor;
   final Color textColor;
+  final Color borderColor;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return ChoiceChip(
-      label: Text(
-        title,
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: selected ? Colors.white : textColor,
+    final background = selected
+        ? activeColor.withValues(alpha: 0.12)
+        : Colors.transparent;
+    final stroke = selected ? activeColor : borderColor;
+    final foreground = selected ? activeColor : textColor;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: stroke),
+          ),
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: foreground,
+            ),
+          ),
         ),
       ),
-      selected: selected,
-      onSelected: (_) => onTap(),
-      selectedColor: activeColor,
-      backgroundColor: activeColor.withValues(alpha: 0.08),
-      side: BorderSide(
-        color: activeColor.withValues(alpha: selected ? 0 : 0.2),
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      labelPadding: const EdgeInsets.symmetric(horizontal: 6),
     );
   }
 }
@@ -808,85 +741,24 @@ class _VisibilityCheckTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: value
-          ? activeColor.withValues(alpha: 0.12)
-          : activeColor.withValues(alpha: 0.04),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => onChanged(!value),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 12, 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IgnorePointer(
-                child: Checkbox(
-                  value: value,
-                  onChanged: (_) {},
-                  activeColor: activeColor,
-                  visualDensity: VisualDensity.compact,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              const SizedBox(width: 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: textColor,
-                ),
-              ),
-            ],
-          ),
+    return FilterChip(
+      selected: value,
+      onSelected: onChanged,
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: value ? activeColor : textColor,
         ),
       ),
-    );
-  }
-}
-
-class _PreviewStatLine extends StatelessWidget {
-  const _PreviewStatLine({
-    required this.label,
-    required this.value,
-    required this.textColor,
-    required this.mutedColor,
-  });
-
-  final String label;
-  final String value;
-  final Color textColor;
-  final Color mutedColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: mutedColor,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: textColor,
-            ),
-          ),
-        ),
-      ],
+      showCheckmark: false,
+      side: BorderSide(
+        color: value ? activeColor : Theme.of(context).dividerColor,
+      ),
+      backgroundColor: Colors.transparent,
+      selectedColor: activeColor.withValues(alpha: 0.12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
     );
   }
 }

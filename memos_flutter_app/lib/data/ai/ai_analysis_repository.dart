@@ -89,7 +89,7 @@ LIMIT 1;
 ''',
       <Object?>[trimmedUid],
     );
-    return rows.firstOrNull;
+    return _firstOrNull(rows);
   }
 
   Future<int> enqueueIndexJob({
@@ -364,7 +364,7 @@ WHERE c.is_active = 1
 ''',
       <Object?>[baseUrl, model, startTimeSec, endTimeSecExclusive],
     );
-    return rows.firstOrNull ?? const <String, Object?>{};
+    return _firstOrNull(rows) ?? const <String, Object?>{};
   }
 
   Future<List<Map<String, dynamic>>> listCandidateChunkRows({
@@ -447,6 +447,7 @@ LIMIT ?;
     required AiTaskStatus status,
     required int rangeStart,
     required int rangeEndExclusive,
+    required bool includePublic,
     required bool includePrivate,
     required bool includeProtected,
     required String promptTemplate,
@@ -462,6 +463,7 @@ LIMIT ?;
       'status': aiTaskStatusToStorage(status),
       'range_start': rangeStart,
       'range_end_exclusive': rangeEndExclusive,
+      'include_public': includePublic ? 1 : 0,
       'include_private': includePrivate ? 1 : 0,
       'include_protected': includeProtected ? 1 : 0,
       'prompt_template': promptTemplate,
@@ -595,8 +597,90 @@ LIMIT 1;
 ''',
       <Object?>[aiAnalysisTypeToStorage(analysisType)],
     );
-    final taskRow = rows.firstOrNull;
+    final taskRow = _firstOrNull(rows);
     if (taskRow == null) return null;
+    return _hydrateAnalysisReportFromJoinedRow(taskRow);
+  }
+
+  Future<List<AiSavedAnalysisHistoryEntry>> listAnalysisReportHistory({
+    required AiAnalysisType analysisType,
+    int limit = 50,
+  }) async {
+    final db = await _db;
+    final rows = await db.rawQuery(
+      '''
+SELECT
+  t.id AS task_id,
+  t.task_uid,
+  t.status,
+  t.range_start,
+  t.range_end_exclusive,
+  t.include_public,
+  t.include_private,
+  t.include_protected,
+  t.prompt_template,
+  t.created_time,
+  r.summary,
+  r.is_stale
+FROM ai_analysis_tasks t
+JOIN ai_analysis_results r ON r.task_id = t.id
+WHERE t.analysis_type = ?
+ORDER BY t.created_time DESC
+LIMIT ?;
+''',
+      <Object?>[aiAnalysisTypeToStorage(analysisType), limit],
+    );
+    return rows
+        .map(
+          (row) => AiSavedAnalysisHistoryEntry(
+            taskId: (row['task_id'] as int?) ?? 0,
+            taskUid: (row['task_uid'] as String?) ?? '',
+            status: aiTaskStatusFromStorage(
+              (row['status'] as String?) ?? 'failed',
+            ),
+            summary: (row['summary'] as String?) ?? '',
+            promptTemplate: (row['prompt_template'] as String?) ?? '',
+            rangeStart: (row['range_start'] as int?) ?? 0,
+            rangeEndExclusive: (row['range_end_exclusive'] as int?) ?? 0,
+            includePublic: ((row['include_public'] as int?) ?? 1) == 1,
+            includePrivate: ((row['include_private'] as int?) ?? 0) == 1,
+            includeProtected: ((row['include_protected'] as int?) ?? 0) == 1,
+            createdTime: (row['created_time'] as int?) ?? 0,
+            isStale: ((row['is_stale'] as int?) ?? 0) == 1,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<AiSavedAnalysisReport?> loadAnalysisReportByTaskId(int taskId) async {
+    if (taskId <= 0) return null;
+    final db = await _db;
+    final rows = await db.rawQuery(
+      '''
+SELECT
+  t.id AS task_id,
+  t.task_uid,
+  t.status,
+  r.id AS result_id,
+  r.summary,
+  r.follow_up_suggestions_json,
+  r.is_stale
+FROM ai_analysis_tasks t
+JOIN ai_analysis_results r ON r.task_id = t.id
+WHERE t.id = ?
+LIMIT 1;
+''',
+      <Object?>[taskId],
+    );
+    final taskRow = _firstOrNull(rows);
+    if (taskRow == null) return null;
+    return _hydrateAnalysisReportFromJoinedRow(taskRow);
+  }
+
+  Future<AiSavedAnalysisReport> _hydrateAnalysisReportFromJoinedRow(
+    Map<String, Object?> taskRow,
+  ) async {
+    final db = await _db;
     final taskId = (taskRow['task_id'] as int?) ?? 0;
     final resultId = (taskRow['result_id'] as int?) ?? 0;
     final sectionRows = await db.query(
@@ -686,6 +770,7 @@ String _providerKindToStorage(AiProviderKind value) => switch (value) {
   AiProviderKind.anthropicCompatible => 'anthropic_compatible',
 };
 
-extension _IterableFirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
+T? _firstOrNull<T>(Iterable<T> values) {
+  if (values.isEmpty) return null;
+  return values.first;
 }

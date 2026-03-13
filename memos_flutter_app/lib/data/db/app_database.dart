@@ -13,7 +13,7 @@ class AppDatabase {
   AppDatabase({String dbName = 'memos_app.db'}) : _dbName = dbName;
 
   final String _dbName;
-  static const _dbVersion = 14;
+  static const _dbVersion = 15;
   static const int outboxStatePending = 0;
   static const int outboxStateRunning = 1;
   static const int outboxStateRetry = 2;
@@ -285,6 +285,11 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
           }
           if (oldVersion < 14) {
             await _ensureAiTables(db);
+          }
+          if (oldVersion < 15) {
+            await db.execute(
+              'ALTER TABLE ai_analysis_tasks ADD COLUMN include_public INTEGER NOT NULL DEFAULT 1;',
+            );
           }
         },
         onOpen: (db) async {
@@ -2655,6 +2660,7 @@ CREATE TABLE IF NOT EXISTS ai_analysis_tasks (
   status TEXT NOT NULL,
   range_start INTEGER NOT NULL,
   range_end_exclusive INTEGER NOT NULL,
+  include_public INTEGER NOT NULL DEFAULT 1,
   include_private INTEGER NOT NULL DEFAULT 0,
   include_protected INTEGER NOT NULL DEFAULT 0,
   prompt_template TEXT NOT NULL,

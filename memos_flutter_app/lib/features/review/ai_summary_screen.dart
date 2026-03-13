@@ -12,6 +12,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/app_localization.dart';
+import '../../core/desktop_window_controls.dart';
 import '../../core/drawer_navigation.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
@@ -19,6 +20,9 @@ import '../../core/top_toast.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../data/ai/ai_analysis_models.dart';
+import '../../data/ai/ai_provider_models.dart';
+import '../../data/ai/ai_route_config.dart';
+import '../../data/ai/ai_settings_models.dart';
 import '../../data/ai/ai_summary_service.dart';
 import '../../data/models/local_memo.dart';
 import '../about/about_screen.dart';
@@ -31,6 +35,7 @@ import '../memos/recycle_bin_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../resources/resources_screen.dart';
 import '../settings/settings_screen.dart';
+import '../settings/ai_settings_screen.dart';
 import '../stats/stats_screen.dart';
 import '../tags/tags_screen.dart';
 import '../sync/sync_queue_screen.dart';
@@ -41,7 +46,10 @@ import '../../state/sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
 import 'daily_review_screen.dart';
 import 'ai_insight_models.dart';
+import 'ai_insight_history_screen.dart';
 import 'ai_insight_settings_sheet.dart';
+import 'ai_insight_prompt_editor_screen.dart';
+import 'quick_prompt_editor_screen.dart';
 import '../../i18n/strings.g.dart';
 
 class AiSummaryScreen extends ConsumerStatefulWidget {
@@ -60,9 +68,17 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   var _view = _AiSummaryView.input;
   var _isLoading = false;
   var _requestId = 0;
+  var _selectedInsightId = AiInsightId.emotionMap;
+  String? _selectedInsightTitleOverride;
   AiSummaryResult? _summary;
   AiSavedAnalysisReport? _analysisReport;
   var _insightExpanded = false;
+  var _referencesExpanded = false;
+  var _analysisProgress = 0.0;
+  DateTimeRange? _reportRangeOverride;
+
+  AiInsightDefinition get _selectedInsightDefinition =>
+      definitionForInsight(_selectedInsightId);
 
   void _navigate(BuildContext context, AppDrawerDestination dest) {
     final route = switch (dest) {
@@ -105,6 +121,25 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     );
   }
 
+  void _backToInsightInput() {
+    if (_isLoading || _view != _AiSummaryView.report) {
+      return;
+    }
+
+    setState(() {
+      _view = _AiSummaryView.input;
+      _insightExpanded = false;
+      _referencesExpanded = false;
+      _reportRangeOverride = null;
+    });
+  }
+
+  void _toggleReferencesExpanded() {
+    setState(() {
+      _referencesExpanded = !_referencesExpanded;
+    });
+  }
+
   void _openTag(BuildContext context, String tag) {
     closeDrawerThenPushReplacement(
       context,
@@ -120,6 +155,14 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
 
   void _openNotifications(BuildContext context) {
     closeDrawerThenPushReplacement(context, const NotificationsScreen());
+  }
+
+  Future<void> _openAiSettings() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => const AiSettingsScreen()),
+    );
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<DateTimeRange?> _pickCustomRange(
@@ -158,22 +201,6 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
           definition: definition,
           analysisLoading: _isLoading,
           customRangePicker: _pickCustomRange,
-          previewLoader:
-              ({
-                required range,
-                required customRange,
-                required allowPublic,
-                required allowPrivate,
-                required allowProtected,
-              }) {
-                return _buildPreviewPayload(
-                  range: range,
-                  customRange: customRange,
-                  allowPublic: allowPublic,
-                  allowPrivate: allowPrivate,
-                  allowProtected: allowProtected,
-                );
-              },
         ),
       ),
     );
@@ -181,31 +208,94 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     await _runAnalysis(result);
   }
 
-  Future<void> _runAnalysis(AiInsightSettingsResult result) async {
+  Future<void> _openCustomTemplateEditor() async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => const AiInsightPromptEditorScreen.custom(),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  Future<void> _openCustomInsightSettings() async {
+    if (_isLoading) return;
+    final customTemplate = ref.read(aiSettingsProvider).customInsightTemplate;
+    if (!customTemplate.isConfigured) {
+      await _openCustomTemplateEditor();
+      return;
+    }
+    final result = await showDialog<AiInsightSettingsResult>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        child: AiInsightSettingsSheet(
+          definition: customAiInsightDefinition,
+          customTitle: customTemplate.title,
+          customTemplateMode: true,
+          analysisLoading: _isLoading,
+          customRangePicker: _pickCustomRange,
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    await _runAnalysis(result, titleOverride: customTemplate.title);
+  }
+
+  Future<void> _openInsightHistory() async {
+    if (_isLoading) return;
+    final selection = await Navigator.of(context)
+        .push<AiInsightHistorySelection>(
+          MaterialPageRoute<AiInsightHistorySelection>(
+            builder: (_) => const AiInsightHistoryScreen(),
+          ),
+        );
+    if (!mounted || selection == null) return;
+    setState(() {
+      _analysisReport = selection.report;
+      _summary = null;
+      _view = _AiSummaryView.report;
+      _isLoading = false;
+      _analysisProgress = 0.0;
+      _insightExpanded = false;
+      _referencesExpanded = false;
+      _selectedInsightId = selection.insightId;
+      _selectedInsightTitleOverride = selection.titleOverride?.trim();
+      _reportRangeOverride = selection.range;
+    });
+  }
+
+  Future<void> _runAnalysis(
+    AiInsightSettingsResult result, {
+    String? titleOverride,
+  }) async {
     if (_isLoading) return;
     final settings = ref.read(aiSettingsProvider);
     final isZh =
         Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
-    if (!settings.hasEnabledEmbeddingProfile) {
+    final hasGenerationConfig = hasConfiguredChatRoute(
+      settings,
+      routeId: AiTaskRouteId.analysisReport,
+    );
+    final hasEmbeddingConfig = hasConfiguredEmbeddingRoute(settings);
+    if (!hasEmbeddingConfig) {
       showTopToast(
         context,
         isZh
-            ? '请先配置 embedding 模型。'
+            ? '\u8bf7\u5148\u914d\u7f6e embedding \u6a21\u578b\u3002'
             : 'Please configure an embedding model first.',
       );
       return;
     }
-    if (settings.apiKey.trim().isEmpty) {
+    if (!hasGenerationConfig) {
       showTopToast(
         context,
-        context.t.strings.legacy.msg_enter_api_key_ai_settings,
-      );
-      return;
-    }
-    if (settings.apiUrl.trim().isEmpty) {
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_enter_api_url_ai_settings,
+        isZh
+            ? '\u8bf7\u5148\u914d\u7f6e\u53ef\u7528\u7684\u751f\u6210\u6a21\u578b\u3002'
+            : 'Please configure a generation model first.',
       );
       return;
     }
@@ -214,22 +304,14 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     setState(() {
       _range = result.range;
       _customRange = result.customRange;
+      _selectedInsightId = result.insightId;
+      _selectedInsightTitleOverride = titleOverride?.trim();
+      _reportRangeOverride = null;
       _isLoading = true;
+      _analysisProgress = 0.06;
     });
     try {
-      final previewPayload = result.previewPayload;
       if (!mounted || !_isLoading || requestId != _requestId) return;
-      if (!previewPayload.hasContent || previewPayload.embeddingReady <= 0) {
-        setState(() => _isLoading = false);
-        showTopToast(
-          context,
-          isZh
-              ? '当前时间范围内还没有可用的索引证据。'
-              : 'No indexed evidence is available for this range yet.',
-        );
-        return;
-      }
-
       final analysisResult = await ref
           .read(aiAnalysisServiceProvider)
           .generateEmotionMap(
@@ -240,6 +322,12 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
             includePrivate: result.allowPrivate,
             includeProtected: result.allowProtected,
             promptTemplate: result.promptTemplate.trim(),
+            onProgress: (progress) {
+              if (!mounted || !_isLoading || requestId != _requestId) return;
+              setState(() {
+                _analysisProgress = progress.clamp(0.0, 1.0);
+              });
+            },
           );
       if (!mounted || !_isLoading || requestId != _requestId) return;
       setState(() {
@@ -247,11 +335,16 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         _summary = null;
         _view = _AiSummaryView.report;
         _isLoading = false;
+        _analysisProgress = 0.0;
         _insightExpanded = false;
+        _referencesExpanded = false;
       });
     } catch (e) {
       if (!mounted || requestId != _requestId) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _analysisProgress = 0.0;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -355,33 +448,45 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     required AiSavedAnalysisReport report,
     required bool forMemo,
   }) {
-    final isZh =
-        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
-    final title = isZh ? '情绪地图' : 'Emotion Map';
+    final isZh = _isZhLocale();
+    final title = _selectedInsightDisplayTitle();
     final header = forMemo ? '# $title' : title;
     final buffer = StringBuffer();
     buffer.writeln(header);
-    buffer.writeln('${context.t.strings.legacy.msg_range}: ${_rangeLabel()}');
+    buffer.writeln(_reportRangeLabel());
     buffer.writeln('');
-    buffer.writeln(report.summary.trim());
-    for (final section in report.sections) {
+
+    final summaryText = report.summary.trim();
+    if (summaryText.isNotEmpty) {
+      buffer.writeln(summaryText);
+    }
+
+    for (final section in _reportNarrativeSections(report)) {
+      final body = section.body.trim();
+      if (body.isEmpty) continue;
       buffer.writeln('');
-      buffer.writeln('## ${section.title}');
-      buffer.writeln(section.body.trim());
-      final evidences = report.evidences.where(
-        (item) => item.sectionKey == section.sectionKey,
+      buffer.writeln(body);
+    }
+
+    final closing = _reportClosingText(report)?.trim();
+    if (closing != null && closing.isNotEmpty) {
+      buffer.writeln('');
+      buffer.writeln(closing);
+    }
+
+    final references = _referenceEvidences(report);
+    if (references.isNotEmpty) {
+      buffer.writeln('');
+      buffer.writeln(
+        isZh
+            ? '\u8fd9\u6b21\u6d1e\u5bdf\u53c2\u8003\u4e86\u8fd9\u4e9b\u7247\u6bb5\uff1a'
+            : 'This insight drew on these note fragments:',
       );
-      for (final evidence in evidences) {
-        buffer.writeln('- ${evidence.quoteText.trim()}');
+      for (final evidence in references) {
+        buffer.writeln('- "${evidence.quoteText.trim()}"');
       }
     }
-    if (report.followUpSuggestions.isNotEmpty) {
-      buffer.writeln('');
-      buffer.writeln('## ${isZh ? '后续建议' : 'Follow-up Suggestions'}');
-      for (final item in report.followUpSuggestions) {
-        buffer.writeln('- ${item.trim()}');
-      }
-    }
+
     return buffer.toString().trim();
   }
 
@@ -486,6 +591,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     final now = DateTime.now();
     final tags = extractTags(content);
     final db = ref.read(databaseProvider);
+    final aiAnalysisRepository = ref.read(aiAnalysisRepositoryProvider);
 
     try {
       await db.upsertMemo(
@@ -502,6 +608,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         relationCount: 0,
         syncState: 1,
       );
+      await aiAnalysisRepository.upsertMemoPolicy(memoUid: uid, allowAi: false);
       await db.enqueueOutbox(
         type: 'create_memo',
         payload: {
@@ -535,7 +642,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
   }
 
   DateTimeRange _effectiveRange() {
-    return resolveAiInsightRange(_range, _customRange);
+    return _reportRangeOverride ?? resolveAiInsightRange(_range, _customRange);
   }
 
   String _rangeLabel() {
@@ -582,25 +689,6 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     return buffer.toString().trim();
   }
 
-  Future<AiAnalysisPreviewPayload> _buildPreviewPayload({
-    required AiInsightRange range,
-    required DateTimeRange? customRange,
-    required bool allowPublic,
-    required bool allowPrivate,
-    required bool allowProtected,
-  }) async {
-    return ref
-        .read(aiAnalysisServiceProvider)
-        .buildEmotionMapPreview(
-          language: context.appLanguage,
-          settings: ref.read(aiSettingsProvider),
-          range: resolveAiInsightRange(range, customRange),
-          includePublic: allowPublic,
-          includePrivate: allowPrivate,
-          includeProtected: allowProtected,
-        );
-  }
-
   PreferredSizeWidget _buildAppBar({
     required BuildContext context,
     required bool isReport,
@@ -637,15 +725,20 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
               color: textMain,
               onPressed: () => _backToAllMemos(context),
             ),
-      actions: isReport
-          ? [
-              IconButton(
-                icon: const Icon(Icons.share),
-                color: MemoFlowPalette.primary,
-                onPressed: _shareReport,
-              ),
-            ]
-          : (useDesktopSidePane ? [const SizedBox(width: 48)] : null),
+      actions: [
+        if (isReport)
+          IconButton(
+            icon: const Icon(Icons.share),
+            color: MemoFlowPalette.primary,
+            onPressed: _shareReport,
+          ),
+        IconButton(
+          tooltip: context.t.strings.settings.preferences.history,
+          icon: Icon(Icons.history_rounded, color: textMain),
+          onPressed: _openInsightHistory,
+        ),
+        if (enableWindowsDragToMove) const DesktopWindowControls(),
+      ],
       flexibleSpace: enableWindowsDragToMove
           ? const DragToMoveArea(child: SizedBox.expand())
           : (useDesktopSidePane
@@ -769,14 +862,23 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     required Color textMain,
     required Color textMuted,
   }) {
+    final settings = ref.watch(aiSettingsProvider);
+    final customTemplate = settings.customInsightTemplate;
     final isNarrow = MediaQuery.sizeOf(context).width < 640;
     final crossAxisCount = isNarrow ? 2 : 3;
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = isNarrow ? 20.0 : 28.0;
+
+    final hasGenerationConfig = hasConfiguredChatRoute(
+      settings,
+      routeId: AiTaskRouteId.analysisReport,
+    );
+    final hasEmbeddingConfig = hasConfiguredEmbeddingRoute(settings);
+
     final grid = GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: visibleAiInsightDefinitions.length,
+      itemCount: visibleAiInsightDefinitions.length + 1,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: crossAxisCount,
         crossAxisSpacing: 14,
@@ -784,6 +886,19 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         childAspectRatio: isNarrow ? 0.92 : 1.08,
       ),
       itemBuilder: (context, index) {
+        if (index == visibleAiInsightDefinitions.length) {
+          return _AiCustomInsightCard(
+            template: customTemplate,
+            cardColor: card,
+            borderColor: border,
+            textMain: textMain,
+            textMuted: textMuted,
+            onTap: _openCustomInsightSettings,
+            onEdit: customTemplate.isConfigured
+                ? _openCustomTemplateEditor
+                : null,
+          );
+        }
         final definition = visibleAiInsightDefinitions[index];
         return _AiInsightCard(
           definition: definition,
@@ -829,6 +944,16 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
                       color: textMuted,
                     ),
                   ),
+                  if (!hasGenerationConfig || !hasEmbeddingConfig) ...[
+                    const SizedBox(height: 18),
+                    _AiSettingsBanner(
+                      textMain: textMain,
+                      textMuted: textMuted,
+                      borderColor: border,
+                      cardColor: card,
+                      onTap: _openAiSettings,
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   grid,
                 ],
@@ -850,7 +975,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     required AiSavedAnalysisReport? report,
   }) {
     if (report != null) {
-      return _buildStructuredReportBody(
+      return _buildLetterReportBody(
         bg: bg,
         card: card,
         border: border,
@@ -859,269 +984,90 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
         report: report,
       );
     }
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final reportBg = isDark ? bg : const Color(0xFFF7F2EA);
-    final reportCard = isDark ? card : const Color(0xFFFFFFFF);
-    final cardBorder = isDark ? border : border.withValues(alpha: 0.7);
-    final moodWarm = const Color(0xFFF2A167);
-    final moodDeep = const Color(0xFFE98157);
-    final moodLight = const Color(0xFFF7C796);
-    final moodChipBg = moodWarm.withValues(alpha: isDark ? 0.25 : 0.2);
-    final moodChipBorder = moodWarm.withValues(alpha: isDark ? 0.45 : 0.35);
-    final moodChipText = isDark
-        ? textMain.withValues(alpha: 0.9)
-        : const Color(0xFF6B5344);
-    final title = _reportTitle();
-    final dateLabel = _reportRangeLabel();
-    final rawKeywords = summary.keywords.isNotEmpty
-        ? summary.keywords
-        : [context.t.strings.legacy.msg_no_keywords_2];
-    final keywords = rawKeywords.map(_normalizeKeyword).toList(growable: false);
-    final insightMarkdown = _buildInsightMarkdown(summary);
-    final shouldCollapse = insightMarkdown.length > 260;
-    final showCollapsed = shouldCollapse && !_insightExpanded;
-    final insightStyle = TextStyle(
-      fontSize: 14,
-      height: 1.7,
-      color: textMain.withValues(alpha: isDark ? 0.85 : 0.82),
-    );
-    Widget insightContent = MemoMarkdown(
-      data: insightMarkdown,
-      textStyle: insightStyle,
-      blockSpacing: 10,
-      shrinkWrap: true,
-    );
-    if (showCollapsed) {
-      insightContent = SizedBox(
-        height: 260,
-        child: SingleChildScrollView(
-          physics: const NeverScrollableScrollPhysics(),
-          child: insightContent,
-        ),
-      );
-    }
-    final headerTextColor = isDark ? MemoFlowPalette.textLight : textMain;
-    final headerTextMuted = headerTextColor.withValues(alpha: 0.6);
 
-    return RepaintBoundary(
-      key: _reportBoundaryKey,
-      child: Container(
-        color: reportBg,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 200),
-          children: [
-            Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: reportCard,
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(color: cardBorder),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = width < 720 ? 20.0 : 28.0;
+    final markdown = _buildInsightMarkdown(summary);
+    final shouldCollapse = markdown.length > 320;
+    final showCollapsed = shouldCollapse && !_insightExpanded;
+    final displayedMarkdown = showCollapsed
+        ? '${markdown.substring(0, 320).trim()}...'
+        : markdown;
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 132),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: width < 980 ? width : 860),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                24,
+                horizontalPadding,
+                24,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    height: 190,
-                    child: Stack(
-                      children: [
-                        const Positioned.fill(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Color(0xFFFFF4E8), Color(0xFFFFE7D6)],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.center,
-                          child: Container(
-                            width: 170,
-                            height: 170,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: const RadialGradient(
-                                center: Alignment(-0.2, -0.2),
-                                radius: 0.9,
-                                colors: [
-                                  Color(0xFFFBD7B1),
-                                  Color(0xFFF4A96F),
-                                  Color(0xFFE97B57),
-                                ],
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: moodWarm.withValues(alpha: 0.4),
-                                  blurRadius: 24,
-                                  offset: const Offset(0, 8),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          left: 30,
-                          top: 24,
-                          child: Container(
-                            width: 64,
-                            height: 64,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  moodLight.withValues(alpha: 0.9),
-                                  moodWarm.withValues(alpha: 0.4),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 28,
-                          bottom: 26,
-                          child: Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  moodWarm.withValues(alpha: 0.8),
-                                  moodDeep.withValues(alpha: 0.5),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                title,
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w800,
-                                  color: headerTextColor,
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                dateLabel,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: headerTextMuted,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+              child: RepaintBoundary(
+                key: _reportBoundaryKey,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                  decoration: BoxDecoration(
+                    color: card,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: border),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.04),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final keyword in keywords)
-                          _KeywordChip(
-                            label: keyword,
-                            background: moodChipBg,
-                            textColor: moodChipText,
-                            borderColor: moodChipBorder,
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 6, 24, 0),
-                    child: Stack(
-                      children: [
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 240),
-                          curve: Curves.easeOut,
-                          child: ClipRect(child: insightContent),
-                        ),
-                        if (showCollapsed)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            child: Container(
-                              height: 70,
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    reportCard.withValues(alpha: 0.0),
-                                    reportCard,
-                                  ],
-                                ),
-                              ),
-                              child: Align(
-                                alignment: Alignment.bottomCenter,
-                                child: TextButton.icon(
-                                  onPressed: () {
-                                    setState(() => _insightExpanded = true);
-                                  },
-                                  icon: const Icon(
-                                    Icons.keyboard_arrow_down,
-                                    size: 18,
-                                  ),
-                                  label: Text(
-                                    context.t.strings.legacy.msg_expand_2,
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: textMain.withValues(
-                                      alpha: 0.65,
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                    child: Center(
-                      child: Text(
-                        context.t.strings.legacy.msg_generated_ai_memoflow,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _reportTitle(),
                         style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: textMuted.withValues(alpha: 0.6),
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                          color: textMain,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _reportRangeLabel(),
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.6,
+                          color: textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      MemoMarkdown(data: displayedMarkdown),
+                      if (shouldCollapse) ...[
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _insightExpanded = !_insightExpanded;
+                            });
+                          },
+                          child: Text(
+                            _insightExpanded
+                                ? context.t.strings.legacy.msg_collapse
+                                : context.t.strings.legacy.msg_expand,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1206,11 +1152,34 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     return '#$trimmed';
   }
 
+  String _analysisProgressLabel(double progress) {
+    final isZh = _isZhLocale();
+    if (progress < 0.12) {
+      return isZh ? '正在准备分析环境...' : 'Preparing analysis...';
+    }
+    if (progress < 0.34) {
+      return isZh ? '正在检查可分析内容...' : 'Checking analyzable content...';
+    }
+    if (progress < 0.68) {
+      return isZh ? '正在检索相关笔记...' : 'Retrieving relevant notes...';
+    }
+    if (progress < 0.78) {
+      return isZh ? '正在整理关键线索...' : 'Organizing key evidence...';
+    }
+    if (progress < 0.92) {
+      return isZh ? '正在生成洞察结果...' : 'Generating insights...';
+    }
+    return isZh ? '正在整理最终结果...' : 'Finalizing results...';
+  }
+
   Widget _buildLoadingOverlay({
     required Color bg,
     required Color textMain,
     required Color textMuted,
   }) {
+    final progress = _analysisProgress.clamp(0.0, 1.0);
+    final progressPercent = (progress * 100).round();
+    final progressLabel = _analysisProgressLabel(progress);
     return Positioned.fill(
       child: ClipRect(
         child: BackdropFilter(
@@ -1225,22 +1194,22 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SizedBox(
-                          width: 48,
-                          height: 48,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            minHeight: 8,
                             valueColor: AlwaysStoppedAnimation<Color>(
                               MemoFlowPalette.primary,
                             ),
                             backgroundColor: MemoFlowPalette.primary.withValues(
-                              alpha: 0.1,
+                              alpha: 0.12,
                             ),
                           ),
                         ),
                         const SizedBox(height: 24),
                         Text(
-                          context.t.strings.legacy.msg_analyzing_memos,
+                          progressLabel,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 17,
@@ -1250,10 +1219,10 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          context.t.strings.legacy.msg_about_15_seconds_left,
+                          '$progressPercent%',
                           style: TextStyle(
                             fontSize: 14,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w700,
                             color: textMuted,
                           ),
                         ),
@@ -1286,7 +1255,7 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
 }
 
 extension on _AiSummaryScreenState {
-  Widget _buildStructuredReportBody({
+  Widget _buildLetterReportBody({
     required Color bg,
     required Color card,
     required Color border,
@@ -1294,183 +1263,567 @@ extension on _AiSummaryScreenState {
     required Color textMuted,
     required AiSavedAnalysisReport report,
   }) {
-    final isZh =
-        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
-    return RepaintBoundary(
-      key: _reportBoundaryKey,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 200),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: card,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isZh ? '情绪地图' : 'Emotion Map',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: textMain,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _reportRangeLabel(),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: textMuted,
-                  ),
-                ),
-                if (report.isStale) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      isZh
-                          ? '当前分析结果已过期，建议重新生成。'
-                          : 'This result is stale and should be regenerated.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: textMain,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final width = MediaQuery.sizeOf(context).width;
+    final horizontalPadding = width < 720 ? 20.0 : 28.0;
+    final paper = isDark ? card : const Color(0xFFFFFBF5);
+    final paperBorder = isDark ? border : const Color(0xFFE6D8C6);
+    final titleColor = isDark ? textMain : const Color(0xFF5C4438);
+    final bodyColor = textMain.withValues(alpha: isDark ? 0.92 : 0.84);
+    final subtleText = textMuted.withValues(alpha: isDark ? 0.92 : 0.9);
+    final accentSoft = isDark
+        ? const Color(0xFF3B2F28)
+        : const Color(0xFFF3E7D8);
+    final referenceBg = isDark
+        ? card.withValues(alpha: 0.88)
+        : const Color(0xFFF9F4EC);
+    final narrativeSections = _reportNarrativeSections(report);
+    final leaveSpaceText = _reportLeaveSpaceText(report);
+    final closingText = _reportClosingText(report);
+    final referenceEvidences = _referenceEvidences(report);
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 132),
+      children: [
+        Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: width < 980 ? width : 860),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                24,
+                horizontalPadding,
+                24,
+              ),
+              child: RepaintBoundary(
+                key: _reportBoundaryKey,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                  decoration: BoxDecoration(
+                    color: paper,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: paperBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: isDark ? 0.08 : 0.05,
+                        ),
+                        blurRadius: 22,
+                        offset: const Offset(0, 10),
                       ),
-                    ),
+                    ],
                   ),
-                ],
-                const SizedBox(height: 16),
-                Text(
-                  report.summary,
-                  style: TextStyle(fontSize: 15, height: 1.6, color: textMain),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: accentSoft,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _reportBadgeTitle(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: titleColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isNarrow = constraints.maxWidth < 720;
+                          final titleBlock = Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _reportHeaderTitle(),
+                                style: TextStyle(
+                                  fontSize: 28,
+                                  height: 1.25,
+                                  fontWeight: FontWeight.w800,
+                                  color: titleColor,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _reportRangeLabel(),
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  height: 1.6,
+                                  color: subtleText,
+                                ),
+                              ),
+                            ],
+                          );
+                          final backButton = OutlinedButton.icon(
+                            onPressed: _backToInsightInput,
+                            icon: const Icon(
+                              Icons.arrow_back_rounded,
+                              size: 18,
+                            ),
+                            label: Text(_reportBackLabel()),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: titleColor,
+                              side: BorderSide(
+                                color: paperBorder.withValues(alpha: 0.95),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                          );
+                          if (isNarrow) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                titleBlock,
+                                const SizedBox(height: 16),
+                                backButton,
+                              ],
+                            );
+                          }
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: titleBlock),
+                              const SizedBox(width: 16),
+                              backButton,
+                            ],
+                          );
+                        },
+                      ),
+                      if (report.isStale) ...[
+                        const SizedBox(height: 18),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                          decoration: BoxDecoration(
+                            color: accentSoft,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: paperBorder.withValues(alpha: 0.9),
+                            ),
+                          ),
+                          child: Text(
+                            _reportStaleWarning(),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: titleColor,
+                              height: 1.55,
+                            ),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+                      Divider(
+                        color: paperBorder.withValues(alpha: 0.9),
+                        height: 1,
+                      ),
+                      if (report.summary.trim().isNotEmpty) ...[
+                        const SizedBox(height: 24),
+                        ..._buildLetterParagraphs(
+                          text: report.summary,
+                          textColor: bodyColor,
+                        ),
+                      ],
+                      for (final section in narrativeSections) ...[
+                        const SizedBox(height: 22),
+                        ..._buildLetterParagraphs(
+                          text: section.body,
+                          textColor: bodyColor,
+                        ),
+                      ],
+                      if (_shouldShowLeaveSpaceText(leaveSpaceText)) ...[
+                        const SizedBox(height: 20),
+                        _buildLeaveSpaceBlock(
+                          text: leaveSpaceText!,
+                          textColor: bodyColor,
+                          titleColor: titleColor,
+                          background: referenceBg,
+                          borderColor: paperBorder,
+                        ),
+                      ],
+                      if (_shouldShowClosingText(closingText)) ...[
+                        const SizedBox(height: 22),
+                        _buildClosingBlock(
+                          text: closingText!,
+                          textColor: titleColor,
+                          background: accentSoft,
+                          borderColor: paperBorder,
+                        ),
+                      ],
+                      if (_shouldShowReferenceSection(referenceEvidences)) ...[
+                        const SizedBox(height: 22),
+                        _buildReferenceSection(
+                          evidences: referenceEvidences,
+                          titleColor: titleColor,
+                          textColor: bodyColor,
+                          subtleText: subtleText,
+                          background: referenceBg,
+                          borderColor: paperBorder,
+                        ),
+                      ],
+                      const SizedBox(height: 28),
+                      Center(
+                        child: Text(
+                          context.t.strings.legacy.msg_generated_ai_memoflow,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: subtleText.withValues(alpha: 0.78),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
-          const SizedBox(height: 16),
-          for (final section in report.sections) ...[
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: card,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    section.title,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: textMain,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    section.body,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.6,
-                      color: textMain,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  for (final evidence in report.evidences.where(
-                    (item) => item.sectionKey == section.sectionKey,
-                  )) ...[
-                    InkWell(
-                      onTap: () => _openEvidenceMemo(evidence),
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: bg,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: border),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              evidence.quoteText,
-                              style: TextStyle(
-                                fontSize: 13,
-                                height: 1.5,
-                                color: textMain,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              isZh
-                                  ? '笔记：${evidence.memoUid} · 相关度 ${(evidence.relevanceScore * 100).toStringAsFixed(0)}%'
-                                  : 'Memo: ${evidence.memoUid} · Score ${(evidence.relevanceScore * 100).toStringAsFixed(0)}%',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                color: textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              ),
+        ),
+      ],
+    );
+  }
+
+  List<AiAnalysisSectionData> _reportNarrativeSections(
+    AiSavedAnalysisReport report,
+  ) {
+    final sections = <AiAnalysisSectionData>[];
+    for (final section in report.sections) {
+      final body = section.body.trim();
+      if (body.isEmpty ||
+          section.sectionKey == 'closing' ||
+          section.sectionKey == 'leave_space') {
+        continue;
+      }
+      sections.add(section);
+    }
+    return sections;
+  }
+
+  String? _reportLeaveSpaceText(AiSavedAnalysisReport report) {
+    for (final section in report.sections) {
+      if (section.sectionKey != 'leave_space') {
+        continue;
+      }
+      final body = section.body.trim();
+      if (_shouldShowLeaveSpaceText(body)) {
+        return body;
+      }
+    }
+    return null;
+  }
+
+  bool _shouldShowLeaveSpaceText(String? text) {
+    final trimmed = (text ?? '').trim();
+    if (trimmed.length < 24) {
+      return false;
+    }
+    final lower = trimmed.toLowerCase();
+    const markers = <String>[
+      '留白',
+      '还看不清',
+      '不够',
+      '更多',
+      '先不',
+      '暂时',
+      '也许',
+      'not yet',
+      'not clear',
+      'not enough',
+      'for now',
+      'maybe',
+    ];
+    return markers.any(lower.contains);
+  }
+
+  String? _reportClosingText(AiSavedAnalysisReport report) {
+    for (final section in report.sections) {
+      if (section.sectionKey == 'closing' && section.body.trim().isNotEmpty) {
+        return section.body.trim();
+      }
+    }
+    for (final suggestion in report.followUpSuggestions) {
+      final trimmed = suggestion.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
+
+  bool _shouldShowClosingText(String? text) {
+    final trimmed = (text ?? '').trim();
+    return trimmed.length >= 18;
+  }
+
+  List<AiAnalysisEvidenceData> _referenceEvidences(
+    AiSavedAnalysisReport report,
+  ) {
+    final seen = <String>{};
+    final result = <AiAnalysisEvidenceData>[];
+    for (final evidence in report.evidences) {
+      final quote = evidence.quoteText.trim();
+      if (quote.isEmpty) continue;
+      if (seen.add(evidence.evidenceKey)) {
+        result.add(evidence);
+      }
+      if (result.length >= 6) {
+        break;
+      }
+    }
+    return result;
+  }
+
+  Widget _buildLeaveSpaceBlock({
+    required String text,
+    required Color textColor,
+    required Color titleColor,
+    required Color background,
+    required Color borderColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor.withValues(alpha: 0.8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _isZhLocale()
+                ? '\u8fd9\u6b21\u6211\u5148\u66ff\u4f60\u7559\u4e00\u70b9\u7a7a\u767d'
+                : 'A little space, for now',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: titleColor,
             ),
-            const SizedBox(height: 16),
-          ],
-          if (report.followUpSuggestions.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: card,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isZh ? '后续建议' : 'Follow-up Suggestions',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: textMain,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  for (final item in report.followUpSuggestions) ...[
-                    Text(
-                      '• $item',
-                      style: TextStyle(
-                        fontSize: 14,
-                        height: 1.6,
-                        color: textMain,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                  ],
-                ],
-              ),
-            ),
+          ),
+          const SizedBox(height: 10),
+          ..._buildLetterParagraphs(text: text, textColor: textColor),
         ],
       ),
     );
+  }
+
+  Widget _buildClosingBlock({
+    required String text,
+    required Color textColor,
+    required Color background,
+    required Color borderColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 2),
+      child: Text(
+        text.trim(),
+        style: TextStyle(
+          fontSize: 15,
+          height: 1.85,
+          fontWeight: FontWeight.w600,
+          color: textColor.withValues(alpha: 0.9),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReferenceSection({
+    required List<AiAnalysisEvidenceData> evidences,
+    required Color titleColor,
+    required Color textColor,
+    required Color subtleText,
+    required Color background,
+    required Color borderColor,
+  }) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor.withValues(alpha: 0.78)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: _toggleReferencesExpanded,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.menu_book_rounded, color: titleColor, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _reportReferenceTitle(),
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: titleColor,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _reportReferenceSubtitle(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.5,
+                            color: subtleText,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _referencesExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: subtleText,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_referencesExpanded) ...[
+            Divider(height: 1, color: borderColor.withValues(alpha: 0.78)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                children: [
+                  for (var index = 0; index < evidences.length; index++) ...[
+                    _ReferenceQuoteCard(
+                      quote: _compactQuote(evidences[index].quoteText),
+                      textColor: textColor,
+                      borderColor: borderColor,
+                      onTap: () => _openEvidenceMemo(evidences[index]),
+                      openLabel: _isZhLocale()
+                          ? '\u6253\u5f00\u539f\u7b14\u8bb0'
+                          : 'Open note',
+                    ),
+                    if (index != evidences.length - 1)
+                      const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildLetterParagraphs({
+    required String text,
+    required Color textColor,
+  }) {
+    final paragraphs = _splitLetterParagraphs(text);
+    if (paragraphs.isEmpty) {
+      return const <Widget>[];
+    }
+    final widgets = <Widget>[];
+    for (var index = 0; index < paragraphs.length; index++) {
+      widgets.add(
+        Text(
+          paragraphs[index],
+          style: TextStyle(fontSize: 16, height: 1.95, color: textColor),
+        ),
+      );
+      if (index != paragraphs.length - 1) {
+        widgets.add(const SizedBox(height: 18));
+      }
+    }
+    return widgets;
+  }
+
+  String _compactQuote(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= 140) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 140).trim()}...';
+  }
+
+  List<String> _splitLetterParagraphs(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) {
+      return const <String>[];
+    }
+    return normalized
+        .split(RegExp(r'\n\s*\n+'))
+        .map(
+          (paragraph) => paragraph
+              .replaceAll(RegExp(r'\s*\n\s*'), ' ')
+              .replaceAll(RegExp(r'\s{2,}'), ' ')
+              .trim(),
+        )
+        .where((paragraph) => paragraph.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  bool _shouldShowReferenceSection(List<AiAnalysisEvidenceData> evidences) {
+    return evidences.length >= 2;
+  }
+
+  bool _isZhLocale() {
+    return Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+  }
+
+  String _reportBadgeTitle() {
+    return context.t.strings.aiInsight.title;
+  }
+
+  String _reportHeaderTitle() {
+    return _selectedInsightDisplayTitle();
+  }
+
+  String _selectedInsightDisplayTitle() {
+    final override = _selectedInsightTitleOverride?.trim() ?? '';
+    if (override.isNotEmpty) return override;
+    return _selectedInsightDefinition.title(context);
+  }
+
+  String _reportBackLabel() {
+    return _isZhLocale()
+        ? '\u56de\u5230 AI \u601d\u8003\u5ba4'
+        : 'Back to studio';
+  }
+
+  String _reportReferenceTitle() {
+    return _isZhLocale()
+        ? '\u8fd9\u6b21\u6d1e\u5bdf\u53c2\u8003\u4e86\u8fd9\u4e9b\u7247\u6bb5'
+        : 'Fragments behind this insight';
+  }
+
+  String _reportReferenceSubtitle() {
+    return _isZhLocale()
+        ? '\u4e0d\u60f3\u6253\u65ad\u6b63\u6587\uff0c\u6240\u4ee5\u6211\u628a\u5b83\u4eec\u653e\u5728\u4e86\u8fd9\u91cc\u3002'
+        : 'Open any note fragment here without interrupting the insight.';
+  }
+
+  String _reportStaleWarning() {
+    return _isZhLocale()
+        ? '\u8fd9\u4efd\u6d1e\u5bdf\u57fa\u4e8e\u8f83\u65e9\u7684\u4e00\u6279\u7b14\u8bb0\u7ebf\u7d22\u751f\u6210\u3002\u5982\u679c\u4f60\u60f3\u8ba9\u5b83\u66f4\u8d34\u8fd1\u6b64\u523b\uff0c\u53ef\u4ee5\u91cd\u65b0\u751f\u6210\u4e00\u6b21\u3002'
+        : 'This insight was generated from an older set of note clues. Regenerate it if you want it to feel closer to now.';
   }
 
   Future<void> _openEvidenceMemo(AiAnalysisEvidenceData evidence) async {
@@ -1479,6 +1832,55 @@ extension on _AiSummaryScreenState {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => MemoDetailScreen(initialMemo: LocalMemo.fromDb(row)),
+      ),
+    );
+  }
+}
+
+class _ReferenceQuoteCard extends StatelessWidget {
+  const _ReferenceQuoteCard({
+    required this.quote,
+    required this.textColor,
+    required this.borderColor,
+    required this.onTap,
+    required this.openLabel,
+  });
+
+  final String quote;
+  final Color textColor;
+  final Color borderColor;
+  final VoidCallback onTap;
+  final String openLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor.withValues(alpha: 0.7)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              '"$quote"',
+              style: TextStyle(fontSize: 14, height: 1.7, color: textColor),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: openLabel,
+            child: IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: onTap,
+              icon: const Icon(Icons.north_east_rounded, size: 18),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1579,35 +1981,218 @@ class _AiInsightCard extends StatelessWidget {
   }
 }
 
-class _KeywordChip extends StatelessWidget {
-  const _KeywordChip({
-    required this.label,
-    required this.background,
-    required this.textColor,
-    this.borderColor,
+class _AiCustomInsightCard extends StatelessWidget {
+  const _AiCustomInsightCard({
+    required this.template,
+    required this.cardColor,
+    required this.borderColor,
+    required this.textMain,
+    required this.textMuted,
+    required this.onTap,
+    this.onEdit,
   });
 
-  final String label;
-  final Color background;
-  final Color textColor;
-  final Color? borderColor;
+  final AiCustomInsightTemplate template;
+  final Color cardColor;
+  final Color borderColor;
+  final Color textMain;
+  final Color textMuted;
+  final VoidCallback onTap;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-        border: borderColor == null ? null : Border.all(color: borderColor!),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: textColor,
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+    final title = template.isConfigured
+        ? template.title.trim()
+        : (isZh ? '\u81ea\u5b9a\u4e49\u6a21\u677f' : 'Custom Template');
+    final description = template.isConfigured
+        ? template.description.trim()
+        : (isZh
+              ? '\u70b9\u51fb\u521b\u5efa\u4e00\u4e2a\u4f60\u81ea\u5df1\u7684\u5206\u6790\u6a21\u677f\uff0c\u53ef\u4ee5\u8bbe\u7f6e\u6807\u9898\u3001\u63d0\u793a\u8bcd\u3001\u56fe\u6807\u548c\u8bf4\u660e\u3002'
+              : 'Create your own analysis template with a title, prompt, icon, and note.');
+    final accent = MemoFlowPalette.primary;
+    final icon = template.isConfigured
+        ? QuickPromptIconCatalog.resolve(template.iconKey)
+        : Icons.add_rounded;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(icon, color: accent, size: 22),
+                  ),
+                  const Spacer(),
+                  if (template.isConfigured && onEdit != null)
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: onEdit,
+                        borderRadius: BorderRadius.circular(999),
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.edit_outlined,
+                            color: accent,
+                            size: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: textMain,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Text(
+                  description,
+                  maxLines: 4,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: textMuted,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  color: textMuted,
+                  size: 22,
+                ),
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _AiSettingsBanner extends StatelessWidget {
+  const _AiSettingsBanner({
+    required this.textMain,
+    required this.textMuted,
+    required this.borderColor,
+    required this.cardColor,
+    required this.onTap,
+  });
+
+  final Color textMain;
+  final Color textMuted;
+  final Color borderColor;
+  final Color cardColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isZh =
+        Localizations.localeOf(context).languageCode.toLowerCase() == 'zh';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: MemoFlowPalette.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(
+              Icons.settings_suggest_rounded,
+              color: MemoFlowPalette.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isZh
+                      ? 'AI \u8bbe\u7f6e\u8fd8\u6ca1\u914d\u597d'
+                      : 'AI settings are incomplete',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: textMain,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  isZh
+                      ? '\u53ef\u4ee5\u5148\u8df3\u8f6c\u53bb AI \u8bbe\u7f6e\uff0c\u8865\u5168\u751f\u6210\u548c embedding \u914d\u7f6e\u3002'
+                      : 'Open AI settings to finish the generation and embedding setup.',
+                  style: TextStyle(fontSize: 13, height: 1.5, color: textMuted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: onTap,
+            style: FilledButton.styleFrom(
+              backgroundColor: MemoFlowPalette.primary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Text(isZh ? '\u53bb\u8bbe\u7f6e' : 'Open'),
+          ),
+        ],
       ),
     );
   }

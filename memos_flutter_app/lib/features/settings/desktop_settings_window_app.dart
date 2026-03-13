@@ -15,8 +15,10 @@ import '../../core/memoflow_palette.dart';
 import '../../core/desktop_quick_input_channel.dart';
 import '../../core/top_toast.dart';
 import '../../application/desktop/desktop_workspace_snapshot.dart';
+import '../../data/repositories/ai_settings_repository.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/system/logging_provider.dart';
+import '../../state/settings/ai_settings_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
@@ -227,6 +229,8 @@ class _DesktopSettingsWindowScreenState
   Future<bool>? _mainWindowChannelProbe;
   ProviderSubscription<String?>? _sessionKeySub;
   ProviderSubscription<List<LocalLibrary>>? _localLibrariesSub;
+  ProviderSubscription<AiSettings>? _aiSettingsSub;
+  Timer? _aiSettingsReloadDebounce;
   bool _workspaceListenersBound = false;
   bool _workspaceSnapshotLoading = true;
   String? _workspaceSnapshotError;
@@ -246,6 +250,8 @@ class _DesktopSettingsWindowScreenState
     DesktopMultiWindow.setMethodHandler(null);
     _sessionKeySub?.close();
     _localLibrariesSub?.close();
+    _aiSettingsSub?.close();
+    _aiSettingsReloadDebounce?.cancel();
     super.dispose();
   }
 
@@ -325,7 +331,22 @@ class _DesktopSettingsWindowScreenState
         unawaited(_notifyMainWindowWorkspaceChanged(reason: 'local_libraries'));
       },
     );
+    _aiSettingsSub = container.listen<AiSettings>(aiSettingsProvider, (
+      prev,
+      next,
+    ) {
+      if (prev == next) return;
+      _scheduleMainWindowAiSettingsReload();
+    });
     _workspaceListenersBound = true;
+  }
+
+  void _scheduleMainWindowAiSettingsReload() {
+    _aiSettingsReloadDebounce?.cancel();
+    _aiSettingsReloadDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+      unawaited(_notifyMainWindowAiSettingsChanged());
+    });
   }
 
   bool _sameLocalLibraryKeys(
@@ -352,6 +373,12 @@ class _DesktopSettingsWindowScreenState
         args['currentKey'] = currentKey;
       }
       await _invokeMainWindowMethod(desktopMainReloadWorkspaceMethod, args);
+    } catch (_) {}
+  }
+
+  Future<void> _notifyMainWindowAiSettingsChanged() async {
+    try {
+      await _invokeMainWindowMethod(desktopMainReloadAiSettingsMethod);
     } catch (_) {}
   }
 
