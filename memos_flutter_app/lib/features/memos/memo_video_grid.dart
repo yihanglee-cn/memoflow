@@ -149,11 +149,14 @@ File? _resolveLocalFile(String externalLink) {
   if (!externalLink.startsWith('file://')) return null;
   final uri = Uri.tryParse(externalLink);
   if (uri == null) return null;
-  final path = uri.toFilePath();
+  String path;
+  try {
+    path = uri.toFilePath();
+  } catch (_) {
+    return null;
+  }
   if (path.trim().isEmpty) return null;
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  return file;
+  return File(path);
 }
 
 String _titleFromUrl(String url) {
@@ -224,8 +227,10 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
   Uint8List? _bytes;
   File? _file;
   bool _loading = false;
+  bool _hasReadyFile = false;
   String _entryKey = '';
   int _loadToken = 0;
+  int _previewRevision = 0;
   Timer? _retryTimer;
   int _retryCount = 0;
 
@@ -277,8 +282,10 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
     );
     _bytes = warmBytes;
     _file = warmFile;
+    _hasReadyFile = warmFile != null;
     _loading =
         (warmBytes == null || warmBytes.isEmpty) && !_hasUsableFile(warmFile);
+    _previewRevision++;
     _retryCount = 0;
     _retryTimer?.cancel();
     final token = ++_loadToken;
@@ -295,9 +302,7 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
   }
 
   bool _hasUsableFile(File? file) {
-    if (file == null) return false;
-    if (!file.existsSync()) return false;
-    return file.lengthSync() > 0;
+    return file != null;
   }
 
   String _buildEntryKey(MemoVideoEntry entry) {
@@ -316,16 +321,16 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
       if (!mounted || token != _loadToken) return;
       setState(() {
         _file = file;
+        _hasReadyFile = file != null;
         _loading = false;
+        _previewRevision++;
       });
-      if (file == null || !file.existsSync() || file.lengthSync() == 0) {
+      if (file == null) {
         _scheduleRetry(entry, token);
       }
       assert(() {
-        final hasFile =
-            _file != null && _file!.existsSync() && _file!.lengthSync() > 0;
         debugPrint(
-          'Video thumbnail widget result | {entry: $_entryKey, hasBytes: false, bytes: 0, hasFile: $hasFile, fileBytes: ${hasFile ? _file?.lengthSync() ?? 0 : 0}}',
+          'Video thumbnail widget result | {entry: $_entryKey, hasBytes: false, bytes: 0, hasFile: ${_file != null}}',
         );
         return true;
       }());
@@ -359,7 +364,10 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
       ).timeout(const Duration(seconds: 15));
       if (!mounted || token != _loadToken) return;
       if (bytes != null && bytes.isNotEmpty) {
-        setState(() => _bytes = bytes);
+        setState(() {
+          _bytes = bytes;
+          _previewRevision++;
+        });
         assert(() {
           debugPrint(
             'Video thumbnail widget bytes ready | {entry: $_entryKey, bytes: ${bytes.length}}',
@@ -411,7 +419,7 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
     final bytes = _bytes;
     final file = _file;
     final hasBytes = bytes != null && bytes.isNotEmpty;
-    final hasFile = file != null && file.existsSync() && file.lengthSync() > 0;
+    final hasFile = file != null && _hasReadyFile;
 
     Widget image;
     if (hasBytes) {
@@ -434,7 +442,7 @@ class _AttachmentVideoThumbnailState extends State<AttachmentVideoThumbnail> {
         },
       );
     } else if (hasFile) {
-      final tag = '${file.path}|${file.lengthSync()}';
+      final tag = '$_entryKey|file|$_previewRevision';
       image = Image.file(
         file,
         key: ValueKey(tag),

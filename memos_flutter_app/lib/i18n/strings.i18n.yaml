@@ -51,7 +51,8 @@ login:
     signInMethod: "Sign-in method"
   field:
     serverUrlLabel: "Server URL"
-    serverUrlHint: "http://localhost:5230"
+    serverUrlHint: "localhost:5230"
+    protocolLabel: "Protocol"
     usernameLabel: "Username"
     usernameHint: "Enter username"
     passwordLabel: "Password"
@@ -60,10 +61,13 @@ login:
     tokenHint: "Token (PAT)"
   validation:
     serverUrlRequired: "Please enter server URL"
-    serverUrlInvalid: "Enter full URL (including http/https and port)"
+    serverUrlInvalid: "Enter a valid server address, such as localhost:5230 or memos.example.com"
     usernameRequired: "Please enter username"
     passwordRequired: "Please enter password"
     tokenRequired: "Please enter token"
+  dialogs:
+    insecureHttpTitle: "Use HTTP?"
+    insecureHttpMessage: "HTTP is not secure and may expose your account, password, or token. Continue anyway?"
   compatibility:
     title: "Compatibility Mode"
     description: "Use legacy endpoints (for older Memos servers)"

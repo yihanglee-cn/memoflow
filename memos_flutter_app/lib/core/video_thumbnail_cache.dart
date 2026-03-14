@@ -121,13 +121,7 @@ class VideoThumbnailCache {
       localFile: localFile,
       videoUrl: videoUrl,
     );
-    final file = _fileCache[key];
-    if (file == null) return null;
-    if (!file.existsSync() || file.lengthSync() <= 0) {
-      _fileCache.remove(key);
-      return null;
-    }
-    return file;
+    return _fileCache[key];
   }
 
   static Uint8List? peekThumbnailBytes({
@@ -147,6 +141,25 @@ class VideoThumbnailCache {
     return bytes;
   }
 
+  static Future<bool> _hasUsableFile(File? file) async {
+    if (file == null) return false;
+    try {
+      if (!await file.exists()) return false;
+      return await file.length() > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<int> _safeFileLength(File file) async {
+    try {
+      if (!await file.exists()) return 0;
+      return await file.length();
+    } catch (_) {
+      return 0;
+    }
+  }
+
   static Future<File?> getThumbnailFile({
     required String id,
     required int size,
@@ -164,12 +177,13 @@ class VideoThumbnailCache {
     if (existingFile != null) {
       _pending.remove(key);
       _rememberFile(key, existingFile);
+      final existingBytes = await _safeFileLength(existingFile);
       LogManager.instance.debug(
         'Video thumbnail cache hit (direct)',
         context: {
           'key': key,
           'path': existingFile.path,
-          'bytes': existingFile.lengthSync(),
+          'bytes': existingBytes,
         },
       );
       return existingFile;
@@ -195,7 +209,7 @@ class VideoThumbnailCache {
       final cacheDir = await _cacheDir();
       final filePath = p.join(cacheDir.path, '$key.jpg');
       final file = File(filePath);
-      if (file.existsSync() && file.lengthSync() > 0) {
+      if (await _hasUsableFile(file)) {
         _rememberFile(key, file);
         return file;
       }
@@ -216,13 +230,12 @@ class VideoThumbnailCache {
     final filePath = p.join(cacheDir.path, '$key.jpg');
     final file = File(filePath);
 
-    bool hasFile() => file.existsSync() && file.lengthSync() > 0;
-
-    if (hasFile()) {
+    if (await _hasUsableFile(file)) {
       _pending.remove(key);
+      final fileBytes = await _safeFileLength(file);
       LogManager.instance.debug(
         'Video thumbnail cache hit (pending bypass)',
-        context: {'key': key, 'path': filePath, 'bytes': file.lengthSync()},
+        context: {'key': key, 'path': filePath, 'bytes': fileBytes},
       );
       return file;
     }
@@ -231,35 +244,41 @@ class VideoThumbnailCache {
     Timer? pollTimer;
     Timer? timeoutTimer;
 
-    void completeWithFile(String reason) {
+    Future<void> completeWithFile(String reason) async {
       if (completer.isCompleted) return;
       _pending.remove(key);
       _rememberFile(key, file);
+      final fileBytes = await _safeFileLength(file);
       LogManager.instance.debug(
         reason,
-        context: {'key': key, 'path': filePath, 'bytes': file.lengthSync()},
+        context: {'key': key, 'path': filePath, 'bytes': fileBytes},
       );
       completer.complete(file);
     }
 
     pollTimer = Timer.periodic(_pendingPollInterval, (_) {
-      if (hasFile()) {
-        completeWithFile('Video thumbnail cache hit (pending poll)');
-      }
+      unawaited(() async {
+        if (completer.isCompleted) return;
+        if (await _hasUsableFile(file)) {
+          await completeWithFile('Video thumbnail cache hit (pending poll)');
+        }
+      }());
     });
 
     timeoutTimer = Timer(_pendingMaxWait, () {
-      if (completer.isCompleted) return;
-      if (hasFile()) {
-        completeWithFile('Video thumbnail cache hit (pending timeout)');
-        return;
-      }
-      _pending.remove(key);
-      LogManager.instance.warn(
-        'Video thumbnail pending timeout',
-        context: {'key': key, 'path': filePath},
-      );
-      completer.complete(null);
+      unawaited(() async {
+        if (completer.isCompleted) return;
+        if (await _hasUsableFile(file)) {
+          await completeWithFile('Video thumbnail cache hit (pending timeout)');
+          return;
+        }
+        _pending.remove(key);
+        LogManager.instance.warn(
+          'Video thumbnail pending timeout',
+          context: {'key': key, 'path': filePath},
+        );
+        completer.complete(null);
+      }());
     });
 
     pending
@@ -304,26 +323,27 @@ class VideoThumbnailCache {
       videoUrl: videoUrl,
       headers: headers,
     );
-    if (file == null || !file.existsSync()) {
+    if (!await _hasUsableFile(file)) {
       LogManager.instance.warn(
         'Video thumbnail bytes missing (file not found)',
         context: {'key': key, 'path': file?.path ?? ''},
       );
       return null;
     }
+    final readyFile = file!;
     try {
-      final bytes = await file.readAsBytes();
+      final bytes = await readyFile.readAsBytes();
       if (bytes.isEmpty) {
         LogManager.instance.warn(
           'Video thumbnail bytes empty',
-          context: {'key': key, 'path': file.path},
+          context: {'key': key, 'path': readyFile.path},
         );
         return null;
       }
       _memoryCache[key] = bytes;
       LogManager.instance.debug(
         'Video thumbnail bytes ready',
-        context: {'key': key, 'path': file.path, 'bytes': bytes.length},
+        context: {'key': key, 'path': readyFile.path, 'bytes': bytes.length},
       );
       return bytes;
     } catch (e, stackTrace) {
@@ -331,7 +351,7 @@ class VideoThumbnailCache {
         'Video thumbnail read failed',
         error: e,
         stackTrace: stackTrace,
-        context: {'key': key, 'path': file.path},
+        context: {'key': key, 'path': readyFile.path},
       );
       return null;
     }
@@ -357,11 +377,12 @@ class VideoThumbnailCache {
     final cacheDir = await _cacheDir();
     final filePath = p.join(cacheDir.path, '$key.jpg');
     final file = File(filePath);
-    if (file.existsSync() && file.lengthSync() > 0) {
+    if (await _hasUsableFile(file)) {
       _rememberFile(key, file);
+      final fileBytes = await _safeFileLength(file);
       LogManager.instance.debug(
         'Video thumbnail cache hit',
-        context: {'key': key, 'path': filePath, 'bytes': file.lengthSync()},
+        context: {'key': key, 'path': filePath, 'bytes': fileBytes},
       );
       return file;
     }
@@ -411,7 +432,7 @@ class VideoThumbnailCache {
   }
 
   static void _rememberFile(String key, File? file) {
-    if (file == null || !file.existsSync() || file.lengthSync() <= 0) {
+    if (file == null) {
       _fileCache.remove(key);
       return;
     }
@@ -421,8 +442,8 @@ class VideoThumbnailCache {
   static Future<Directory> _cacheDir() async {
     final base = await resolveAppSupportDirectory();
     final dir = Directory(p.join(base.path, _folderName));
-    if (!dir.existsSync()) {
-      dir.createSync(recursive: true);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
     }
     return dir;
   }
@@ -433,13 +454,11 @@ class VideoThumbnailCache {
     Map<String, String>? headers,
   }) async {
     final allowPluginFallback = _allowVideoThumbnailPluginFallback();
-    if (localFile != null && localFile.existsSync()) {
+    if (await _hasUsableFile(localFile)) {
+      final localBytes = await _safeFileLength(localFile!);
       LogManager.instance.debug(
         'Video thumbnail source local',
-        context: {
-          'file': p.basename(localFile.path),
-          'bytes': localFile.lengthSync(),
-        },
+        context: {'file': p.basename(localFile.path), 'bytes': localBytes},
       );
       if (_useMediaKitDesktopPipeline) {
         final mediaKitData = await _tryMediaKitThumbnailData(
@@ -497,7 +516,7 @@ class VideoThumbnailCache {
           : await _tryThumbnailData(source: tempFile.path, headers: null);
       if (data != null && data.isNotEmpty) return data;
     } finally {
-      if (tempFile.existsSync()) {
+      if (await tempFile.exists()) {
         try {
           await tempFile.delete();
         } catch (_) {}
@@ -919,10 +938,11 @@ class VideoThumbnailCache {
           sendTimeout: _downloadTimeout,
         ),
       );
-      if (!file.existsSync() || file.lengthSync() == 0) return null;
+      if (!await _hasUsableFile(file)) return null;
+      final fileBytes = await _safeFileLength(file);
       LogManager.instance.debug(
         'Video thumbnail download ok',
-        context: {'videoUrl': url, 'bytes': file.lengthSync()},
+        context: {'videoUrl': url, 'bytes': fileBytes},
       );
       return file;
     } catch (e, stackTrace) {

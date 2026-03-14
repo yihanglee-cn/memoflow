@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -80,6 +80,8 @@ class _TestSessionController extends AppSessionController {
   final Object? passwordError;
   int addPasswordCalls = 0;
   int addPatCalls = 0;
+  Uri? lastPasswordBaseUrl;
+  Uri? lastPatBaseUrl;
 
   Account _buildAccount({
     required Uri baseUrl,
@@ -111,6 +113,7 @@ class _TestSessionController extends AppSessionController {
     String? serverVersionOverride,
   }) async {
     addPatCalls += 1;
+    lastPatBaseUrl = baseUrl;
     final account = _buildAccount(
       baseUrl: baseUrl,
       username: 'token-user',
@@ -131,6 +134,7 @@ class _TestSessionController extends AppSessionController {
     String? serverVersionOverride,
   }) async {
     addPasswordCalls += 1;
+    lastPasswordBaseUrl = baseUrl;
     final completer = passwordCompleter;
     if (completer != null) {
       await completer.future;
@@ -237,6 +241,7 @@ void main() {
   Finder connectButtonFinder(BuildContext context) {
     return find.text(context.t.strings.login.connect.action);
   }
+
   void prepareViewport(WidgetTester tester) {
     tester.view.physicalSize = const Size(1280, 1400);
     tester.view.devicePixelRatio = 1.0;
@@ -272,7 +277,7 @@ void main() {
 
       final loginContext = tester.element(find.byType(LoginScreen));
       final fields = find.byType(TextFormField);
-      await tester.enterText(fields.at(0), 'http://example.com');
+      await tester.enterText(fields.at(0), 'example.com');
       await tester.enterText(fields.at(1), 'user');
       await tester.enterText(fields.at(2), 'secret');
 
@@ -325,7 +330,7 @@ void main() {
 
       final loginContext = tester.element(find.byType(LoginScreen));
       final fields = find.byType(TextFormField);
-      await tester.enterText(fields.at(0), 'http://example.com');
+      await tester.enterText(fields.at(0), 'example.com');
       await tester.enterText(fields.at(1), 'user');
       await tester.enterText(fields.at(2), 'secret');
 
@@ -364,8 +369,10 @@ void main() {
         overrides: [
           appSessionProvider.overrideWith((ref) => sessionController),
           loginControllerProvider.overrideWith(
-            (ref) =>
-                loginController = _FakeLoginController(ref, probeCompleter: probeCompleter),
+            (ref) => loginController = _FakeLoginController(
+              ref,
+              probeCompleter: probeCompleter,
+            ),
           ),
         ],
         child: _LoginTestHost(key: hostKey, observer: observer),
@@ -379,7 +386,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final fields = find.byType(TextFormField);
-    await tester.enterText(fields.at(0), 'http://example.com');
+    await tester.enterText(fields.at(0), 'example.com');
     await tester.enterText(fields.at(1), 'token');
 
     await tester.tap(connectButtonFinder(loginContext));
@@ -406,16 +413,87 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('canceling insecure protocol dialog keeps https', (tester) async {
+    prepareViewport(tester);
+    final observer = _RecordingNavigatorObserver();
+    final sessionController = _TestSessionController();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSessionProvider.overrideWith((ref) => sessionController),
+          loginControllerProvider.overrideWith(
+            (ref) => _FakeLoginController(ref),
+          ),
+        ],
+        child: _LoginTestHost(observer: observer),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final loginContext = tester.element(find.byType(LoginScreen));
+    await tester.tap(find.byIcon(Icons.shield_outlined));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(loginContext.t.strings.login.dialogs.insecureHttpTitle),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text(loginContext.t.strings.common.cancel));
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextFormField);
+    await tester.enterText(fields.at(0), 'example.com');
+    await tester.enterText(fields.at(1), 'user');
+    await tester.enterText(fields.at(2), 'secret');
+
+    await tester.tap(connectButtonFinder(loginContext));
+    await tester.pumpAndSettle();
+
+    expect(sessionController.addPasswordCalls, 1);
+    expect(sessionController.lastPasswordBaseUrl?.scheme, 'https');
+    expect(sessionController.lastPasswordBaseUrl?.host, 'example.com');
+  });
+
+  testWidgets('confirming insecure protocol dialog switches to http', (
+    tester,
+  ) async {
+    prepareViewport(tester);
+    final observer = _RecordingNavigatorObserver();
+    final sessionController = _TestSessionController();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSessionProvider.overrideWith((ref) => sessionController),
+          loginControllerProvider.overrideWith(
+            (ref) => _FakeLoginController(ref),
+          ),
+        ],
+        child: _LoginTestHost(observer: observer),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final loginContext = tester.element(find.byType(LoginScreen));
+    await tester.tap(find.byIcon(Icons.shield_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(loginContext.t.strings.common.confirm));
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextFormField);
+    await tester.enterText(fields.at(0), 'example.com');
+    await tester.enterText(fields.at(1), 'user');
+    await tester.enterText(fields.at(2), 'secret');
+
+    await tester.tap(connectButtonFinder(loginContext));
+    await tester.pumpAndSettle();
+
+    expect(sessionController.addPasswordCalls, 1);
+    expect(sessionController.lastPasswordBaseUrl?.scheme, 'http');
+    expect(sessionController.lastPasswordBaseUrl?.host, 'example.com');
+  });
 }
-
-
-
-
-
-
-
-
-
-
-
-

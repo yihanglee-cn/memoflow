@@ -42,6 +42,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   var _loginMode = _LoginMode.password;
+  var _useHttps = true;
   var _selectedServerVersion = '0.26.0';
   var _probing = false;
   var _versionMenuExpanded = false;
@@ -51,10 +52,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    final draft = ref.read(loginBaseUrlDraftProvider).trim();
-    if (draft.isNotEmpty) {
-      _baseUrlController.text = draft;
-    }
+    _restoreBaseUrlDraft(ref.read(loginBaseUrlDraftProvider));
     _selectedServerVersion = _resolveInitialServerVersion();
   }
 
@@ -179,10 +177,95 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
+  void _restoreBaseUrlDraft(String draft) {
+    final trimmed = draft.trim();
+    if (trimmed.isEmpty) {
+      _useHttps = true;
+      _baseUrlController.text = '';
+      return;
+    }
+
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null && parsed.hasScheme && parsed.hasAuthority) {
+      _useHttps = parsed.scheme.toLowerCase() != 'http';
+      _baseUrlController.text = _baseUrlSuffixFromUri(parsed);
+      return;
+    }
+
+    _useHttps = true;
+    _baseUrlController.text = _normalizeBaseUrlSuffix(trimmed);
+  }
+
+  String _normalizeBaseUrlSuffix(String raw) {
+    return raw.trim().replaceFirst(
+      RegExp(r'^(?:https?:)?//', caseSensitive: false),
+      '',
+    );
+  }
+
+  String _baseUrlSuffixFromUri(Uri uri) {
+    final buffer = StringBuffer();
+    if (uri.authority.isNotEmpty) {
+      buffer.write(uri.authority);
+    }
+    if (uri.path.isNotEmpty && uri.path != '/') {
+      buffer.write(uri.path);
+    }
+    return buffer.toString();
+  }
+
+  String _composeBaseUrlString([String? rawSuffix]) {
+    final suffix = _normalizeBaseUrlSuffix(
+      rawSuffix ?? _baseUrlController.text,
+    );
+    if (suffix.isEmpty) return '';
+    final scheme = _useHttps ? 'https' : 'http';
+    return '$scheme://$suffix';
+  }
+
+  void _syncBaseUrlDraft([String? rawSuffix]) {
+    ref.read(loginBaseUrlDraftProvider.notifier).state = _composeBaseUrlString(
+      rawSuffix,
+    );
+  }
+
+  Future<void> _handleProtocolChanged(bool nextUseHttps) async {
+    if (_useHttps == nextUseHttps) return;
+    if (nextUseHttps) {
+      setState(() => _useHttps = true);
+      _syncBaseUrlDraft();
+      return;
+    }
+
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(context.t.strings.login.dialogs.insecureHttpTitle),
+            content: Text(context.t.strings.login.dialogs.insecureHttpMessage),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(context.t.strings.common.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(context.t.strings.common.confirm),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!mounted || !confirmed) return;
+
+    setState(() => _useHttps = false);
+    _syncBaseUrlDraft();
+  }
+
   Uri? _resolveBaseUrl() {
-    final baseUrlRaw = _baseUrlController.text.trim();
+    final baseUrlRaw = _composeBaseUrlString();
     final baseUrl = Uri.tryParse(baseUrlRaw);
-    if (baseUrl == null) {
+    if (baseUrl == null || !(baseUrl.hasScheme && baseUrl.hasAuthority)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(context.t.strings.login.errors.invalidServerUrl),
@@ -193,9 +276,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     final sanitizedBaseUrl = sanitizeUserBaseUrl(baseUrl);
     if (sanitizedBaseUrl.toString() != baseUrl.toString()) {
-      _baseUrlController.text = sanitizedBaseUrl.toString();
-      ref.read(loginBaseUrlDraftProvider.notifier).state =
-          _baseUrlController.text;
+      final sanitizedScheme = sanitizedBaseUrl.scheme.toLowerCase();
+      final sanitizedSuffix = _baseUrlSuffixFromUri(sanitizedBaseUrl);
+      _baseUrlController.text = sanitizedSuffix;
+      _baseUrlController.selection = TextSelection.collapsed(
+        offset: _baseUrlController.text.length,
+      );
+      _useHttps = sanitizedScheme != 'http';
+      ref.read(loginBaseUrlDraftProvider.notifier).state = sanitizedBaseUrl
+          .toString();
       showTopToast(context, context.t.strings.login.errors.serverUrlNormalized);
     }
     return sanitizedBaseUrl;
@@ -316,12 +405,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           actions: [
             TextButton(
               onPressed: () async {
+                final copiedMessage =
+                    context.t.strings.legacy.msg_diagnostics_copied;
                 await Clipboard.setData(ClipboardData(text: diagnostics));
-                if (!mounted) return;
-                showTopToast(
-                  context,
-                  context.t.strings.legacy.msg_diagnostics_copied,
-                );
+                if (!context.mounted) return;
+                showTopToast(context, copiedMessage);
               },
               child: Text(context.t.strings.legacy.msg_copy_diagnostics),
             ),
@@ -358,20 +446,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required LoginController loginController,
   }) async {
     _setStateIfActive(opId, () => _probing = true);
+    final legacyStrings = context.t.strings.legacy;
     try {
       final report = await loginController.probeSingleVersion(
         baseUrl: baseUrl,
         personalAccessToken: personalAccessToken,
         version: version,
-        probeMemoNotice: context.t.strings.legacy.msg_probe_memo_can_delete,
+        probeMemoNotice: legacyStrings.msg_probe_memo_can_delete,
       );
       if (!_isLoginOpActive(opId)) return null;
       return report;
     } catch (error) {
-      _showSnackIfActive(
-        opId,
-        context.t.strings.legacy.msg_probe_failed(error: error),
-      );
+      _showSnackIfActive(opId, legacyStrings.msg_probe_failed(error: error));
       return null;
     } finally {
       _setStateIfActive(opId, () => _probing = false);
@@ -688,17 +774,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     required Color card,
     required Color textMain,
     required Color textMuted,
+    String? prefixText,
+    Widget? labelTrailing,
+    Widget? suffixIcon,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: textMuted,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: textMuted,
+                ),
+              ),
+            ),
+            if (labelTrailing != null) ...[
+              const SizedBox(width: 12),
+              labelTrailing,
+            ],
+          ],
         ),
         const SizedBox(height: 6),
         Container(
@@ -724,6 +823,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             onChanged: onChanged,
             decoration: InputDecoration(
               hintText: hint,
+              prefixText: prefixText,
+              suffixIcon: suffixIcon,
+              suffixIconConstraints: suffixIcon == null
+                  ? null
+                  : const BoxConstraints(minWidth: 52, minHeight: 44),
+              prefixStyle: TextStyle(
+                color: textMain,
+                fontWeight: FontWeight.w600,
+              ),
               hintStyle: TextStyle(
                 color: textMuted.withValues(alpha: 0.6),
                 fontWeight: FontWeight.w500,
@@ -738,6 +846,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildProtocolShieldButton({
+    required bool enabled,
+    required Color textMuted,
+  }) {
+    final iconColor = _useHttps
+        ? Colors.green.shade600
+        : textMuted.withValues(alpha: 0.75);
+    final backgroundColor = _useHttps
+        ? Colors.green.withValues(alpha: 0.10)
+        : textMuted.withValues(alpha: 0.10);
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Tooltip(
+        message: _useHttps ? 'HTTPS' : 'HTTP',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: enabled ? () => _handleProtocolChanged(!_useHttps) : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.shield_outlined, size: 20, color: iconColor),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -982,7 +1126,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       _buildField(
                         controller: _baseUrlController,
                         label: context.t.strings.login.field.serverUrlLabel,
-                        hint: 'http://localhost:5230',
+                        hint: context.t.strings.login.field.serverUrlHint,
                         enabled: !isBusy,
                         obscureText: false,
                         keyboardType: TextInputType.url,
@@ -990,11 +1134,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         card: card,
                         textMain: textMain,
                         textMuted: textMuted,
-                        onChanged: (v) =>
-                            ref.read(loginBaseUrlDraftProvider.notifier).state =
-                                v,
+                        prefixText: _useHttps ? 'https://' : 'http://',
+                        suffixIcon: _buildProtocolShieldButton(
+                          enabled: !isBusy,
+                          textMuted: textMuted,
+                        ),
+                        onChanged: _syncBaseUrlDraft,
                         validator: (v) {
-                          final raw = (v ?? '').trim();
+                          final raw = _normalizeBaseUrlSuffix(v ?? '');
                           if (raw.isEmpty) {
                             return context
                                 .t
@@ -1003,7 +1150,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 .validation
                                 .serverUrlRequired;
                           }
-                          final uri = Uri.tryParse(raw);
+                          final uri = Uri.tryParse(_composeBaseUrlString(raw));
                           if (uri == null ||
                               !(uri.hasScheme && uri.hasAuthority)) {
                             return context

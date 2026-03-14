@@ -50,7 +50,8 @@ login:
     signInMethod: "Anmeldeart"
   field:
     serverUrlLabel: "Server-URL"
-    serverUrlHint: "http://localhost:5230"
+    serverUrlHint: "localhost:5230"
+    protocolLabel: "Protokoll"
     usernameLabel: "Benutzername"
     usernameHint: "Benutzernamen eingeben"
     passwordLabel: "Passwort"
@@ -59,10 +60,13 @@ login:
     tokenHint: "Token (PAT)"
   validation:
     serverUrlRequired: "Bitte Server-URL eingeben"
-    serverUrlInvalid: "Bitte vollständige URL eingeben (inkl. http/https und Port)"
+    serverUrlInvalid: "Gib eine gültige Serveradresse ein, z. B. localhost:5230 oder memos.example.com"
     usernameRequired: "Bitte Benutzernamen eingeben"
     passwordRequired: "Bitte Passwort eingeben"
     tokenRequired: "Bitte Token eingeben"
+  dialogs:
+    insecureHttpTitle: "HTTP verwenden?"
+    insecureHttpMessage: "HTTP ist nicht sicher und kann dein Konto, Passwort oder Token offenlegen. Trotzdem fortfahren?"
   compatibility:
     title: "Kompatibilitätsmodus"
     description: "Legacy-Endpunkte verwenden (für ältere Memos-Server)"

@@ -177,11 +177,14 @@ File? _resolveLocalFile(String externalLink) {
   if (!externalLink.startsWith('file://')) return null;
   final uri = Uri.tryParse(externalLink);
   if (uri == null) return null;
-  final path = uri.toFilePath();
+  String path;
+  try {
+    path = uri.toFilePath();
+  } catch (_) {
+    return null;
+  }
   if (path.trim().isEmpty) return null;
-  final file = File(path);
-  if (!file.existsSync()) return null;
-  return file;
+  return File(path);
 }
 
 String _titleFromUrl(String url) {

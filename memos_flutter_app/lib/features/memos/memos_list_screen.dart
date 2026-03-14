@@ -78,6 +78,7 @@ import '../review/daily_review_screen.dart';
 import '../settings/desktop_shortcuts_overview_screen.dart';
 import '../location_picker/show_location_picker.dart';
 import '../settings/password_lock_screen.dart';
+import 'memo_hero_flight.dart';
 import '../settings/shortcut_editor_screen.dart';
 import '../settings/settings_screen.dart';
 import '../sync/sync_queue_screen.dart';
@@ -8083,6 +8084,7 @@ class _MemoCardState extends State<_MemoCard> {
       tag: memo.uid,
       createRectTween: (begin, end) =>
           MaterialRectArcTween(begin: begin, end: end),
+      flightShuttleBuilder: memoHeroFlightShuttleBuilder(isPinned: memo.pinned),
       child: Material(
         color: Colors.transparent,
         child: InkWell(

@@ -50,7 +50,8 @@ login:
     signInMethod: "サインイン方法"
   field:
     serverUrlLabel: "サーバーURL"
-    serverUrlHint: "http://localhost:5230"
+    serverUrlHint: "localhost:5230"
+    protocolLabel: "接続プロトコル"
     usernameLabel: "ユーザー名"
     usernameHint: "ユーザー名を入力"
     passwordLabel: "パスワード"
@@ -59,10 +60,13 @@ login:
     tokenHint: "トークン (PAT)"
   validation:
     serverUrlRequired: "サーバーURLを入力してください"
-    serverUrlInvalid: "http/https とポートを含む完全なURLを入力してください"
+    serverUrlInvalid: "localhost:5230 や memos.example.com のような有効なサーバーアドレスを入力してください"
     usernameRequired: "ユーザー名を入力してください"
     passwordRequired: "パスワードを入力してください"
     tokenRequired: "トークンを入力してください"
+  dialogs:
+    insecureHttpTitle: "HTTP を使用しますか？"
+    insecureHttpMessage: "HTTP 接続は安全ではなく、アカウント、パスワード、またはトークンが漏洩する可能性があります。それでも続行しますか？"
   compatibility:
     title: "互換モード"
     description: "旧版 Memos 用のレガシーエンドポイントを使用します"

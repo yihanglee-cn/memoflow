@@ -37,10 +37,29 @@ import 'memo_image_grid.dart';
 import 'memo_media_grid.dart';
 import 'memo_markdown.dart';
 import 'memo_location_line.dart';
+import 'memo_hero_flight.dart';
 import 'memo_versions_screen.dart';
 import 'memos_list_screen.dart';
 import 'memo_video_grid.dart';
 import '../../i18n/strings.g.dart';
+
+String memoDetailMarkdownCacheKey(LocalMemo memo) {
+  return 'detail|${memo.uid}|${memo.contentFingerprint}|renderImages=0|highlight=';
+}
+
+class _MemoDetailDeferredContent {
+  const _MemoDetailDeferredContent({
+    required this.imageEntries,
+    required this.videoEntries,
+    required this.mediaEntries,
+    required this.nonImageAttachments,
+  });
+
+  final List<MemoImageEntry> imageEntries;
+  final List<MemoVideoEntry> videoEntries;
+  final List<MemoMediaEntry> mediaEntries;
+  final List<Attachment> nonImageAttachments;
+}
 
 class MemoDetailScreen extends ConsumerStatefulWidget {
   const MemoDetailScreen({
@@ -64,6 +83,11 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
   LocalMemo? _memo;
   String? _currentAudioUrl;
+  Animation<double>? _routeAnimation;
+  bool _routeSettled = false;
+  _MemoDetailDeferredContent? _deferredContent;
+  String? _preparedDeferredContentKey;
+  String? _pendingDeferredContentKey;
 
   @override
   void initState() {
@@ -72,9 +96,139 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final routeAnimation = ModalRoute.of(context)?.animation;
+    if (!identical(_routeAnimation, routeAnimation)) {
+      _routeAnimation?.removeStatusListener(_handleRouteAnimationStatusChanged);
+      _routeAnimation = routeAnimation;
+      _routeAnimation?.addStatusListener(_handleRouteAnimationStatusChanged);
+    }
+    _routeSettled =
+        routeAnimation == null ||
+        routeAnimation.status == AnimationStatus.completed;
+  }
+
+  @override
   void dispose() {
+    _routeAnimation?.removeStatusListener(_handleRouteAnimationStatusChanged);
     _player.dispose();
     super.dispose();
+  }
+
+  void _handleRouteAnimationStatusChanged(AnimationStatus status) {
+    final settled = status == AnimationStatus.completed;
+    if (_routeSettled == settled) return;
+    if (!mounted) {
+      _routeSettled = settled;
+      return;
+    }
+    setState(() {
+      _routeSettled = settled;
+      if (!settled) {
+        _pendingDeferredContentKey = null;
+      }
+    });
+  }
+
+  void _setMemo(LocalMemo memo) {
+    _memo = memo;
+    _deferredContent = null;
+    _preparedDeferredContentKey = null;
+    _pendingDeferredContentKey = null;
+  }
+
+  String _buildDeferredContentKey({
+    required LocalMemo memo,
+    required Uri? baseUrl,
+    required String? authHeader,
+    required bool rebaseAbsoluteFileUrlForV024,
+    required bool attachAuthForSameOriginAbsolute,
+  }) {
+    return '${memo.uid}|'
+        '${memo.contentFingerprint}|'
+        '${memo.updateTime.microsecondsSinceEpoch}|'
+        '${memo.attachments.length}|'
+        '${baseUrl?.toString() ?? ''}|'
+        '${authHeader ?? ''}|'
+        '${rebaseAbsoluteFileUrlForV024 ? 1 : 0}|'
+        '${attachAuthForSameOriginAbsolute ? 1 : 0}';
+  }
+
+  _MemoDetailDeferredContent _buildDeferredDetailContent({
+    required LocalMemo memo,
+    required Uri? baseUrl,
+    required String? authHeader,
+    required bool rebaseAbsoluteFileUrlForV024,
+    required bool attachAuthForSameOriginAbsolute,
+  }) {
+    final imageEntries = collectMemoImageEntries(
+      content: memo.content,
+      attachments: memo.attachments,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    final videoEntries = collectMemoVideoEntries(
+      attachments: memo.attachments,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    return _MemoDetailDeferredContent(
+      imageEntries: imageEntries,
+      videoEntries: videoEntries,
+      mediaEntries: buildMemoMediaEntries(
+        images: imageEntries,
+        videos: videoEntries,
+      ),
+      nonImageAttachments: memo.attachments
+          .where(
+            (attachment) =>
+                !attachment.type.startsWith('image/') &&
+                !attachment.type.startsWith('video/'),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  void _scheduleDeferredDetailContentPreparation({
+    required LocalMemo memo,
+    required Uri? baseUrl,
+    required String? authHeader,
+    required bool rebaseAbsoluteFileUrlForV024,
+    required bool attachAuthForSameOriginAbsolute,
+  }) {
+    if (!_routeSettled) return;
+    final key = _buildDeferredContentKey(
+      memo: memo,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    if (_preparedDeferredContentKey == key) return;
+    if (_pendingDeferredContentKey == key) return;
+    _pendingDeferredContentKey = key;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_routeSettled) return;
+      if (_pendingDeferredContentKey != key) return;
+      final content = _buildDeferredDetailContent(
+        memo: memo,
+        baseUrl: baseUrl,
+        authHeader: authHeader,
+        rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+        attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+      );
+      if (!mounted || _pendingDeferredContentKey != key) return;
+      setState(() {
+        _pendingDeferredContentKey = null;
+        _preparedDeferredContentKey = key;
+        _deferredContent = content;
+      });
+    });
   }
 
   Future<void> _reload() async {
@@ -84,7 +238,7 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
         .loadMemoByUid(uid);
     if (memo == null) return;
     if (!mounted) return;
-    setState(() => _memo = memo);
+    setState(() => _setMemo(memo));
   }
 
   bool _isArchivedMemo() {
@@ -272,28 +426,28 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
       if (!mounted) return;
       setState(() {
-        _memo = LocalMemo(
-          uid: memo.uid,
-          content: updated,
-          contentFingerprint: computeContentFingerprint(updated),
-          visibility: memo.visibility,
-          pinned: memo.pinned,
-          state: memo.state,
-          createTime: memo.createTime,
-          updateTime: updateTime,
-          tags: tags,
-          attachments: memo.attachments,
-          relationCount: memo.relationCount,
-          location: memo.location,
-          syncState: SyncState.pending,
-          lastError: null,
+        _setMemo(
+          LocalMemo(
+            uid: memo.uid,
+            content: updated,
+            contentFingerprint: computeContentFingerprint(updated),
+            visibility: memo.visibility,
+            pinned: memo.pinned,
+            state: memo.state,
+            createTime: memo.createTime,
+            updateTime: updateTime,
+            tags: tags,
+            attachments: memo.attachments,
+            relationCount: memo.relationCount,
+            location: memo.location,
+            syncState: SyncState.pending,
+            lastError: null,
+          ),
         );
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(context.t.strings.legacy.msg_update_failed(e: e)),
         ),
@@ -405,21 +559,23 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
       if (!mounted) return;
       setState(() {
-        _memo = LocalMemo(
-          uid: memo.uid,
-          content: memo.content,
-          contentFingerprint: memo.contentFingerprint,
-          visibility: memo.visibility,
-          pinned: memo.pinned,
-          state: memo.state,
-          createTime: memo.createTime,
-          updateTime: now,
-          tags: memo.tags,
-          attachments: updatedAttachments,
-          relationCount: memo.relationCount,
-          location: memo.location,
-          syncState: SyncState.pending,
-          lastError: null,
+        _setMemo(
+          LocalMemo(
+            uid: memo.uid,
+            content: memo.content,
+            contentFingerprint: memo.contentFingerprint,
+            visibility: memo.visibility,
+            pinned: memo.pinned,
+            state: memo.state,
+            createTime: memo.createTime,
+            updateTime: now,
+            tags: memo.tags,
+            attachments: updatedAttachments,
+            relationCount: memo.relationCount,
+            location: memo.location,
+            syncState: SyncState.pending,
+            lastError: null,
+          ),
         );
       });
     } catch (e) {
@@ -493,36 +649,35 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
     final isArchived = memo.state == 'ARCHIVED';
     final canEditAttachments = !widget.readOnly && !isArchived;
-    final imageEntries = collectMemoImageEntries(
-      content: memo.content,
-      attachments: memo.attachments,
+    final deferredContentKey = _buildDeferredContentKey(
+      memo: memo,
       baseUrl: baseUrl,
       authHeader: authHeader,
       rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
       attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
     );
-    final videoEntries = collectMemoVideoEntries(
-      attachments: memo.attachments,
-      baseUrl: baseUrl,
-      authHeader: authHeader,
-      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
-      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
-    );
-    final mediaEntries = buildMemoMediaEntries(
-      images: imageEntries,
-      videos: videoEntries,
-    );
+    if (_routeSettled) {
+      _scheduleDeferredDetailContentPreparation(
+        memo: memo,
+        baseUrl: baseUrl,
+        authHeader: authHeader,
+        rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+        attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+      );
+    }
+    final deferredContent = _preparedDeferredContentKey == deferredContentKey
+        ? _deferredContent
+        : null;
+    final imageEntries =
+        deferredContent?.imageEntries ?? const <MemoImageEntry>[];
+    final mediaEntries =
+        deferredContent?.mediaEntries ?? const <MemoMediaEntry>[];
     final allowImageEdit =
         canEditAttachments &&
         imageEntries.any((entry) => entry.isAttachment) &&
         !imageEntries.any((entry) => !entry.isAttachment);
-    final nonImageAttachments = memo.attachments
-        .where(
-          (attachment) =>
-              !attachment.type.startsWith('image/') &&
-              !attachment.type.startsWith('video/'),
-        )
-        .toList(growable: false);
+    final nonImageAttachments =
+        deferredContent?.nonImageAttachments ?? const <Attachment>[];
     final borderColor = isDark
         ? MemoFlowPalette.borderDark
         : MemoFlowPalette.borderLight;
@@ -542,6 +697,8 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
       initiallyExpanded: true,
       style: contentStyle,
       hapticsEnabled: hapticsEnabled,
+      markdownCacheKey: memoDetailMarkdownCacheKey(memo),
+      markdownSelectable: _routeSettled,
       tagColors: tagColors,
       onToggleTask: canToggleTasks
           ? (request) {
@@ -754,28 +911,9 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
               tag: memo.uid,
               createRectTween: (begin, end) =>
                   MaterialRectArcTween(begin: begin, end: end),
-              flightShuttleBuilder:
-                  (
-                    flightContext,
-                    animation,
-                    flightDirection,
-                    fromHeroContext,
-                    toHeroContext,
-                  ) {
-                    final fromHero = fromHeroContext.widget as Hero;
-                    final toHero = toHeroContext.widget as Hero;
-                    final child = flightDirection == HeroFlightDirection.push
-                        ? fromHero.child
-                        : toHero.child;
-                    final safeChild = SingleChildScrollView(
-                      physics: const NeverScrollableScrollPhysics(),
-                      child: child,
-                    );
-                    return Material(
-                      color: Colors.transparent,
-                      child: RepaintBoundary(child: safeChild),
-                    );
-                  },
+              flightShuttleBuilder: memoHeroFlightShuttleBuilder(
+                isPinned: memo.pinned,
+              ),
               child: RepaintBoundary(child: Container(color: cardColor)),
             ),
           ),
@@ -784,13 +922,13 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 header,
-                if (shouldShowEngagement)
+                if (_routeSettled && shouldShowEngagement)
                   _MemoEngagementSection(
                     memoUid: memo.uid,
                     memoVisibility: memo.visibility,
                   ),
-                _MemoRelationsSection(memoUid: memo.uid),
-                if (nonImageAttachments.isNotEmpty) ...[
+                if (_routeSettled) _MemoRelationsSection(memoUid: memo.uid),
+                if (_routeSettled && nonImageAttachments.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text(
                     context.t.strings.legacy.msg_attachments,
@@ -1169,8 +1307,9 @@ class _MemoEngagementSectionState
       final normalized = creator.trim();
       if (normalized.isEmpty) continue;
       if (_creatorCache.containsKey(normalized) ||
-          _creatorFetching.contains(normalized))
+          _creatorFetching.contains(normalized)) {
         continue;
+      }
       _creatorFetching.add(normalized);
       try {
         final user = await ref
@@ -1215,8 +1354,9 @@ class _MemoEngagementSectionState
     final trimmed = rawUrl.trim();
     if (trimmed.isEmpty) return '';
     if (trimmed.startsWith('data:')) return trimmed;
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return trimmed;
+    }
     if (baseUrl == null) return trimmed;
     return joinBaseUrl(baseUrl, trimmed);
   }
@@ -2136,6 +2276,8 @@ class _CollapsibleText extends StatefulWidget {
     required this.style,
     required this.hapticsEnabled,
     this.initiallyExpanded = false,
+    this.markdownCacheKey,
+    this.markdownSelectable = true,
     this.tagColors,
     this.onToggleTask,
   });
@@ -2145,6 +2287,8 @@ class _CollapsibleText extends StatefulWidget {
   final TextStyle? style;
   final bool hapticsEnabled;
   final bool initiallyExpanded;
+  final String? markdownCacheKey;
+  final bool markdownSelectable;
   final TagColorLookup? tagColors;
   final ValueChanged<TaskToggleRequest>? onToggleTask;
 
@@ -2206,9 +2350,10 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         MemoMarkdown(
+          cacheKey: widget.markdownCacheKey,
           data: displayText,
           textStyle: widget.style,
-          selectable: !showCollapsed,
+          selectable: widget.markdownSelectable && !showCollapsed,
           blockSpacing: 8,
           renderImages: false,
           tagColors: widget.tagColors,
