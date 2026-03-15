@@ -27,6 +27,9 @@ class SyncFeedbackPresenter {
   final bool Function() _isMounted;
 
   void showAutoSyncFeedbackToast({required bool succeeded}) {
+    if (succeeded) {
+      return;
+    }
     final language = _bootstrapAdapter.readPreferences(_ref).language;
     final message = buildAutoSyncFeedbackMessage(
       language: language,
@@ -98,55 +101,7 @@ class SyncFeedbackPresenter {
     });
   }
 
-  void showAutoSyncProgressToast() {
-    final language = _bootstrapAdapter.readPreferences(_ref).language;
-    final message = buildAutoSyncProgressMessage(language: language);
-    final homeContext = _mainHomePageKey.currentContext;
-    final navigatorContext = _navigatorKey.currentContext;
-    final overlayContext =
-        homeContext ??
-        navigatorContext ??
-        _navigatorKey.currentState?.overlay?.context;
-    if (overlayContext == null) {
-      LogManager.instance.info(
-        'AutoSync: progress_toast_skipped_no_context',
-        context: <String, Object?>{
-          'message': message,
-          'hasHomeContext': homeContext != null,
-          'hasNavigatorContext': navigatorContext != null,
-        },
-      );
-      return;
-    }
-
-    var shown = showTopToast(
-      overlayContext,
-      message,
-      duration: const Duration(seconds: 2),
-      topOffset: 96,
-    );
-    if (!shown &&
-        navigatorContext != null &&
-        !identical(overlayContext, navigatorContext)) {
-      shown = showTopToast(
-        navigatorContext,
-        message,
-        duration: const Duration(seconds: 2),
-        topOffset: 96,
-      );
-    }
-
-    LogManager.instance.info(
-      shown
-          ? 'AutoSync: progress_toast_shown'
-          : 'AutoSync: progress_toast_skipped_no_overlay',
-      context: <String, Object?>{
-        'message': message,
-        'hasHomeContext': homeContext != null,
-        'hasNavigatorContext': navigatorContext != null,
-      },
-    );
-  }
+  void showAutoSyncProgressToast() {}
 }
 
 SyncFeedbackChannel showSyncFeedback({
