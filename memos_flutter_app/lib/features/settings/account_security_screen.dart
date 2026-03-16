@@ -6,10 +6,11 @@ import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
 import '../../core/app_localization.dart';
 import '../../application/desktop/desktop_settings_window.dart';
-import '../../core/hash.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../core/top_toast.dart';
+import '../../core/uid.dart';
+import '../../data/local_library/local_library_paths.dart';
 import '../../data/models/local_library.dart';
 import '../../data/repositories/image_bed_settings_repository.dart';
 import '../../state/system/local_library_provider.dart';
@@ -87,15 +88,15 @@ class AccountSecurityScreen extends ConsumerWidget {
                 content: Text(
                   conflict.isDeletion
                       ? context
-                          .t
-                          .strings
-                          .legacy
-                          .msg_memo_missing_disk_but_has_local
+                            .t
+                            .strings
+                            .legacy
+                            .msg_memo_missing_disk_but_has_local
                       : context
-                          .t
-                          .strings
-                          .legacy
-                          .msg_disk_content_conflicts_local_pending_changes,
+                            .t
+                            .strings
+                            .legacy
+                            .msg_disk_content_conflicts_local_pending_changes,
                 ),
                 actions: [
                   TextButton(
@@ -173,8 +174,8 @@ class AccountSecurityScreen extends ConsumerWidget {
               SnackBar(
                 content: Text(
                   context.t.strings.legacy.msg_scan_failed(
-                        e: _formatLocalScanError(context, error),
-                      ),
+                    e: _formatLocalScanError(context, error),
+                  ),
                 ),
               ),
             );
@@ -201,9 +202,12 @@ class AccountSecurityScreen extends ConsumerWidget {
         initialName: context.t.strings.legacy.msg_local_library,
       );
       if (result == null) return;
-      final keySeed = (result.treeUri ?? result.rootPath ?? '').trim();
-      if (keySeed.isEmpty) return;
-      final key = 'local_${fnv1a64Hex(keySeed)}';
+      var key = 'local_${generateUid(length: 12)}';
+      while (localLibraries.any((library) => library.key == key)) {
+        key = 'local_${generateUid(length: 12)}';
+      }
+      await ensureManagedWorkspaceStructure(key);
+      final rootPath = await resolveManagedWorkspacePath(key);
       final existed = localLibraries.any((l) => l.key == key);
       if (!existed) {
         try {
@@ -216,20 +220,13 @@ class AccountSecurityScreen extends ConsumerWidget {
       final library = LocalLibrary(
         key: key,
         name: result.name.trim(),
-        treeUri: result.treeUri,
-        rootPath: result.rootPath,
+        storageKind: LocalLibraryStorageKind.managedPrivate,
+        rootPath: rootPath,
         createdAt: now,
         updatedAt: now,
       );
       ref.read(localLibrariesProvider.notifier).upsert(library);
       await ref.read(appSessionProvider.notifier).switchWorkspace(key);
-      if (result.encryptionEnabled && context.mounted) {
-        showTopToast(context, context.t.strings.legacy.msg_encryption_feature_placeholder);
-      }
-      if (!context.mounted) return;
-      await WidgetsBinding.instance.endOfFrame;
-      if (!context.mounted) return;
-      await _maybeScanLocalLibrary();
       if (!context.mounted) return;
       showTopToast(context, context.t.strings.legacy.msg_local_library_added);
     }

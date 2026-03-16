@@ -1,7 +1,10 @@
+enum LocalLibraryStorageKind { managedPrivate, externalLegacy }
+
 class LocalLibrary {
   const LocalLibrary({
     required this.key,
     required this.name,
+    this.storageKind = LocalLibraryStorageKind.externalLegacy,
     this.treeUri,
     this.rootPath,
     this.createdAt,
@@ -10,11 +13,14 @@ class LocalLibrary {
 
   final String key;
   final String name;
+  final LocalLibraryStorageKind storageKind;
   final String? treeUri;
   final String? rootPath;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
+  bool get isManagedPrivate =>
+      storageKind == LocalLibraryStorageKind.managedPrivate;
   bool get isSaf => treeUri != null && treeUri!.trim().isNotEmpty;
 
   String get locationLabel {
@@ -67,16 +73,20 @@ class LocalLibrary {
   LocalLibrary copyWith({
     String? key,
     String? name,
+    LocalLibraryStorageKind? storageKind,
     String? treeUri,
+    bool clearTreeUri = false,
     String? rootPath,
+    bool clearRootPath = false,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
     return LocalLibrary(
       key: key ?? this.key,
       name: name ?? this.name,
-      treeUri: treeUri ?? this.treeUri,
-      rootPath: rootPath ?? this.rootPath,
+      storageKind: storageKind ?? this.storageKind,
+      treeUri: clearTreeUri ? null : (treeUri ?? this.treeUri),
+      rootPath: clearRootPath ? null : (rootPath ?? this.rootPath),
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -85,6 +95,7 @@ class LocalLibrary {
   Map<String, dynamic> toJson() => {
     'key': key,
     'name': name,
+    'storageKind': storageKind.name,
     'treeUri': treeUri,
     'rootPath': rootPath,
     'createdAt': createdAt?.toUtc().millisecondsSinceEpoch,
@@ -92,6 +103,17 @@ class LocalLibrary {
   };
 
   factory LocalLibrary.fromJson(Map<String, dynamic> json) {
+    LocalLibraryStorageKind readStorageKind() {
+      final raw = json['storageKind'];
+      if (raw is String) {
+        return LocalLibraryStorageKind.values.firstWhere(
+          (value) => value.name == raw,
+          orElse: () => LocalLibraryStorageKind.externalLegacy,
+        );
+      }
+      return LocalLibraryStorageKind.externalLegacy;
+    }
+
     DateTime? readTime(dynamic raw) {
       if (raw is int) {
         return DateTime.fromMillisecondsSinceEpoch(raw, isUtc: true);
@@ -108,6 +130,7 @@ class LocalLibrary {
     return LocalLibrary(
       key: (json['key'] as String?) ?? '',
       name: (json['name'] as String?) ?? '',
+      storageKind: readStorageKind(),
       treeUri: (json['treeUri'] as String?)?.trim(),
       rootPath: (json['rootPath'] as String?)?.trim(),
       createdAt: readTime(json['createdAt'])?.toLocal(),

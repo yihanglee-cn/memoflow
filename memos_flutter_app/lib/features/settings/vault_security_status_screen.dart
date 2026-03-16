@@ -1,4 +1,4 @@
-﻿part of 'webdav_sync_screen.dart';
+part of 'webdav_sync_screen.dart';
 
 class VaultSecurityStatusScreen extends ConsumerStatefulWidget {
   const VaultSecurityStatusScreen({super.key});
@@ -35,8 +35,9 @@ class _VaultSecurityStatusScreenState
       final exportStatus = await ref
           .read(syncCoordinatorProvider.notifier)
           .fetchWebDavExportStatus();
-      final vaultState =
-          await ref.read(webDavVaultStateRepositoryProvider).read();
+      final vaultState = await ref
+          .read(webDavVaultStateRepositoryProvider)
+          .read();
       if (!mounted) return;
       setState(() {
         _remoteMeta = meta;
@@ -62,13 +63,9 @@ class _VaultSecurityStatusScreenState
         'Vault status load failed: ${LogSanitizer.sanitizeText(error.toString())}',
       );
     }
-    final message =
-        error is SyncError
-            ? presentSyncError(language: context.appLanguage, error: error)
-            : context.tr(
-                zh: 'WebDAV 请求失败',
-                en: 'WebDAV request failed',
-              );
+    final message = error is SyncError
+        ? presentSyncError(language: context.appLanguage, error: error)
+        : context.tr(zh: 'WebDAV 请求失败', en: 'WebDAV request failed');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -91,7 +88,8 @@ class _VaultSecurityStatusScreenState
         _reminderShown = true;
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           if (!mounted) return;
-          final confirm = await showDialog<bool>(
+          final confirm =
+              await showDialog<bool>(
                 context: context,
                 builder: (context) => AlertDialog(
                   title: Text(
@@ -100,8 +98,7 @@ class _VaultSecurityStatusScreenState
                   content: Text(
                     context.tr(
                       zh: '检测到旧明文文件，是否清理？',
-                      en:
-                          'Legacy plaintext files were detected. Clean them now?',
+                      en: 'Legacy plaintext files were detected. Clean them now?',
                     ),
                   ),
                   actions: [
@@ -134,7 +131,8 @@ class _VaultSecurityStatusScreenState
     _reminderShown = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      final confirm = await showDialog<bool>(
+      final confirm =
+          await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
               title: Text(
@@ -143,8 +141,7 @@ class _VaultSecurityStatusScreenState
               content: Text(
                 context.tr(
                   zh: '检测到旧明文导出，是否清理？',
-                  en:
-                      'Legacy plaintext export was detected. Clean it now?',
+                  en: 'Legacy plaintext export was detected. Clean it now?',
                 ),
               ),
               actions: [
@@ -225,8 +222,10 @@ class _VaultSecurityStatusScreenState
               autofocus: true,
               obscureText: true,
               decoration: InputDecoration(
-                hintText:
-                    context.tr(zh: '请输入 Vault 密码', en: 'Enter Vault password'),
+                hintText: context.tr(
+                  zh: '请输入 Vault 密码',
+                  en: 'Enter Vault password',
+                ),
               ),
               onChanged: (value) => password = value,
               onSubmitted: (_) => dialogContext.safePop(true),
@@ -269,31 +268,30 @@ class _VaultSecurityStatusScreenState
         language: context.appLanguage,
         error: error,
       );
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
       return false;
     } catch (e) {
       if (!mounted) return false;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
       return false;
     }
   }
 
   Future<void> _handleViewRecoveryCode() async {
     final password = await _promptVaultPassword(
-      title: context.tr(
-        zh: '验证 Vault 密码',
-        en: 'Verify Vault password',
-      ),
+      title: context.tr(zh: '验证 Vault 密码', en: 'Verify Vault password'),
     );
     if (!mounted || password == null) return;
     final verified = await _verifyVaultPassword(password);
     if (!mounted || !verified) return;
 
-    final recovery =
-        await ref.read(webDavVaultRecoveryRepositoryProvider).read();
+    final recovery = await ref
+        .read(webDavVaultRecoveryRepositoryProvider)
+        .read();
     if (!mounted) return;
     if (recovery == null || recovery.trim().isEmpty) {
       showTopToast(
@@ -362,7 +360,9 @@ class _VaultSecurityStatusScreenState
               onTap: () => Navigator.of(context).pop(_BackupTestMode.quick),
             ),
             ListTile(
-              title: Text(context.tr(zh: '完整恢复（高级）', en: 'Full restore (advanced)')),
+              title: Text(
+                context.tr(zh: '完整恢复（高级）', en: 'Full restore (advanced)'),
+              ),
               subtitle: Text(
                 context.tr(
                   zh: '解密全部对象并执行临时写入',
@@ -383,17 +383,17 @@ class _VaultSecurityStatusScreenState
       password = stored;
     } else {
       password = await _promptVaultPassword(
-        title: context.tr(
-          zh: '请输入 Vault 密码',
-          en: 'Enter Vault password',
-        ),
+        title: context.tr(zh: '请输入 Vault 密码', en: 'Enter Vault password'),
       );
     }
     if (!mounted || password == null || password.trim().isEmpty) return;
 
     final error = await ref
         .read(syncCoordinatorProvider.notifier)
-        .verifyWebDavBackup(password: password, deep: mode == _BackupTestMode.deep);
+        .verifyWebDavBackup(
+          password: password,
+          deep: mode == _BackupTestMode.deep,
+        );
     if (!mounted) return;
     if (error == null) {
       showTopToast(
@@ -406,9 +406,9 @@ class _VaultSecurityStatusScreenState
       language: context.appLanguage,
       error: error,
     );
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _setLocalPlainCache(bool value) {
@@ -441,8 +441,9 @@ class _VaultSecurityStatusScreenState
         ? MemoFlowPalette.backgroundDark
         : MemoFlowPalette.backgroundLight;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
-    final textMain =
-        isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
+    final textMain = isDark
+        ? MemoFlowPalette.textDark
+        : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
 
     final settings = ref.watch(webDavSettingsProvider);
@@ -502,9 +503,7 @@ class _VaultSecurityStatusScreenState
                     value: vaultEnabled
                         ? context.tr(zh: '是', en: 'Yes')
                         : context.tr(zh: '否', en: 'No'),
-                    status: vaultEnabled
-                        ? _StatusKind.good
-                        : _StatusKind.warn,
+                    status: vaultEnabled ? _StatusKind.good : _StatusKind.warn,
                   ),
                   _StatusEntry(
                     label: context.tr(zh: '恢复码', en: 'Recovery code'),
@@ -523,8 +522,9 @@ class _VaultSecurityStatusScreenState
                             zh: '检测到 $deprecatedCount 个',
                             en: '$deprecatedCount detected',
                           ),
-                    status:
-                        deprecatedCount == 0 ? _StatusKind.good : _StatusKind.warn,
+                    status: deprecatedCount == 0
+                        ? _StatusKind.good
+                        : _StatusKind.warn,
                   ),
                   _StatusEntry(
                     label: context.tr(
@@ -540,17 +540,14 @@ class _VaultSecurityStatusScreenState
                   ),
                   if (exportPathAvailable) ...[
                     _StatusEntry(
-                      label: context.tr(
-                        zh: '导出路径明文',
-                        en: 'Export plaintext',
-                      ),
+                      label: context.tr(zh: '导出路径明文', en: 'Export plaintext'),
                       value: exportPlainDetected
                           ? exportPlainDeprecated
-                              ? context.tr(
-                                  zh: '检测到（残留）',
-                                  en: 'Detected (legacy)',
-                                )
-                              : context.tr(zh: '检测到', en: 'Detected')
+                                ? context.tr(
+                                    zh: '检测到（残留）',
+                                    en: 'Detected (legacy)',
+                                  )
+                                : context.tr(zh: '检测到', en: 'Detected')
                           : context.tr(zh: '未检测到', en: 'Not detected'),
                       status: exportPlainDetected
                           ? _StatusKind.warn
@@ -563,8 +560,8 @@ class _VaultSecurityStatusScreenState
                       ),
                       status:
                           (exportStatus?.lastExportSuccessAt ?? '').isNotEmpty
-                              ? _StatusKind.good
-                              : _StatusKind.warn,
+                          ? _StatusKind.good
+                          : _StatusKind.warn,
                     ),
                     _StatusEntry(
                       label: context.tr(zh: '最近一次上传', en: 'Last upload'),
@@ -573,8 +570,8 @@ class _VaultSecurityStatusScreenState
                       ),
                       status:
                           (exportStatus?.lastUploadSuccessAt ?? '').isNotEmpty
-                              ? _StatusKind.good
-                              : _StatusKind.warn,
+                          ? _StatusKind.good
+                          : _StatusKind.warn,
                     ),
                   ],
                 ],
@@ -627,8 +624,9 @@ class _VaultSecurityStatusScreenState
                   SizedBox(
                     height: 42,
                     child: OutlinedButton.icon(
-                      onPressed:
-                          deprecatedCount == 0 ? null : _handleCleanRemotePlain,
+                      onPressed: deprecatedCount == 0
+                          ? null
+                          : _handleCleanRemotePlain,
                       icon: const Icon(Icons.delete_outline, size: 18),
                       label: Text(
                         context.tr(zh: '清理远端明文', en: 'Clean remote plaintext'),
@@ -639,8 +637,9 @@ class _VaultSecurityStatusScreenState
                     SizedBox(
                       height: 42,
                       child: OutlinedButton.icon(
-                        onPressed:
-                            exportPlainDetected ? _handleCleanExportPlain : null,
+                        onPressed: exportPlainDetected
+                            ? _handleCleanExportPlain
+                            : null,
                         icon: const Icon(Icons.delete_sweep_outlined, size: 18),
                         label: Text(
                           context.tr(
@@ -656,7 +655,10 @@ class _VaultSecurityStatusScreenState
                       onPressed: hasLocalPlainCache
                           ? _handleClearLocalPlainCache
                           : null,
-                      icon: const Icon(Icons.cleaning_services_outlined, size: 18),
+                      icon: const Icon(
+                        Icons.cleaning_services_outlined,
+                        size: 18,
+                      ),
                       label: Text(
                         context.tr(zh: '清理本地明文', en: 'Clean local plaintext'),
                       ),
@@ -785,4 +787,3 @@ class _StatusCard extends StatelessWidget {
 }
 
 enum _BackupTestMode { quick, deep }
-

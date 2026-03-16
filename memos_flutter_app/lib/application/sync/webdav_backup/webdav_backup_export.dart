@@ -13,29 +13,34 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
   }) async {
     return _withBoundDatabase(() async {
       final normalizedAccountKey = accountKey?.trim() ?? '';
+      final accountId = normalizedAccountKey.isEmpty
+          ? ''
+          : fnv1a64Hex(normalizedAccountKey);
       final includeConfig =
           settings.backupConfigScope != WebDavBackupConfigScope.none;
       final includeMemos = settings.backupContentMemos;
       final usePlainBackup =
           settings.backupEncryptionMode == WebDavBackupEncryptionMode.plain;
       final useVault = settings.vaultEnabled && !usePlainBackup;
+      final triggerLabel = manual ? 'manual' : 'auto';
+      if (normalizedAccountKey.isEmpty) {
+        _logEvent('Backup skipped', detail: 'account_missing ($triggerLabel)');
+        return WebDavBackupSkipped(
+          reason: _keyedError(
+            'legacy.webdav.backup_account_missing',
+            code: SyncErrorCode.invalidConfig,
+          ),
+        );
+      }
       final backupLibrary = includeMemos
-          ? _resolveBackupLibrary(settings, activeLocalLibrary)
+          ? await _resolveBackupLibrary(settings, activeLocalLibrary, accountId)
           : null;
       final usesMirrorLibrary = includeMemos && activeLocalLibrary == null;
-      final exportEncrypted =
-          includeMemos &&
-          usesMirrorLibrary &&
-          !usePlainBackup &&
-          settings.backupExportEncrypted;
       final exportLibrary = usesMirrorLibrary ? backupLibrary : null;
       LocalLibrary? snapshotLibrary = backupLibrary;
-      Directory? tempExportDir;
-      _ExportWriter? exportWriter;
       DateTime? exportSuccessAt;
       DateTime? uploadSuccessAt;
       var plainExportCompleted = false;
-      final triggerLabel = manual ? 'manual' : 'auto';
       if (!settings.isBackupEnabled) {
         _logEvent('Backup skipped', detail: 'disabled ($triggerLabel)');
         return WebDavBackupSkipped(
@@ -52,15 +57,6 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
             code: SyncErrorCode.invalidConfig,
             retryable: false,
             message: 'BACKUP_CONTENT_EMPTY',
-          ),
-        );
-      }
-      if (normalizedAccountKey.isEmpty) {
-        _logEvent('Backup skipped', detail: 'account_missing ($triggerLabel)');
-        return WebDavBackupSkipped(
-          reason: _keyedError(
-            'legacy.webdav.backup_account_missing',
-            code: SyncErrorCode.invalidConfig,
           ),
         );
       }
@@ -114,29 +110,14 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
       await _setWakelockEnabled(true);
       try {
         if (includeMemos) {
-          if (exportEncrypted) {
-            final tempRoot = await getTemporaryDirectory();
-            final parent = Directory(
-              p.join(tempRoot.path, 'memoflow_backup_export'),
-            );
-            if (!await parent.exists()) {
-              await parent.create(recursive: true);
-            }
-            tempExportDir = await parent.createTemp('export_');
-            snapshotLibrary = LocalLibrary(
-              key: 'webdav_backup_export',
-              name: 'WebDAV Backup Export',
-              rootPath: tempExportDir!.path,
-            );
-          }
           final exportedMemos = await _exportLocalLibraryForBackup(
             snapshotLibrary!,
-            pruneToCurrentData: usesMirrorLibrary && !exportEncrypted,
+            pruneToCurrentData: usesMirrorLibrary,
             attachmentBaseUrl: attachmentBaseUrl,
             attachmentAuthHeader: attachmentAuthHeader,
             issueHandler: manual ? onExportIssue : null,
           );
-          if (!exportEncrypted && usesMirrorLibrary) {
+          if (usesMirrorLibrary) {
             exportSuccessAt = DateTime.now();
             plainExportCompleted = true;
           }
@@ -156,7 +137,6 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
         }
 
         final baseUrl = _parseBaseUrl(settings.serverUrl);
-        final accountId = fnv1a64Hex(normalizedAccountKey);
         final rootPath = normalizeWebDavRootPath(settings.rootPath);
         final client = _buildClient(settings, baseUrl);
         try {
@@ -273,15 +253,6 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
             accountId,
             masterKey,
           );
-          if (exportEncrypted && exportLibrary != null) {
-            exportWriter = _ExportWriter(
-              library: exportLibrary,
-              backupBaseDir: _backupBaseDir(accountId),
-              exportStagingDir: _exportStagingDir,
-              chunkSize: _chunkSize,
-              logEvent: _logEvent,
-            );
-          }
 
           final snapshotId = _buildSnapshotId(now);
           final configFiles = includeConfig
@@ -306,7 +277,6 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
             backupMode: _resolveBackupMode(
               usesServerMode: activeLocalLibrary == null,
             ),
-            exportWriter: exportWriter,
           );
           if (build.snapshot.files.isEmpty) {
             return WebDavBackupSkipped(
@@ -334,71 +304,6 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
             index: index,
             retention: settings.backupRetentionCount,
           );
-
-          if (exportWriter != null && exportLibrary != null) {
-            final exportIndex = _buildExportIndexFromSnapshot(
-              snapshot: snapshot,
-              objectSizes: build.objectSizes,
-              now: now,
-            );
-            final snapshotKey = await _deriveSubKey(
-              masterKey,
-              'snapshot:${snapshot.id}',
-            );
-            final snapshotBytes = await _encryptJson(
-              snapshotKey,
-              snapshot.toJson(),
-            );
-            await exportWriter.writeSnapshot(snapshot.id, snapshotBytes);
-
-            final indexKey = await _deriveSubKey(masterKey, 'index');
-            final indexBytes = await _encryptJson(
-              indexKey,
-              exportIndex.toJson(),
-            );
-            await exportWriter.writeIndex(indexBytes);
-
-            if (legacyConfig != null) {
-              final configBytes = Uint8List.fromList(
-                utf8.encode(jsonEncode(legacyConfig!.toJson())),
-              );
-              await exportWriter.writeConfig(configBytes);
-            }
-            await exportWriter.commit();
-            exportSuccessAt = DateTime.now();
-            assert(() {
-              final ok = _assertExportMirrorIntegritySync(
-                exportLibrary: exportLibrary,
-                exportIndex: exportIndex,
-                backupBaseDir: _backupBaseDir(accountId),
-              );
-              if (!ok) {
-                _logEvent('Export mirror integrity check failed');
-              }
-              return ok;
-            }());
-
-            final fileSystem = LocalLibraryFileSystem(exportLibrary);
-            final previousEnc = await _readExportSignature(
-              fileSystem,
-              _exportEncSignatureFile,
-              accountId,
-            );
-            final signature = _buildExportSignature(
-              mode: WebDavExportMode.enc,
-              accountIdHash: accountId,
-              snapshotId: snapshot.id,
-              exportFormat: WebDavExportFormat.full,
-              vaultKeyId: vaultKeyId,
-              createdAt: previousEnc?.createdAt,
-              lastSuccessAt: exportSuccessAt!,
-            );
-            await _writeExportSignature(
-              fileSystem,
-              _exportEncSignatureFile,
-              signature,
-            );
-          }
 
           await _waitIfPaused();
           _updateProgress(
@@ -430,61 +335,32 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
           );
 
           uploadSuccessAt = DateTime.now();
-          if (exportLibrary != null) {
+          if (exportLibrary != null && plainExportCompleted) {
             final fileSystem = LocalLibraryFileSystem(exportLibrary);
-            if (exportWriter != null) {
-              final previousEnc = await _readExportSignature(
-                fileSystem,
-                _exportEncSignatureFile,
-                accountId,
-              );
-              if (previousEnc != null) {
-                final successAt = _resolveExportLastSuccessAt(
-                  exportAt: exportSuccessAt ?? now,
-                  uploadAt: uploadSuccessAt,
-                  webDavConfigured: settings.serverUrl.trim().isNotEmpty,
-                );
-                final signature = _buildExportSignature(
-                  mode: WebDavExportMode.enc,
-                  accountIdHash: accountId,
-                  snapshotId: snapshot.id,
-                  exportFormat: WebDavExportFormat.full,
-                  vaultKeyId: vaultKeyId,
-                  createdAt: previousEnc.createdAt,
-                  lastSuccessAt: successAt,
-                );
-                await _writeExportSignature(
-                  fileSystem,
-                  _exportEncSignatureFile,
-                  signature,
-                );
-              }
-            } else if (plainExportCompleted) {
-              final previousPlain = await _readExportSignature(
-                fileSystem,
-                _exportPlainSignatureFile,
-                accountId,
-              );
-              final successAt = _resolveExportLastSuccessAt(
-                exportAt: exportSuccessAt ?? now,
-                uploadAt: uploadSuccessAt,
-                webDavConfigured: settings.serverUrl.trim().isNotEmpty,
-              );
-              final signature = _buildExportSignature(
-                mode: WebDavExportMode.plain,
-                accountIdHash: accountId,
-                snapshotId: '',
-                exportFormat: WebDavExportFormat.full,
-                vaultKeyId: vaultKeyId,
-                createdAt: previousPlain?.createdAt,
-                lastSuccessAt: successAt,
-              );
-              await _writeExportSignature(
-                fileSystem,
-                _exportPlainSignatureFile,
-                signature,
-              );
-            }
+            final previousPlain = await _readExportSignature(
+              fileSystem,
+              _exportPlainSignatureFile,
+              accountId,
+            );
+            final successAt = _resolveExportLastSuccessAt(
+              exportAt: exportSuccessAt ?? now,
+              uploadAt: uploadSuccessAt,
+              webDavConfigured: settings.serverUrl.trim().isNotEmpty,
+            );
+            final signature = _buildExportSignature(
+              mode: WebDavExportMode.plain,
+              accountIdHash: accountId,
+              snapshotId: '',
+              exportFormat: WebDavExportFormat.full,
+              vaultKeyId: vaultKeyId,
+              createdAt: previousPlain?.createdAt,
+              lastSuccessAt: successAt,
+            );
+            await _writeExportSignature(
+              fileSystem,
+              _exportPlainSignatureFile,
+              signature,
+            );
           }
 
           final previousState = await _stateRepository.read();
@@ -532,30 +408,26 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
         _logEvent('Backup failed', error: mapped);
         return WebDavBackupFailure(mapped);
       } finally {
-        if (tempExportDir != null) {
-          try {
-            await tempExportDir!.delete(recursive: true);
-          } catch (_) {}
-        }
         await _setWakelockEnabled(false);
         _finishProgress();
       }
     });
   }
 
-  LocalLibrary? _resolveBackupLibrary(
+  Future<LocalLibrary?> _resolveBackupLibrary(
     WebDavSettings settings,
     LocalLibrary? activeLocalLibrary,
-  ) {
+    String? accountId,
+  ) async {
     if (activeLocalLibrary != null) return activeLocalLibrary;
-    final treeUri = settings.backupMirrorTreeUri.trim();
-    final rootPath = settings.backupMirrorRootPath.trim();
-    if (treeUri.isEmpty && rootPath.isEmpty) return null;
+    final normalizedAccountId = accountId?.trim() ?? '';
+    if (normalizedAccountId.isEmpty) return null;
+    final rootPath = await resolveManagedWebDavMirrorPath(normalizedAccountId);
     return LocalLibrary(
-      key: 'webdav_backup_mirror',
+      key: 'webdav_backup_mirror_$normalizedAccountId',
       name: 'WebDAV Backup Mirror',
-      treeUri: treeUri.isEmpty ? null : treeUri,
-      rootPath: treeUri.isNotEmpty ? null : rootPath,
+      storageKind: LocalLibraryStorageKind.managedPrivate,
+      rootPath: rootPath,
     );
   }
 
@@ -570,7 +442,7 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
         : fnv1a64Hex(normalizedAccountKey);
     final webDavConfigured = settings.serverUrl.trim().isNotEmpty;
     final exportLibrary = activeLocalLibrary == null
-        ? _resolveBackupLibrary(settings, null)
+        ? await _resolveBackupLibrary(settings, null, accountId)
         : null;
     final state = await _stateRepository.read();
 
@@ -640,7 +512,11 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
       return WebDavExportCleanupStatus.notFound;
     }
     final exportLibrary = activeLocalLibrary == null
-        ? _resolveBackupLibrary(settings, null)
+        ? await _resolveBackupLibrary(
+            settings,
+            null,
+            fnv1a64Hex(normalizedAccountKey),
+          )
         : null;
     if (exportLibrary == null) {
       return WebDavExportCleanupStatus.notFound;

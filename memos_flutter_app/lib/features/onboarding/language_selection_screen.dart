@@ -2,9 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/hash.dart';
 import '../../core/memoflow_palette.dart';
+import '../../core/uid.dart';
 import '../../data/logs/log_manager.dart';
+import '../../data/local_library/local_library_paths.dart';
 import '../../data/models/local_library.dart';
 import '../settings/local_mode_setup_screen.dart';
 import '../../i18n/strings.g.dart';
@@ -13,6 +14,7 @@ import '../../state/system/local_library_scanner.dart';
 import '../../state/memos/onboarding_providers.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
+
 enum OnboardingMode { local, server }
 
 class LanguageSelectionScreen extends ConsumerStatefulWidget {
@@ -149,19 +151,14 @@ class _LanguageSelectionScreenState
     }
     _logFlow(
       'create_local_library_result',
-      context: <String, Object?>{
-        'nameLength': result.name.trim().length,
-        'hasTreeUri': (result.treeUri ?? '').trim().isNotEmpty,
-        'hasRootPath': (result.rootPath ?? '').trim().isNotEmpty,
-        'encryptionEnabled': result.encryptionEnabled,
-      },
+      context: <String, Object?>{'nameLength': result.name.trim().length},
     );
-    final keySeed = (result.treeUri ?? result.rootPath ?? '').trim();
-    if (keySeed.isEmpty) {
-      _logFlow('create_local_library_invalid_seed', warn: true);
-      return null;
+    var key = 'local_${generateUid(length: 12)}';
+    while (existingLibraries.any((library) => library.key == key)) {
+      key = 'local_${generateUid(length: 12)}';
     }
-    final key = 'local_${fnv1a64Hex(keySeed)}';
+    await ensureManagedWorkspaceStructure(key);
+    final rootPath = await resolveManagedWorkspacePath(key);
     final existed = existingLibraries.any((l) => l.key == key);
     if (!existed) {
       try {
@@ -186,8 +183,8 @@ class _LanguageSelectionScreenState
     final library = LocalLibrary(
       key: key,
       name: result.name.trim(),
-      treeUri: result.treeUri,
-      rootPath: result.rootPath,
+      storageKind: LocalLibraryStorageKind.managedPrivate,
+      rootPath: rootPath,
       createdAt: now,
       updatedAt: now,
     );
@@ -196,11 +193,6 @@ class _LanguageSelectionScreenState
       'local_library_upserted',
       context: <String, Object?>{'workspaceKey': key},
     );
-    if (result.encryptionEnabled && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(context.t.strings.legacy.msg_encryption_feature_placeholder)));
-    }
     _logFlow('local_library_ready', context: {'workspaceKey': key});
     return key;
   }

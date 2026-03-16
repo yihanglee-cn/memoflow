@@ -21,6 +21,7 @@ import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
 import '../../data/local_library/local_library_markdown.dart';
 import '../../data/local_library/local_library_naming.dart';
+import '../../data/local_library/local_library_paths.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/image_compression_settings.dart';
 import '../../data/models/image_bed_settings.dart';
@@ -351,9 +352,10 @@ abstract class _WebDavBackupServiceBase {
   });
   String _buildSnapshotId(DateTime now);
 
-  LocalLibrary? _resolveBackupLibrary(
+  Future<LocalLibrary?> _resolveBackupLibrary(
     WebDavSettings settings,
     LocalLibrary? activeLocalLibrary,
+    String? accountId,
   );
   Future<int> _exportLocalLibraryForBackup(
     LocalLibrary localLibrary, {

@@ -8,6 +8,7 @@ import 'package:memos_flutter_app/data/db/app_database.dart';
 import 'package:memos_flutter_app/data/local_library/local_attachment_store.dart';
 import 'package:memos_flutter_app/data/local_library/local_library_fs.dart';
 import 'package:memos_flutter_app/data/local_library/local_library_markdown.dart';
+import 'package:memos_flutter_app/data/local_library/local_library_paths.dart';
 import 'package:memos_flutter_app/data/models/local_library.dart';
 import 'package:memos_flutter_app/data/models/local_memo.dart';
 import 'package:memos_flutter_app/data/models/content_fingerprint.dart';
@@ -72,10 +73,7 @@ void main() {
       syncState: SyncState.synced,
       lastError: null,
     );
-    await fs.writeMemo(
-      uid: uid,
-      content: buildLocalLibraryMarkdown(diskMemo),
-    );
+    await fs.writeMemo(uid: uid, content: buildLocalLibraryMarkdown(diskMemo));
 
     final service = LocalLibraryScanService(
       db: db,
@@ -141,10 +139,7 @@ void main() {
       syncState: SyncState.synced,
       lastError: null,
     );
-    await fs.writeMemo(
-      uid: uid,
-      content: buildLocalLibraryMarkdown(diskMemo),
-    );
+    await fs.writeMemo(uid: uid, content: buildLocalLibraryMarkdown(diskMemo));
 
     final service = LocalLibraryScanService(
       db: db,
@@ -152,9 +147,7 @@ void main() {
       attachmentStore: LocalAttachmentStore(),
     );
 
-    final result = await service.scanAndMerge(
-      conflictDecisions: {uid: true},
-    );
+    final result = await service.scanAndMerge(conflictDecisions: {uid: true});
 
     expect(result, isA<LocalScanSuccess>());
     final row = await db.getMemoByUid(uid);
@@ -164,5 +157,54 @@ void main() {
     await db.close();
     await deleteTestDatabase(dbName);
     await Directory(libraryDir.path).delete(recursive: true);
+  });
+
+  test('scans memos from a managed private workspace', () async {
+    final dbName = uniqueDbName('local_scan_managed_private');
+    final db = AppDatabase(dbName: dbName);
+    final library = LocalLibrary(
+      key: 'managed_private_workspace',
+      name: 'Managed Private Workspace',
+      storageKind: LocalLibraryStorageKind.managedPrivate,
+      rootPath: await resolveManagedWorkspacePath('managed_private_workspace'),
+    );
+    final fs = LocalLibraryFileSystem(library);
+    await fs.ensureStructure();
+
+    final uid = 'memo-managed-private';
+    final created = DateTime.now().toUtc().subtract(const Duration(days: 1));
+    final diskMemo = LocalMemo(
+      uid: uid,
+      content: 'managed private content',
+      contentFingerprint: computeContentFingerprint('managed private content'),
+      visibility: 'PRIVATE',
+      pinned: false,
+      state: 'NORMAL',
+      createTime: created,
+      updateTime: DateTime.now().toUtc(),
+      tags: const [],
+      attachments: const [],
+      relationCount: 0,
+      location: null,
+      syncState: SyncState.synced,
+      lastError: null,
+    );
+    await fs.writeMemo(uid: uid, content: buildLocalLibraryMarkdown(diskMemo));
+
+    final service = LocalLibraryScanService(
+      db: db,
+      fileSystem: fs,
+      attachmentStore: LocalAttachmentStore(),
+    );
+
+    final result = await service.scanAndMerge(forceDisk: true);
+
+    expect(result, isA<LocalScanSuccess>());
+    final row = await db.getMemoByUid(uid);
+    expect(row?['content'], 'managed private content');
+    expect(row?['sync_state'], 0);
+
+    await db.close();
+    await deleteTestDatabase(dbName);
   });
 }

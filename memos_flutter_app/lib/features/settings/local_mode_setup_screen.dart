@@ -1,28 +1,14 @@
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
-import 'package:saf_util/saf_util.dart';
 
+import '../../core/app_localization.dart';
 import '../../data/logs/log_manager.dart';
 import '../../i18n/strings.g.dart';
 
 class LocalModeSetupResult {
-  const LocalModeSetupResult({
-    required this.name,
-    required this.treeUri,
-    required this.rootPath,
-    required this.encryptionEnabled,
-    required this.password,
-  });
+  const LocalModeSetupResult({required this.name});
 
   final String name;
-  final String? treeUri;
-  final String? rootPath;
-  final bool encryptionEnabled;
-  final String? password;
 }
 
 class LocalModeSetupScreen extends StatefulWidget {
@@ -68,24 +54,7 @@ class LocalModeSetupScreen extends StatefulWidget {
 
 class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
   late final TextEditingController _nameController;
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _confirmPasswordController =
-      TextEditingController();
-
-  String? _treeUri;
-  String? _rootPath;
-  bool _encryptionEnabled = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
   bool _submitting = false;
-
-  String _locationDebugKey(_PickedLocation? picked) {
-    final treeUri = (picked?.treeUri ?? '').trim();
-    final rootPath = (picked?.rootPath ?? '').trim();
-    if (treeUri.isNotEmpty) return 'tree:$treeUri';
-    if (rootPath.isNotEmpty) return 'path:$rootPath';
-    return '';
-  }
 
   void _logFlow(
     String message, {
@@ -122,84 +91,7 @@ class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickLocation() async {
-    _logFlow(
-      'pick_location_start',
-      context: {'platform': Platform.operatingSystem},
-    );
-    try {
-      final picked = await _pickLocalLibraryLocation();
-      _logFlow(
-        'pick_location_result',
-        context: <String, Object?>{
-          'picked': picked != null,
-          'hasTreeUri': (picked?.treeUri ?? '').trim().isNotEmpty,
-          'hasRootPath': (picked?.rootPath ?? '').trim().isNotEmpty,
-          'locationKey': _locationDebugKey(picked),
-        },
-      );
-      if (picked == null || !mounted) return;
-      setState(() {
-        _treeUri = picked.treeUri;
-        _rootPath = picked.rootPath;
-        if (_nameController.text.trim().isEmpty) {
-          _nameController.text = picked.defaultName;
-        }
-      });
-    } catch (error, stackTrace) {
-      _logFlow(
-        'pick_location_failed',
-        warn: true,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      if (!mounted) return;
-      _showMessage('Failed to select folder. Please try again.');
-    }
-  }
-
-  Future<_PickedLocation?> _pickLocalLibraryLocation() async {
-    if (Platform.isAndroid) {
-      final doc = await SafUtil().pickDirectory(
-        writePermission: true,
-        persistablePermission: true,
-      );
-      if (doc == null) return null;
-      final name = doc.name.trim().isEmpty ? context.t.strings.legacy.msg_local_library : doc.name.trim();
-      return _PickedLocation(
-        treeUri: doc.uri,
-        rootPath: null,
-        defaultName: name,
-      );
-    }
-
-    final path = await FilePicker.platform.getDirectoryPath();
-    if (path == null || path.trim().isEmpty) return null;
-    final trimmed = path.trim();
-    final name = p.basename(trimmed);
-    return _PickedLocation(
-      treeUri: null,
-      rootPath: trimmed,
-      defaultName: name.isEmpty ? context.t.strings.legacy.msg_local_library : name,
-    );
-  }
-
-  String _locationLabel() {
-    final rootPath = (_rootPath ?? '').trim();
-    if (rootPath.isNotEmpty) return rootPath;
-    final treeUri = (_treeUri ?? '').trim();
-    if (treeUri.isNotEmpty) return treeUri;
-    return context.t.strings.legacy.msg_not_selected;
-  }
-
-  bool _hasLocation() {
-    return (_treeUri ?? '').trim().isNotEmpty ||
-        (_rootPath ?? '').trim().isNotEmpty;
   }
 
   void _showMessage(String message) {
@@ -212,62 +104,18 @@ class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
     if (_submitting) return;
 
     final name = _nameController.text.trim();
-    _logFlow(
-      'submit_start',
-      context: <String, Object?>{
-        'hasLocation': _hasLocation(),
-        'nameLength': name.length,
-        'encryptionEnabled': _encryptionEnabled,
-        'hasTreeUri': (_treeUri ?? '').trim().isNotEmpty,
-        'hasRootPath': (_rootPath ?? '').trim().isNotEmpty,
-      },
-    );
-    if (!_hasLocation()) {
-      _logFlow('submit_blocked_missing_location', warn: true);
-      _showMessage(context.t.strings.legacy.msg_select_file_save_location);
-      return;
-    }
     if (name.isEmpty) {
       _logFlow('submit_blocked_empty_name', warn: true);
       _showMessage(context.t.strings.legacy.msg_enter_repository_name_prompt);
       return;
     }
 
-    String? password;
-    if (_encryptionEnabled) {
-      final pwd = _passwordController.text;
-      final confirm = _confirmPasswordController.text;
-      if (pwd.isEmpty || confirm.isEmpty) {
-        _logFlow('submit_blocked_empty_password', warn: true);
-        _showMessage(context.t.strings.legacy.msg_enter_and_confirm_password);
-        return;
-      }
-      if (pwd != confirm) {
-        _logFlow('submit_blocked_password_mismatch', warn: true);
-        _showMessage(context.t.strings.legacy.msg_passwords_not_match);
-        return;
-      }
-      password = pwd;
-    }
-
     setState(() => _submitting = true);
     _logFlow(
       'submit_success_pop',
-      context: <String, Object?>{
-        'nameLength': name.length,
-        'hasTreeUri': (_treeUri ?? '').trim().isNotEmpty,
-        'hasRootPath': (_rootPath ?? '').trim().isNotEmpty,
-      },
+      context: <String, Object?>{'nameLength': name.length},
     );
-    Navigator.of(context).pop(
-      LocalModeSetupResult(
-        name: name,
-        treeUri: (_treeUri ?? '').trim().isEmpty ? null : _treeUri!.trim(),
-        rootPath: (_rootPath ?? '').trim().isEmpty ? null : _rootPath!.trim(),
-        encryptionEnabled: _encryptionEnabled,
-        password: password,
-      ),
-    );
+    Navigator.of(context).pop(LocalModeSetupResult(name: name));
   }
 
   @override
@@ -293,29 +141,15 @@ class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    context.t.strings.legacy.msg_file_save_location,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SelectableText(
-                    _locationLabel(),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton.icon(
-                    onPressed: _pickLocation,
-                    icon: const Icon(Icons.folder_open),
-                    label: Text(context.t.strings.legacy.msg_select_location),
-                  ),
-                ],
+              child: Text(
+                context.tr(
+                  zh: '\u672c\u5730\u6a21\u5f0f\u6570\u636e\u5c06\u9ed8\u8ba4\u4fdd\u5b58\u5728\u5e94\u7528\u5185\u90e8\u6587\u4ef6\u5939\u3002',
+                  en: 'Local mode data is stored in the app\'s private files by default.',
+                ),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  height: 1.4,
+                ),
               ),
             ),
           ),
@@ -335,74 +169,16 @@ class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
                   const SizedBox(height: 8),
                   TextField(
                     controller: _nameController,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(hintText: context.t.strings.legacy.msg_enter_repository_name_hint),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              child: Column(
-                children: [
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(context.t.strings.legacy.msg_encrypt_save_placeholder),
-                    subtitle: Text(context.t.strings.legacy.msg_password_feature_placeholder),
-                    value: _encryptionEnabled,
-                    onChanged: (value) {
-                      setState(() => _encryptionEnabled = value);
-                    },
-                  ),
-                  if (_encryptionEnabled) ...[
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _passwordController,
-                      obscureText: _obscurePassword,
-                      textInputAction: TextInputAction.next,
-                      decoration: InputDecoration(
-                        labelText: context.t.strings.legacy.msg_password_2,
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            setState(() {
-                              _obscurePassword = !_obscurePassword;
-                            });
-                          },
-                          icon: Icon(
-                            _obscurePassword
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
-                          ),
-                        ),
-                      ),
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _submit(),
+                    decoration: InputDecoration(
+                      hintText: context
+                          .t
+                          .strings
+                          .legacy
+                          .msg_enter_repository_name_hint,
                     ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _confirmPasswordController,
-                      obscureText: _obscureConfirmPassword,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => _submit(),
-                      decoration: InputDecoration(
-                        labelText: context.t.strings.legacy.msg_confirm_password_2,
-                        suffixIcon: IconButton(
-                          onPressed: () {
-                            setState(() {
-                              _obscureConfirmPassword =
-                                  !_obscureConfirmPassword;
-                            });
-                          },
-                          icon: Icon(
-                            _obscureConfirmPassword
-                                ? Icons.visibility_off_outlined
-                                : Icons.visibility_outlined,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -429,16 +205,4 @@ class _LocalModeSetupScreenState extends State<LocalModeSetupScreen> {
       ),
     );
   }
-}
-
-class _PickedLocation {
-  const _PickedLocation({
-    required this.treeUri,
-    required this.rootPath,
-    required this.defaultName,
-  });
-
-  final String? treeUri;
-  final String? rootPath;
-  final String defaultName;
 }

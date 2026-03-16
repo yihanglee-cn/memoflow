@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../application/sync/local_library_import_migration_service.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/models/local_library.dart';
 import '../../data/repositories/local_library_repository.dart';
@@ -35,6 +36,7 @@ class LocalLibrariesController extends StateNotifier<List<LocalLibrary>> {
   final LocalLibraryRepository _repo;
   final Ref _ref;
   final void Function()? _onLoaded;
+  final _migrationService = LocalLibraryImportMigrationService();
   Future<void> _writeChain = Future<void>.value();
 
   Future<void> reloadFromStorage() async {
@@ -80,7 +82,11 @@ class LocalLibrariesController extends StateNotifier<List<LocalLibrary>> {
       _onLoaded?.call();
       return;
     }
-    state = result.data!.libraries;
+    final migratedLibraries = await _migrateLibrariesIfNeeded(
+      result.data!.libraries,
+    );
+    if (!mounted) return;
+    state = migratedLibraries;
     if (kDebugMode) {
       LogManager.instance.info(
         'LocalLibrary: load_complete',
@@ -142,6 +148,36 @@ class LocalLibrariesController extends StateNotifier<List<LocalLibrary>> {
   Future<void> _persistAndWait(List<LocalLibrary> libraries) {
     _persist(libraries);
     return _writeChain;
+  }
+
+  Future<List<LocalLibrary>> _migrateLibrariesIfNeeded(
+    List<LocalLibrary> libraries,
+  ) async {
+    var changed = false;
+    final migrated = <LocalLibrary>[];
+    for (final library in libraries) {
+      try {
+        final next = await _migrationService.migrateIfNeeded(library);
+        if (next.storageKind != library.storageKind ||
+            next.rootPath != library.rootPath ||
+            next.treeUri != library.treeUri) {
+          changed = true;
+        }
+        migrated.add(next);
+      } catch (error, stackTrace) {
+        migrated.add(library);
+        LogManager.instance.warn(
+          'LocalLibrary: migration_failed',
+          context: <String, Object?>{'key': library.key},
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    if (changed) {
+      await _repo.write(LocalLibraryState(libraries: migrated));
+    }
+    return migrated;
   }
 }
 
