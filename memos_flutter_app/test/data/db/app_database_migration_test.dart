@@ -97,4 +97,95 @@ CREATE TABLE IF NOT EXISTS memos (
       expect(includePublicColumns, hasLength(1));
     },
   );
+
+  test(
+    'open recovers when legacy memos_fts delete fails with missing module error',
+    () async {
+      final dbName = uniqueDbName('app_database_broken_fts_recovery');
+
+      addTearDown(() async {
+        await AppDatabase.deleteDatabaseFile(dbName: dbName);
+      });
+
+      final dbDir = await resolveDatabasesDirectoryPath();
+      final path = p.join(dbDir, dbName);
+
+      final legacyDb = await openDatabase(
+        path,
+        version: 13,
+        onCreate: (db, version) async {
+          await db.execute('''
+CREATE TABLE IF NOT EXISTS memos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'NORMAL',
+  create_time INTEGER NOT NULL,
+  update_time INTEGER NOT NULL,
+  tags TEXT NOT NULL DEFAULT '',
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  location_placeholder TEXT,
+  location_lat REAL,
+  location_lng REAL,
+  relation_count INTEGER NOT NULL DEFAULT 0,
+  sync_state INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+);
+''');
+          await db.insert('memos', <String, Object?>{
+            'uid': 'memo-broken-fts',
+            'content': 'legacy memo content',
+            'visibility': 'PRIVATE',
+            'pinned': 0,
+            'state': 'NORMAL',
+            'create_time': 1735689600,
+            'update_time': 1735689600,
+            'tags': 'legacy broken',
+            'attachments_json': '[]',
+            'relation_count': 0,
+            'sync_state': 0,
+          });
+          await db.execute('''
+CREATE TABLE IF NOT EXISTS memos_fts (
+  content TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT ''
+);
+''');
+          await db.execute('''
+CREATE TRIGGER broken_memos_fts_delete
+BEFORE DELETE ON memos_fts
+BEGIN
+  SELECT RAISE(ABORT, 'no such module: fts5');
+END;
+''');
+        },
+      );
+      await legacyDb.close();
+
+      final appDb = AppDatabase(dbName: dbName);
+      addTearDown(() async {
+        await appDb.close();
+      });
+
+      final upgradedDb = await appDb.db;
+
+      final memos = await upgradedDb.query(
+        'memos',
+        columns: const <String>['uid', 'content'],
+        where: 'uid = ?',
+        whereArgs: const <Object?>['memo-broken-fts'],
+      );
+      expect(memos, hasLength(1));
+      expect(memos.single['content'], 'legacy memo content');
+
+      final ftsRows = await upgradedDb.rawQuery(
+        'SELECT rowid, content, tags FROM memos_fts ORDER BY rowid ASC;',
+      );
+      expect(ftsRows, hasLength(1));
+      expect(ftsRows.single['content'], 'legacy memo content');
+      expect(ftsRows.single['tags'], 'legacy broken');
+    },
+  );
 }

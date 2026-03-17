@@ -457,10 +457,7 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
     return counts;
   }
 
-  Future<_ResolvedTag?> resolveTagPath(
-    DatabaseExecutor txn,
-    String rawTag,
-  ) {
+  Future<_ResolvedTag?> resolveTagPath(DatabaseExecutor txn, String rawTag) {
     return _resolveTagPath(txn, rawTag);
   }
 
@@ -556,10 +553,11 @@ WHERE mt.memo_uid = ?;
     );
     final rowId = _readInt(rows.firstOrNull?['id']) ?? 0;
     if (rowId > 0) {
-      await txn.insert(
-        'memos_fts',
-        {'rowid': rowId, 'content': before.content, 'tags': tagsText},
-        conflictAlgorithm: ConflictAlgorithm.replace,
+      await _replaceMemoFtsEntry(
+        txn,
+        rowId: rowId,
+        content: before.content,
+        tags: tagsText,
       );
     }
     final after = _MemoSnapshot(
@@ -921,11 +919,12 @@ WHERE id = 1;
         if (rowId <= 0) return;
       }
 
-      await txn.insert('memos_fts', {
-        'rowid': rowId,
-        'content': content,
-        'tags': tagsText,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await _replaceMemoFtsEntry(
+        txn,
+        rowId: rowId,
+        content: content,
+        tags: tagsText,
+      );
 
       await updateMemoTagsMapping(
         txn,
@@ -1726,7 +1725,7 @@ WHERE id = ?
         whereArgs: [uid],
       );
       if (rowId != null) {
-        await txn.delete('memos_fts', where: 'rowid = ?', whereArgs: [rowId]);
+        await _deleteMemoFtsEntry(txn, rowId: rowId);
       }
       await _applyMemoCacheDelta(txn, before: before, after: null);
     });
@@ -2154,8 +2153,10 @@ CREATE TABLE IF NOT EXISTS memo_tags (
       }
     }
 
-    final parts =
-        normalized.split('/').where((p) => p.trim().isNotEmpty).toList();
+    final parts = normalized
+        .split('/')
+        .where((p) => p.trim().isNotEmpty)
+        .toList();
     if (parts.isEmpty) return null;
     int? parentId;
     var path = '';
@@ -2180,19 +2181,15 @@ CREATE TABLE IF NOT EXISTS memo_tags (
       }
 
       path = path.isEmpty ? name : '$path/$name';
-      final insertedId = await txn.insert(
-        'tags',
-        {
-          'name': name,
-          'parent_id': parentId,
-          'path': path,
-          'pinned': 0,
-          'color_hex': null,
-          'create_time': now,
-          'update_time': now,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      final insertedId = await txn.insert('tags', {
+        'name': name,
+        'parent_id': parentId,
+        'path': path,
+        'pinned': 0,
+        'color_hex': null,
+        'create_time': now,
+        'update_time': now,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
       if (insertedId == 0) {
         final existing = await txn.query(
           'tags',
@@ -2234,11 +2231,10 @@ CREATE TABLE IF NOT EXISTS memo_tags (
     final seen = <int>{};
     for (final id in tagIds) {
       if (id <= 0 || !seen.add(id)) continue;
-      batch.insert(
-        'memo_tags',
-        {'memo_uid': normalizedUid, 'tag_id': id},
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
+      batch.insert('memo_tags', {
+        'memo_uid': normalizedUid,
+        'tag_id': id,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
     }
     await batch.commit(noResult: true);
   }
@@ -2268,8 +2264,7 @@ CREATE TABLE IF NOT EXISTS memo_tags (
             if (entry == null) continue;
             resolved[entry.path] = entry.id;
           }
-          final canonicalTags =
-              resolved.keys.toList(growable: false)..sort();
+          final canonicalTags = resolved.keys.toList(growable: false)..sort();
           await _updateMemoTagsMapping(
             txn,
             uid,
@@ -2286,14 +2281,11 @@ CREATE TABLE IF NOT EXISTS memo_tags (
           }
           final rowId = _readInt(row['id']) ?? 0;
           if (rowId > 0) {
-            await txn.insert(
-              'memos_fts',
-              {
-                'rowid': rowId,
-                'content': (row['content'] as String?) ?? '',
-                'tags': updatedTagsText,
-              },
-              conflictAlgorithm: ConflictAlgorithm.replace,
+            await _replaceMemoFtsEntry(
+              txn,
+              rowId: rowId,
+              content: (row['content'] as String?) ?? '',
+              tags: updatedTagsText,
             );
           }
         }
@@ -2459,12 +2451,25 @@ CREATE TABLE IF NOT EXISTS tag_stats_cache (
 
     // Prefer FTS5; fallback to FTS4; if both are unavailable, use a plain table
     // so writes keep working and search can gracefully fallback to LIKE.
-    await _ensureFtsTable(db);
+    try {
+      await _ensureFtsTable(db);
+    } on DatabaseException catch (e) {
+      if (await _recoverBrokenFtsModule(db, e)) {
+        return;
+      }
+      rethrow;
+    }
 
     if (rebuild) {
-      await _backfillFts(db);
+      try {
+        await _backfillFts(db);
+      } on DatabaseException catch (e) {
+        if (await _recoverBrokenFtsModule(db, e)) {
+          return;
+        }
+        rethrow;
+      }
     } else {
-      // Best-effort self-heal: if FTS is empty but memos exist, backfill.
       try {
         final counts = await db.rawQuery('''
 SELECT
@@ -2476,8 +2481,79 @@ SELECT
         if (memosCount > 0 && ftsCount == 0) {
           await _backfillFts(db);
         }
+      } on DatabaseException catch (e) {
+        if (await _recoverBrokenFtsModule(db, e)) {
+          return;
+        }
       } catch (_) {}
     }
+  }
+
+  static bool _isMissingFtsModuleError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('no such module') &&
+        (message.contains('fts5') || message.contains('fts4'));
+  }
+
+  static Future<bool> _recoverBrokenFtsModule(
+    Database db,
+    DatabaseException error,
+  ) async {
+    if (!_isMissingFtsModuleError(error)) {
+      return false;
+    }
+
+    await _resetBrokenFtsSchema(db);
+
+    try {
+      await _ensureFtsTable(db);
+      await _backfillFts(db);
+      return true;
+    } on DatabaseException catch (rebuildError) {
+      if (_isMissingFtsModuleError(rebuildError)) {
+        await _forceDropBrokenFtsSchema(db);
+        try {
+          await _ensureFtsTable(db);
+          await _backfillFts(db);
+          return true;
+        } on DatabaseException catch (forcedRebuildError) {
+          if (_isMissingFtsModuleError(forcedRebuildError)) {
+            return true;
+          }
+          rethrow;
+        }
+      }
+      rethrow;
+    }
+  }
+
+  static Future<void> _resetBrokenFtsSchema(Database db) async {
+    try {
+      await db.execute('DROP TABLE IF EXISTS memos_fts;');
+    } on DatabaseException catch (dropError) {
+      if (!_isMissingFtsModuleError(dropError)) {
+        rethrow;
+      }
+      await _forceDropBrokenFtsSchema(db);
+    }
+  }
+
+  static Future<void> _forceDropBrokenFtsSchema(Database db) async {
+    final schemaVersionRows = await db.rawQuery('PRAGMA schema_version;');
+    final schemaVersion =
+        (schemaVersionRows.firstOrNull?['schema_version'] as int?) ?? 0;
+
+    await db.rawQuery('PRAGMA writable_schema = 1;');
+    try {
+      await db.rawDelete(
+        "DELETE FROM sqlite_master WHERE name = ? OR name LIKE ?;",
+        ['memos_fts', 'memos_fts_%'],
+      );
+    } finally {
+      await db.rawQuery('PRAGMA writable_schema = 0;');
+    }
+
+    await db.rawQuery('PRAGMA schema_version = ${schemaVersion + 1};');
   }
 
   static Future<void> _ensureFtsTable(Database db) async {
@@ -2519,11 +2595,50 @@ CREATE TABLE IF NOT EXISTS memos_fts (
     for (final row in rows) {
       final id = row['id'] as int?;
       if (id == null) continue;
-      await db.insert('memos_fts', {
-        'rowid': id,
-        'content': (row['content'] as String?) ?? '',
-        'tags': (row['tags'] as String?) ?? '',
+      await _replaceMemoFtsEntry(
+        db,
+        rowId: id,
+        content: (row['content'] as String?) ?? '',
+        tags: (row['tags'] as String?) ?? '',
+      );
+    }
+  }
+
+  static Future<void> _replaceMemoFtsEntry(
+    DatabaseExecutor executor, {
+    required int rowId,
+    required String content,
+    required String tags,
+  }) async {
+    try {
+      await executor.insert('memos_fts', {
+        'rowid': rowId,
+        'content': content,
+        'tags': tags,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
+    } on DatabaseException catch (e) {
+      if (_isMissingFtsModuleError(e)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  static Future<void> _deleteMemoFtsEntry(
+    DatabaseExecutor executor, {
+    required int rowId,
+  }) async {
+    try {
+      await executor.delete(
+        'memos_fts',
+        where: 'rowid = ?',
+        whereArgs: [rowId],
+      );
+    } on DatabaseException catch (e) {
+      if (_isMissingFtsModuleError(e)) {
+        return;
+      }
+      rethrow;
     }
   }
 
