@@ -11,16 +11,19 @@ import '../../core/memoflow_palette.dart';
 import '../../core/url.dart';
 import '../../data/logs/debug_log_store.dart';
 import '../../data/models/user.dart';
+import '../../data/updates/update_config.dart';
 import '../../state/system/debug_log_provider.dart';
 import '../../state/system/debug_screenshot_mode_provider.dart';
 import '../../state/system/login_draft_provider.dart';
 import '../../state/memos/debug_tools_provider.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
+import '../../state/system/update_config_provider.dart';
 import '../auth/login_screen.dart';
 import 'debug_logs_screen.dart';
 import 'system_logs_screen.dart';
 import '../onboarding/language_selection_screen.dart';
+import '../updates/notice_dialog.dart';
 import '../../i18n/strings.g.dart';
 
 class DebugToolsScreen extends ConsumerStatefulWidget {
@@ -189,14 +192,16 @@ class _ActionRow extends StatelessWidget {
     required this.label,
     required this.textMain,
     required this.textMuted,
-    required this.onTap,
+    this.onTap,
+    this.trailing,
   });
 
   final IconData icon;
   final String label;
   final Color textMain;
   final Color textMuted;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -219,7 +224,7 @@ class _ActionRow extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(Icons.chevron_right, size: 20, color: textMuted),
+              trailing ?? Icon(Icons.chevron_right, size: 20, color: textMuted),
             ],
           ),
         ),
@@ -419,6 +424,7 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
 
   var _loginBusy = false;
   var _apiBusy = false;
+  var _noticePreviewBusy = false;
   var _obscurePassword = true;
   var _obscureToken = true;
   String? _activeToken;
@@ -519,6 +525,42 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _previewNoticeDialog() async {
+    if (_noticePreviewBusy) return;
+    setState(() => _noticePreviewBusy = true);
+    try {
+      final config = await ref.read(updateConfigServiceProvider).fetchLatest();
+      if (!mounted) return;
+      if (config == null) {
+        _showMessage(
+          context.t.strings.legacy.msg_failed_load_announcement_config,
+        );
+        return;
+      }
+
+      final UpdateNotice? notice = config.notice;
+      if (notice == null || !notice.hasContents) {
+        _showMessage(context.t.strings.legacy.msg_no_data);
+        return;
+      }
+
+      _logAction(
+        'Preview notice dialog',
+        detail: config.noticeEnabled ? 'enabled' : 'disabled',
+      );
+      await NoticeDialog.show(context, notice: notice);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage(
+        context.t.strings.legacy.msg_failed_load_announcement_config,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _noticePreviewBusy = false);
+      }
+    }
   }
 
   Map<String, String> _flattenHeaders(Headers headers) {
@@ -1053,7 +1095,8 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
                     _SwitchRow(
                       icon: Icons.screenshot_monitor_outlined,
                       label: context.t.strings.legacy.msg_screenshot_mode,
-                      detail: context.t.strings.legacy.msg_screenshot_mode_detail,
+                      detail:
+                          context.t.strings.legacy.msg_screenshot_mode_detail,
                       value: screenshotMode,
                       textMain: textMain,
                       textMuted: textMuted,
@@ -1081,6 +1124,36 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
                         textMuted: textMuted,
                       );
                     },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _SectionTitle(
+                text: context.t.strings.legacy.msg_notice,
+                color: textMuted,
+              ),
+              const SizedBox(height: 10),
+              _CardGroup(
+                card: card,
+                divider: divider,
+                children: [
+                  _ActionRow(
+                    icon: Icons.campaign_outlined,
+                    label: context.t.strings.legacy.msg_preview_2,
+                    textMain: textMain,
+                    textMuted: textMuted,
+                    onTap: _noticePreviewBusy ? null : _previewNoticeDialog,
+                    trailing: _noticePreviewBusy
+                        ? SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                textMuted,
+                              ),
+                            ),
+                          )
+                        : Icon(Icons.chevron_right, size: 20, color: textMuted),
                   ),
                 ],
               ),

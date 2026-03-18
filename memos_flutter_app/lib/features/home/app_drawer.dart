@@ -196,7 +196,7 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
     final showScanAction =
         kIsWeb || defaultTargetPlatform != TargetPlatform.windows;
     final versionDate = DateFormat('yyyy.MM.dd').format(DateTime.now());
-    const versionLabel = 'V1.0.17';
+    const versionLabel = 'V1.0.18';
 
     final content = SafeArea(
       child: Column(
