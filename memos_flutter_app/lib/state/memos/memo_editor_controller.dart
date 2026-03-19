@@ -16,6 +16,7 @@ class MemoEditorPendingAttachment {
     required this.filename,
     required this.mimeType,
     required this.size,
+    this.skipCompression = false,
   });
 
   final String uid;
@@ -23,6 +24,7 @@ class MemoEditorPendingAttachment {
   final String filename;
   final String mimeType;
   final int size;
+  final bool skipCompression;
 }
 
 class MemoEditorController {
@@ -145,6 +147,7 @@ class MemoEditorController {
           'file_path': attachment.filePath,
           'filename': attachment.filename,
           'mime_type': attachment.mimeType,
+          'skip_compression': attachment.skipCompression,
         },
       );
     }

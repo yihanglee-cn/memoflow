@@ -11,6 +11,7 @@ class NoteInputPendingAttachment {
     required this.filename,
     required this.mimeType,
     required this.size,
+    this.skipCompression = false,
   });
 
   final String uid;
@@ -18,6 +19,7 @@ class NoteInputPendingAttachment {
   final String filename;
   final String mimeType;
   final int size;
+  final bool skipCompression;
 }
 
 class NoteInputController {
@@ -78,6 +80,7 @@ class NoteInputController {
           'filename': attachment.filename,
           'mime_type': attachment.mimeType,
           'file_size': attachment.size,
+          'skip_compression': attachment.skipCompression,
         },
       );
     }

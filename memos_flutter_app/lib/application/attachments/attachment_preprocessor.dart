@@ -24,11 +24,13 @@ class AttachmentPreprocessRequest {
     required this.filePath,
     required this.filename,
     required this.mimeType,
+    this.skipCompression = false,
   });
 
   final String filePath;
   final String filename;
   final String mimeType;
+  final bool skipCompression;
 }
 
 class AttachmentPreprocessResult {
@@ -113,6 +115,7 @@ class DefaultAttachmentPreprocessor implements AttachmentPreprocessor {
       filePath: normalizedPath,
       filename: filename,
       mimeType: mimeType,
+      skipCompression: request.skipCompression,
     );
     if (normalizedPath.isEmpty) {
       throw const FormatException('file_path missing');
@@ -124,7 +127,7 @@ class DefaultAttachmentPreprocessor implements AttachmentPreprocessor {
 
     final size = await file.length();
     final isImage = _isImageMimeType(mimeType);
-    if (!settings.enabled || !isImage) {
+    if (!isImage || request.skipCompression || !settings.enabled) {
       final hash = isImage ? await _computeSha256(normalizedPath) : null;
       final dims = isImage ? await _readImageDimensions(normalizedPath) : null;
       return AttachmentPreprocessResult(

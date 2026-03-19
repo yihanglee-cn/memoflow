@@ -26,6 +26,7 @@ import '../../data/models/memo_template_settings.dart';
 import '../../data/models/user_setting.dart';
 import '../../state/settings/location_settings_provider.dart';
 import '../../state/memos/memos_providers.dart';
+import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/note_draft_provider.dart';
 import '../../state/settings/preferences_provider.dart';
@@ -1030,7 +1031,14 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   Future<void> _pickGalleryAttachments() async {
     if (_busy) return;
     try {
-      final result = await pickGalleryAttachments(context);
+      final compressionSettings = await ref
+          .read(imageCompressionSettingsRepositoryProvider)
+          .read();
+      if (!mounted) return;
+      final result = await pickGalleryAttachments(
+        context,
+        enableOriginalToggle: compressionSettings.enabled,
+      );
       if (!mounted || result == null) return;
       if (result.attachments.isEmpty) {
         final msg = result.skippedCount > 0
@@ -1050,6 +1058,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                   filename: attachment.filename,
                   mimeType: attachment.mimeType,
                   size: attachment.size,
+                  skipCompression: attachment.skipCompression,
                 ),
               )
               .toList(growable: false),
@@ -1401,6 +1410,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     final uid = id.substring('pending:'.length);
     final index = _pendingAttachments.indexWhere((a) => a.uid == uid);
     if (index < 0) return;
+    final existing = _pendingAttachments[index];
     setState(() {
       _pendingAttachments[index] = _PendingAttachment(
         uid: uid,
@@ -1408,6 +1418,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         filename: result.filename,
         mimeType: result.mimeType,
         size: result.size,
+        skipCompression: existing.skipCompression,
       );
     });
   }
@@ -1530,6 +1541,12 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
               : null,
           child: tile,
         ),
+        if (attachment.skipCompression && isImage)
+          Positioned(
+            left: 4,
+            bottom: 4,
+            child: IgnorePointer(child: _buildOriginalBadge()),
+          ),
         Positioned(
           top: 4,
           right: 4,
@@ -1570,6 +1587,25 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                   : Icons.insert_drive_file_outlined),
         size: 22,
         color: iconColor,
+      ),
+    );
+  }
+
+  Widget _buildOriginalBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        context.t.strings.legacy.msg_original_image,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          height: 1,
+        ),
       ),
     );
   }
@@ -1675,6 +1711,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
               filename: attachment.filename,
               mimeType: attachment.mimeType,
               size: attachment.size,
+              skipCompression: attachment.skipCompression,
             ),
           )
           .toList(growable: false);
@@ -2125,6 +2162,7 @@ class _PendingAttachment {
     required this.filename,
     required this.mimeType,
     required this.size,
+    this.skipCompression = false,
   });
 
   final String uid;
@@ -2132,6 +2170,7 @@ class _PendingAttachment {
   final String filename;
   final String mimeType;
   final int size;
+  final bool skipCompression;
 }
 
 class _LinkedMemo {

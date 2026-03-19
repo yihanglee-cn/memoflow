@@ -84,4 +84,56 @@ void main() {
     expect(payload['create_time'], now.millisecondsSinceEpoch ~/ 1000);
     expect(payload['display_time'], now.millisecondsSinceEpoch ~/ 1000);
   });
+
+  test(
+    'NoteInputController enqueues upload_attachment with skip_compression',
+    () async {
+      final dbName = uniqueDbName('note_input_skip_compression');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [databaseProvider.overrideWithValue(db)],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: 'offline memo',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: '/tmp/sample.png',
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: 42,
+            skipCompression: true,
+          ),
+        ],
+      );
+
+      final outbox = await db.listOutboxPendingByType('upload_attachment');
+      expect(outbox, hasLength(1));
+
+      final payload =
+          jsonDecode(outbox.single['payload'] as String)
+              as Map<String, dynamic>;
+      expect(payload['uid'], 'att-1');
+      expect(payload['memo_uid'], 'memo-1');
+      expect(payload['skip_compression'], isTrue);
+      expect(payload['file_size'], 42);
+    },
+  );
 }

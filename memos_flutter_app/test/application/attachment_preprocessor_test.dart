@@ -360,5 +360,88 @@ void main() {
       expect(result.engine, 'dart');
       expect(result.fallback, isFalse);
     });
+
+    test(
+      'skipCompression keeps original image while preserving metadata',
+      () async {
+        final file = await _writeTestImage(
+          support,
+          name: 'sample.png',
+          format: ImageCompressionFormat.auto,
+        );
+        final preprocessor = DefaultAttachmentPreprocessor(
+          loadSettings: () async => ImageCompressionSettings(
+            schemaVersion: 1,
+            enabled: true,
+            maxSide: 64,
+            quality: 80,
+            format: ImageCompressionFormat.jpeg,
+          ),
+          windowsPreprocessor: _CopyingPreprocessor(name: 'windows'),
+          flutterPreprocessor: _CopyingPreprocessor(name: 'flutter'),
+          dartPreprocessor: _CopyingPreprocessor(name: 'dart'),
+        );
+
+        final expectedHash = await _sha256File(file.path);
+        final result = await preprocessor.preprocess(
+          AttachmentPreprocessRequest(
+            filePath: file.path,
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            skipCompression: true,
+          ),
+        );
+
+        expect(result.filePath, file.path);
+        expect(result.filename, 'sample.png');
+        expect(result.mimeType, 'image/png');
+        expect(result.size, await file.length());
+        expect(result.width, 16);
+        expect(result.height, 16);
+        expect(result.hash, expectedHash);
+        expect(result.engine, isNull);
+        expect(result.fallback, isFalse);
+        expect(result.fromCache, isFalse);
+      },
+    );
+
+    test(
+      'skipCompression on non-image keeps existing passthrough behavior',
+      () async {
+        final dir = await support.createTempDir('attachment');
+        final file = File('${dir.path}${Platform.pathSeparator}sample.txt');
+        await file.writeAsString('hello world', flush: true);
+        final preprocessor = DefaultAttachmentPreprocessor(
+          loadSettings: () async => ImageCompressionSettings(
+            schemaVersion: 1,
+            enabled: true,
+            maxSide: 64,
+            quality: 80,
+            format: ImageCompressionFormat.jpeg,
+          ),
+          windowsPreprocessor: _CopyingPreprocessor(name: 'windows'),
+          flutterPreprocessor: _CopyingPreprocessor(name: 'flutter'),
+          dartPreprocessor: _CopyingPreprocessor(name: 'dart'),
+        );
+
+        final result = await preprocessor.preprocess(
+          AttachmentPreprocessRequest(
+            filePath: file.path,
+            filename: 'sample.txt',
+            mimeType: 'text/plain',
+            skipCompression: true,
+          ),
+        );
+
+        expect(result.filePath, file.path);
+        expect(result.filename, 'sample.txt');
+        expect(result.mimeType, 'text/plain');
+        expect(result.size, await file.length());
+        expect(result.width, isNull);
+        expect(result.height, isNull);
+        expect(result.hash, isNull);
+        expect(result.engine, isNull);
+      },
+    );
   });
 }
