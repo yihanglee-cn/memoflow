@@ -61,7 +61,7 @@ class QuickInputService {
     return 0;
   }
 
-  Future<void> submitDesktopQuickInput(
+  Future<void> submitQuickInput(
     WidgetRef ref,
     String rawContent, {
     List<Map<String, dynamic>> attachmentPayloads =
@@ -155,6 +155,23 @@ class QuickInputService {
           reason: SyncRequestReason.manual,
         ),
       ),
+    );
+  }
+
+  Future<void> submitDesktopQuickInput(
+    WidgetRef ref,
+    String rawContent, {
+    List<Map<String, dynamic>> attachmentPayloads =
+        const <Map<String, dynamic>>[],
+    MemoLocation? location,
+    List<Map<String, dynamic>> relations = const <Map<String, dynamic>>[],
+  }) {
+    return submitQuickInput(
+      ref,
+      rawContent,
+      attachmentPayloads: attachmentPayloads,
+      location: location,
+      relations: relations,
     );
   }
 }

@@ -33,4 +33,14 @@ class AppNavigator {
       MaterialPageRoute<void>(builder: (_) => const DailyReviewScreen()),
     );
   }
+
+  void openDayMemos(DateTime day) {
+    final navigator = _navigator;
+    if (navigator == null) return;
+    navigator.pushNamedAndRemoveUntil(
+      '/memos/day',
+      (route) => false,
+      arguments: day,
+    );
+  }
 }

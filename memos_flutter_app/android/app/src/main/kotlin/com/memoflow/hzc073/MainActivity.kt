@@ -20,8 +20,12 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.memoflow.hzc073.widgets.DailyReviewWidgetProvider
 import com.memoflow.hzc073.widgets.QuickInputWidgetProvider
 import com.memoflow.hzc073.widgets.StatsWidgetProvider
+import com.memoflow.hzc073.widgets.WidgetCalendarDay
+import com.memoflow.hzc073.widgets.WidgetCalendarHeatScore
+import com.memoflow.hzc073.widgets.WidgetCalendarStore
+import com.memoflow.hzc073.widgets.WidgetDailyReviewItem
+import com.memoflow.hzc073.widgets.WidgetDailyReviewStore
 import com.memoflow.hzc073.widgets.WidgetIntents
-import com.memoflow.hzc073.widgets.WidgetStatsStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -32,7 +36,7 @@ class MainActivity : FlutterActivity() {
     private val startupTag = "StartupTiming"
     private val widgetChannelName = "memoflow/widgets"
     private var widgetChannel: MethodChannel? = null
-    private var pendingWidgetAction: String? = null
+    private var pendingWidgetLaunch: Map<String, Any?>? = null
     private val shareChannelName = "memoflow/share"
     private var shareChannel: MethodChannel? = null
     private var pendingSharePayload: SharePayload? = null
@@ -75,7 +79,7 @@ class MainActivity : FlutterActivity() {
         widgetChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "requestPinWidget" -> {
-                    val type = call.argument<String>("type") ?: ""
+                    val type = WidgetIntents.normalizeAction(call.argument<String>("type"))
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
                         result.success(false)
                         return@setMethodCallHandler
@@ -87,9 +91,9 @@ class MainActivity : FlutterActivity() {
                     }
 
                     val provider = when (type) {
-                        "dailyReview" -> ComponentName(this, DailyReviewWidgetProvider::class.java)
-                        "quickInput" -> ComponentName(this, QuickInputWidgetProvider::class.java)
-                        "stats" -> ComponentName(this, StatsWidgetProvider::class.java)
+                        WidgetIntents.ACTION_DAILY_REVIEW -> ComponentName(this, DailyReviewWidgetProvider::class.java)
+                        WidgetIntents.ACTION_QUICK_INPUT -> ComponentName(this, QuickInputWidgetProvider::class.java)
+                        WidgetIntents.ACTION_CALENDAR -> ComponentName(this, StatsWidgetProvider::class.java)
                         else -> null
                     }
 
@@ -101,37 +105,83 @@ class MainActivity : FlutterActivity() {
                     appWidgetManager.requestPinAppWidget(provider, null, null)
                     result.success(true)
                 }
+                "getPendingWidgetLaunch" -> {
+                    val payload = pendingWidgetLaunch
+                    pendingWidgetLaunch = null
+                    result.success(payload)
+                }
                 "getPendingWidgetAction" -> {
-                    val action = pendingWidgetAction
-                    pendingWidgetAction = null
+                    val action = pendingWidgetLaunch?.get("widgetType") as? String
+                    pendingWidgetLaunch = null
                     result.success(action)
                 }
-                "updateStatsWidget" -> {
-                    val total = call.argument<Int>("total") ?: 0
-                    val daysRaw = call.argument<List<Int>>("days")
-                    val days = IntArray(14)
-                    if (daysRaw != null) {
-                        for (i in days.indices) {
-                            if (i >= daysRaw.size) break
-                            days[i] = daysRaw[i]
-                        }
-                    }
-                    val title = call.argument<String>("title") ?: "笔记热力图"
-                    val totalLabel = call.argument<String>("totalLabel") ?: "总记录"
-                    val rangeLabel = call.argument<String>("rangeLabel") ?: "最近14天"
-
-                    WidgetStatsStore.save(
+                "updateDailyReviewWidget" -> {
+                    val title = call.argument<String>("title") ?: "Random Review"
+                    val fallbackBody = call.argument<String>("fallbackBody") ?: "Tap to open daily review"
+                    val items = parseDailyReviewItems(call.argument<List<*>>("items"))
+                    val avatarBytes = call.argument<ByteArray>("avatarBytes")
+                    val clearAvatar = call.argument<Boolean>("clearAvatar") ?: false
+                    val localeTag = call.argument<String>("localeTag")?.trim().orEmpty()
+                    WidgetDailyReviewStore.save(
                         context = this,
-                        totalCount = total,
-                        days = days,
                         title = title,
-                        totalLabel = totalLabel,
-                        rangeLabel = rangeLabel,
+                        fallbackBody = fallbackBody,
+                        items = items,
+                        avatarBytes = avatarBytes,
+                        clearAvatar = clearAvatar,
+                        localeTag = localeTag,
                     )
-
-                    val appWidgetManager = AppWidgetManager.getInstance(this)
-                    val ids = appWidgetManager.getAppWidgetIds(ComponentName(this, StatsWidgetProvider::class.java))
-                    StatsWidgetProvider.updateWidgets(this, appWidgetManager, ids)
+                    DailyReviewWidgetProvider.updateAllWidgets(this)
+                    DailyReviewWidgetProvider.ensureRotation(this)
+                    result.success(true)
+                }
+                "advanceDailyReviewWidget" -> {
+                    WidgetDailyReviewStore.advance(this)
+                    DailyReviewWidgetProvider.updateAllWidgets(this)
+                    DailyReviewWidgetProvider.ensureRotation(this)
+                    result.success(true)
+                }
+                "updateCalendarWidget" -> {
+                    val monthLabel = call.argument<String>("monthLabel") ?: "Calendar Heatmap"
+                    val weekdayLabels = parseStringList(call.argument<List<*>>("weekdayLabels"))
+                    val days = parseCalendarDays(call.argument<List<*>>("days"))
+                    val monthStartEpochSec = call.argument<Number>("monthStartEpochSec")?.toLong()
+                    val localeTag = call.argument<String>("localeTag")?.trim().orEmpty()
+                    val mondayFirst = call.argument<Boolean>("mondayFirst") ?: false
+                    val heatScores = parseCalendarHeatScores(call.argument<List<*>>("heatScores"))
+                    val themeColorArgb =
+                        call.argument<Number>("themeColorArgb")?.toLong()?.toInt()
+                            ?: 0xFFB85C52.toInt()
+                    Log.d(
+                        startupTag,
+                        "updateCalendarWidget monthLabel=$monthLabel weekdays=${weekdayLabels.size} days=${days.size} heatScores=${heatScores.size} monthStartEpochSec=$monthStartEpochSec localeTag=$localeTag mondayFirst=$mondayFirst themeColorArgb=$themeColorArgb",
+                    )
+                    WidgetCalendarStore.save(
+                        context = this,
+                        monthLabel = monthLabel,
+                        weekdayLabels = weekdayLabels,
+                        days = days,
+                        monthStartEpochSec = monthStartEpochSec,
+                        localeTag = localeTag,
+                        mondayFirst = mondayFirst,
+                        heatScores = heatScores,
+                        themeColorArgb = themeColorArgb,
+                    )
+                    StatsWidgetProvider.updateAllWidgets(this)
+                    result.success(true)
+                }
+                "updateStatsWidget" -> {
+                    result.success(false)
+                }
+                "moveTaskToBack" -> {
+                    result.success(moveTaskToBack(true))
+                }
+                "clearHomeWidgets" -> {
+                    WidgetDailyReviewStore.clear(this)
+                    WidgetCalendarStore.clear(this)
+                    DailyReviewWidgetProvider.updateAllWidgets(this)
+                    DailyReviewWidgetProvider.cancelRotation(this)
+                    StatsWidgetProvider.updateAllWidgets(this)
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -197,9 +247,9 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        pendingWidgetAction?.let { action ->
-            pendingWidgetAction = null
-            dispatchWidgetAction(action)
+        pendingWidgetLaunch?.let { payload ->
+            pendingWidgetLaunch = null
+            dispatchWidgetLaunch(payload)
         }
         pendingSharePayload?.let { payload ->
             pendingSharePayload = null
@@ -249,21 +299,32 @@ class MainActivity : FlutterActivity() {
 
     private fun handleWidgetIntent(intent: Intent?) {
         if (intent == null) return
-        val action = intent.getStringExtra(WidgetIntents.EXTRA_WIDGET_ACTION)
-        if (action.isNullOrBlank()) return
+        val action = WidgetIntents.normalizeAction(intent.getStringExtra(WidgetIntents.EXTRA_WIDGET_ACTION)) ?: return
+        val memoUid = intent.getStringExtra(WidgetIntents.EXTRA_MEMO_UID)?.trim()?.takeIf { it.isNotEmpty() }
+        val dayEpochSec = if (intent.hasExtra(WidgetIntents.EXTRA_DAY_EPOCH_SEC)) {
+            intent.getLongExtra(WidgetIntents.EXTRA_DAY_EPOCH_SEC, 0L).takeIf { it > 0L }
+        } else {
+            null
+        }
+        Log.d(
+            startupTag,
+            "handleWidgetIntent action=$action memoUid=$memoUid dayEpochSec=$dayEpochSec rawAction=${intent.action}",
+        )
         intent.removeExtra(WidgetIntents.EXTRA_WIDGET_ACTION)
-        dispatchWidgetAction(action)
+        intent.removeExtra(WidgetIntents.EXTRA_MEMO_UID)
+        intent.removeExtra(WidgetIntents.EXTRA_DAY_EPOCH_SEC)
+        dispatchWidgetLaunch(buildWidgetLaunchPayload(action, memoUid, dayEpochSec))
     }
 
-    private fun dispatchWidgetAction(action: String) {
-        pendingWidgetAction = action
+    private fun dispatchWidgetLaunch(payload: Map<String, Any?>) {
+        pendingWidgetLaunch = payload
         val channel = widgetChannel ?: return
         channel.invokeMethod(
             "openWidget",
-            mapOf("action" to action),
+            payload,
             object : MethodChannel.Result {
                 override fun success(result: Any?) {
-                    pendingWidgetAction = null
+                    pendingWidgetLaunch = null
                 }
 
                 override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
@@ -273,6 +334,96 @@ class MainActivity : FlutterActivity() {
                 }
             },
         )
+    }
+
+    private fun buildWidgetLaunchPayload(
+        action: String,
+        memoUid: String? = null,
+        dayEpochSec: Long? = null,
+    ): Map<String, Any?> {
+        val payload = mutableMapOf<String, Any?>("widgetType" to action)
+        if (!memoUid.isNullOrBlank()) {
+            payload["memoUid"] = memoUid
+        }
+        if (dayEpochSec != null && dayEpochSec > 0L) {
+            payload["dayEpochSec"] = dayEpochSec
+        }
+        return payload
+    }
+
+    private fun parseStringList(raw: List<*>?): List<String> {
+        if (raw == null) return emptyList()
+        return raw.mapNotNull { item -> item?.toString()?.takeIf { it.isNotBlank() } }
+    }
+
+    private fun parseDailyReviewItems(raw: List<*>?): List<WidgetDailyReviewItem> {
+        if (raw == null) return emptyList()
+        return raw.mapNotNull { item ->
+            val map = item as? Map<*, *> ?: return@mapNotNull null
+            val excerpt = map["excerpt"]?.toString()?.trim().orEmpty()
+            if (excerpt.isEmpty()) return@mapNotNull null
+            WidgetDailyReviewItem(
+                memoUid = map["memoUid"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+                excerpt = excerpt,
+                dateLabel = map["dateLabel"]?.toString()?.trim().orEmpty(),
+            )
+        }
+    }
+
+    private fun parseCalendarDays(raw: List<*>?): List<WidgetCalendarDay> {
+        if (raw == null) return emptyList()
+        return raw.mapNotNull { item ->
+            val map = item as? Map<*, *> ?: return@mapNotNull null
+            val intensity = when (val value = map["intensity"]) {
+                is Int -> value
+                is Number -> value.toInt()
+                is String -> value.trim().toIntOrNull() ?: 0
+                else -> 0
+            }.coerceIn(0, 6)
+            val dayEpochSec = when (val value = map["dayEpochSec"]) {
+                is Long -> value
+                is Int -> value.toLong()
+                is Number -> value.toLong()
+                is String -> value.trim().toLongOrNull()
+                else -> null
+            }
+            WidgetCalendarDay(
+                label = map["label"]?.toString().orEmpty(),
+                intensity = intensity,
+                dayEpochSec = dayEpochSec,
+                isCurrentMonth = when (val value = map["isCurrentMonth"]) {
+                    is Boolean -> value
+                    is String -> value.equals("true", ignoreCase = true)
+                    else -> false
+                },
+                isToday = when (val value = map["isToday"]) {
+                    is Boolean -> value
+                    is String -> value.equals("true", ignoreCase = true)
+                    else -> false
+                },
+            )
+        }
+    }
+
+    private fun parseCalendarHeatScores(raw: List<*>?): List<WidgetCalendarHeatScore> {
+        if (raw == null) return emptyList()
+        return raw.mapNotNull { item ->
+            val map = item as? Map<*, *> ?: return@mapNotNull null
+            val dayEpochSec = when (val value = map["dayEpochSec"]) {
+                is Long -> value
+                is Int -> value.toLong()
+                is Number -> value.toLong()
+                is String -> value.trim().toLongOrNull()
+                else -> null
+            } ?: return@mapNotNull null
+            val heatScore = when (val value = map["heatScore"]) {
+                is Int -> value
+                is Number -> value.toInt()
+                is String -> value.trim().toIntOrNull() ?: 0
+                else -> 0
+            }.coerceAtLeast(0)
+            WidgetCalendarHeatScore(dayEpochSec = dayEpochSec, heatScore = heatScore)
+        }
     }
 
     private fun dispatchShare(payload: SharePayload) {

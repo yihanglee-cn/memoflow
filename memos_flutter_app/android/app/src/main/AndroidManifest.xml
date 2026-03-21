@@ -87,14 +87,28 @@
         </receiver>
         <receiver
             android:name=".widgets.StatsWidgetProvider"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/widget_stats_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.memoflow.hzc073.widget.calendar.PREVIOUS_MONTH" />
+                <action android:name="com.memoflow.hzc073.widget.calendar.NEXT_MONTH" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_stats_info" />
+        </receiver>
+
+
+        <receiver
+            android:name=".widgets.WidgetRestoreReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
         </receiver>
 
         <receiver

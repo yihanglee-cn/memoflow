@@ -10,11 +10,11 @@ class QuickInputWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray
+        appWidgetIds: IntArray,
     ) {
         for (appWidgetId in appWidgetIds) {
             val views = RemoteViews(context.packageName, R.layout.widget_quick_input)
-            val pendingIntent = WidgetIntents.launchApp(context, WidgetIntents.ACTION_QUICK_INPUT)
+            val pendingIntent = WidgetIntents.launchApp(context, action = WidgetIntents.ACTION_QUICK_INPUT)
             views.setOnClickPendingIntent(R.id.widget_root, pendingIntent)
             views.setOnClickPendingIntent(R.id.widget_quick_action, pendingIntent)
             appWidgetManager.updateAppWidget(appWidgetId, views)

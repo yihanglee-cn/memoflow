@@ -61,6 +61,7 @@ class AppBootstrapController {
       _handlePreferencesChanged(
         prev: prev,
         next: next,
+        scheduleStatsWidgetUpdate: scheduleStatsWidgetUpdate,
         ensureFontLoaded: ensureFontLoaded,
         registerDesktopQuickInputHotKey: registerDesktopQuickInputHotKey,
       );
@@ -74,6 +75,10 @@ class AppBootstrapController {
     });
 
     final reminderScheduler = _adapter.readReminderScheduler(ref);
+    final initialDebugScreenshotMode =
+        kDebugMode ? _adapter.readDebugScreenshotMode(ref) : false;
+    final initialPreferences =
+        isDesktopShortcutEnabled() ? _adapter.readPreferences(ref) : null;
     reminderScheduler.setTapHandler(reminderTapHandler);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _firstFrameRendered = true;
@@ -98,17 +103,16 @@ class AppBootstrapController {
         },
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(
-          applyDebugScreenshotMode(_adapter.readDebugScreenshotMode(ref)),
-        );
+        unawaited(applyDebugScreenshotMode(initialDebugScreenshotMode));
       });
     }
 
     if (isDesktopShortcutEnabled()) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(
-          registerDesktopQuickInputHotKey(_adapter.readPreferences(ref)),
-        );
+        final prefs = initialPreferences;
+        if (prefs != null) {
+          unawaited(registerDesktopQuickInputHotKey(prefs));
+        }
         scheduleDesktopSubWindowPrewarm();
       });
     }
@@ -206,6 +210,7 @@ class AppBootstrapController {
   void _handlePreferencesChanged({
     required AppPreferences? prev,
     required AppPreferences next,
+    required VoidCallback scheduleStatsWidgetUpdate,
     required Future<void> Function(AppPreferences prefs) ensureFontLoaded,
     required Future<void> Function(AppPreferences prefs)
     registerDesktopQuickInputHotKey,
@@ -233,6 +238,15 @@ class AppBootstrapController {
     if (isDesktopShortcutEnabled() &&
         prev?.desktopShortcutBindings != next.desktopShortcutBindings) {
       unawaited(registerDesktopQuickInputHotKey(next));
+    }
+    final shouldRefreshWidgets =
+        prev == null ||
+        prev.language != next.language ||
+        prev.themeColor != next.themeColor ||
+        prev.themeMode != next.themeMode ||
+        prev.accountThemeColors != next.accountThemeColors;
+    if (shouldRefreshWidgets) {
+      scheduleStatsWidgetUpdate();
     }
   }
 

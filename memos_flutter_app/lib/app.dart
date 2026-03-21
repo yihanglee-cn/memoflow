@@ -17,7 +17,7 @@ import 'application/quick_input/quick_input_service.dart';
 import 'application/startup/startup_coordinator.dart';
 import 'application/sync/sync_feedback_presenter.dart';
 import 'application/updates/update_announcement_runner.dart';
-import 'application/widgets/stats_widget_updater.dart';
+import 'application/widgets/home_widgets_updater.dart';
 import 'core/app_localization.dart';
 import 'core/app_theme.dart';
 import 'core/startup_timing.dart';
@@ -59,7 +59,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
   late final DesktopQuickInputController _desktopQuickInputController;
   late final DesktopWindowManager _desktopWindowManager;
   DesktopExitCoordinator? _exitCoordinator;
-  late final StatsWidgetUpdater _statsWidgetUpdater;
+  late final HomeWidgetsUpdater _homeWidgetsUpdater;
   late final UpdateAnnouncementRunner _updateAnnouncementRunner;
   late final SyncFeedbackPresenter _syncFeedbackPresenter;
   final app_font.FontLoader _fontLoader = app_font.FontLoader();
@@ -104,7 +104,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
     }
     _bootstrapAdapter = ref.read(appBootstrapAdapterProvider);
     _bootstrapController = AppBootstrapController(_bootstrapAdapter);
-    _statsWidgetUpdater = StatsWidgetUpdater(
+    _homeWidgetsUpdater = HomeWidgetsUpdater(
       bootstrapAdapter: _bootstrapAdapter,
       isMounted: () => mounted,
     );
@@ -118,7 +118,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
     _syncOrchestrator = AppSyncOrchestrator(
       ref: ref,
       updateStatsWidgetIfNeeded: ({required bool force}) =>
-          _statsWidgetUpdater.updateIfNeeded(ref, force: force),
+          _homeWidgetsUpdater.updateIfNeeded(ref, force: force),
       showFeedbackToast: ({required bool succeeded}) => _syncFeedbackPresenter
           .showAutoSyncFeedbackToast(succeeded: succeeded),
       showProgressToast: _syncFeedbackPresenter.showAutoSyncProgressToast,
@@ -191,17 +191,18 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       DesktopExitCoordinator.activateMainWindow,
     );
     _bootstrapAdapter.readLogManager(ref);
+    final privateExtensionBundle = ref.read(privateExtensionBundleProvider);
     HomeWidgetService.setLaunchHandler(_startupCoordinator.handleWidgetLaunch);
     ShareHandlerService.setShareHandler(_startupCoordinator.handleShareLaunch);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_startupCoordinator.loadPendingLaunchSources());
-      unawaited(ref.read(privateExtensionBundleProvider).onAppReady(ref));
+      unawaited(privateExtensionBundle.onAppReady(ref));
     });
     _bootstrapController.bind(
       ref: ref,
       syncOrchestrator: _syncOrchestrator,
-      scheduleStatsWidgetUpdate: () => _statsWidgetUpdater.scheduleUpdate(ref),
+      scheduleStatsWidgetUpdate: () => _homeWidgetsUpdater.scheduleUpdate(ref),
       scheduleShareHandling: _startupCoordinator.scheduleShareHandling,
       ensureFontLoaded: _ensureFontLoaded,
       registerDesktopQuickInputHotKey:
@@ -210,23 +211,31 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       reminderTapHandler: ReminderTapHandlerImpl(_navigatorKey).handle,
       scheduleDesktopSubWindowPrewarm: _desktopWindowManager.schedulePrewarm,
     );
-    _prefsLoadedSub = _bootstrapAdapter.listenPreferencesLoaded(ref, (_, __) {
+    _prefsLoadedSub = _bootstrapAdapter.listenPreferencesLoaded(ref, (previous, nextValue) {
+      if (!mounted) return;
       _startupCoordinator.onPrefsLoaded(source: 'prefs_loaded');
     });
-    _sessionSub = _bootstrapAdapter.listenSession(ref, (_, __) {
+    _sessionSub = _bootstrapAdapter.listenSession(ref, (previous, nextValue) {
+      if (!mounted) return;
+      _homeWidgetsUpdater.bindDatabaseChanges(ref);
+      _homeWidgetsUpdater.scheduleUpdate(ref, force: true);
       _startupCoordinator.onSessionChanged(source: 'session');
     });
     _localLibrarySub = ref.listenManual<LocalLibrary?>(
       currentLocalLibraryProvider,
-      (_, __) {
+      (previous, nextValue) {
+        if (!mounted) return;
+        _homeWidgetsUpdater.bindDatabaseChanges(ref);
+        _homeWidgetsUpdater.scheduleUpdate(ref, force: true);
         _startupCoordinator.onLocalLibraryChanged(source: 'local_library');
       },
     );
-    _statsWidgetUpdater.scheduleUpdate(ref);
+    _homeWidgetsUpdater.scheduleUpdate(ref, force: true);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
     switch (state) {
       case AppLifecycleState.resumed:
         _bootstrapAdapter.resumeWebDavBackupProgress(ref);
@@ -404,6 +413,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
     _startupCoordinator.dispose();
     _desktopWindowManager.unbindMethodHandler();
     unawaited(_desktopQuickInputController.unregisterHotKey());
+    _homeWidgetsUpdater.dispose();
     unawaited(_exitCoordinator?.dispose());
     super.dispose();
   }

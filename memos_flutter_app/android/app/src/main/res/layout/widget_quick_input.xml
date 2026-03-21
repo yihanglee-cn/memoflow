@@ -17,7 +17,7 @@
         android:gravity="center_vertical"
         android:paddingLeft="14dp"
         android:paddingRight="14dp"
-        android:text="有什么新鲜事？"
+        android:text="@string/widget_quick_input_hint"
         android:textColor="#8A8178"
         android:textSize="12sp"
         android:textStyle="bold" />
@@ -33,7 +33,7 @@
             android:layout_width="18dp"
             android:layout_height="18dp"
             android:layout_gravity="center"
-            android:contentDescription="Send"
+            android:contentDescription="@string/widget_send"
             android:src="@android:drawable/ic_menu_send"
             android:tint="#FFFFFF" />
     </FrameLayout>

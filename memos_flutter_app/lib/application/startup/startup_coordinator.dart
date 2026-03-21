@@ -1,12 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/logs/log_manager.dart';
 import '../../data/models/app_preferences.dart';
+import '../../data/models/local_memo.dart';
 import '../../core/top_toast.dart';
+import '../../features/memos/memo_detail_screen.dart';
 import '../../features/memos/note_input_sheet.dart';
 import '../widgets/home_widget_service.dart';
 import '../../features/share/share_handler.dart';
@@ -39,7 +40,7 @@ class StartupCoordinator {
   final WidgetRef _ref;
   final bool Function() _isMounted;
 
-  HomeWidgetType? _pendingWidgetAction;
+  HomeWidgetLaunchPayload? _pendingWidgetLaunch;
   SharePayload? _pendingSharePayload;
   bool _shareHandlingScheduled = false;
   bool _widgetHandlingScheduled = false;
@@ -52,23 +53,20 @@ class StartupCoordinator {
   int _startupRetryCount = 0;
   bool _startupRetryScheduled = false;
   _StartupAction? _lastStartupAction;
-  Future<void>? _pendingWidgetActionLoad;
+  Future<void>? _pendingWidgetLaunchLoad;
   Future<void>? _pendingShareLoad;
 
   Future<void> loadPendingLaunchSources() {
-    _pendingWidgetActionLoad = _loadPendingWidgetAction();
+    _pendingWidgetLaunchLoad = _loadPendingWidgetLaunch();
     _pendingShareLoad = _loadPendingShare();
-    return Future.wait(
-      <Future<void>>[
-        _pendingWidgetActionLoad!,
-        _pendingShareLoad!,
-      ],
-      eagerError: false,
-    );
+    return Future.wait(<Future<void>>[
+      _pendingWidgetLaunchLoad!,
+      _pendingShareLoad!,
+    ], eagerError: false);
   }
 
-  Future<void> handleWidgetLaunch(HomeWidgetType type) async {
-    _pendingWidgetAction = type;
+  Future<void> handleWidgetLaunch(HomeWidgetLaunchPayload payload) async {
+    _pendingWidgetLaunch = payload;
     if (_startupHandled) {
       _logStartupInfo(
         'Startup: runtime_widget',
@@ -151,10 +149,10 @@ class StartupCoordinator {
     });
   }
 
-  Future<void> _loadPendingWidgetAction() async {
-    final type = await HomeWidgetService.consumePendingAction();
-    if (!_isMounted() || type == null) return;
-    _pendingWidgetAction = type;
+  Future<void> _loadPendingWidgetLaunch() async {
+    final payload = await HomeWidgetService.consumePendingLaunch();
+    if (!_isMounted() || payload == null) return;
+    _pendingWidgetLaunch = payload;
     if (_startupHandled) {
       _logStartupInfo(
         'Startup: runtime_widget',
@@ -207,7 +205,7 @@ class StartupCoordinator {
 
   Future<void> _awaitPendingLaunchSources() async {
     final futures = <Future<void>>[];
-    final widgetLoad = _pendingWidgetActionLoad;
+    final widgetLoad = _pendingWidgetLaunchLoad;
     if (widgetLoad != null) futures.add(widgetLoad);
     final shareLoad = _pendingShareLoad;
     if (shareLoad != null) futures.add(shareLoad);
@@ -244,7 +242,7 @@ class StartupCoordinator {
       if (hasWorkspace != null) 'hasWorkspace': hasWorkspace,
       if (hasAccount != null) 'hasAccount': hasAccount,
       'pendingShare': _pendingSharePayload != null,
-      'pendingWidget': _pendingWidgetAction != null,
+      'pendingWidget': _pendingWidgetLaunch != null,
       if (prefs != null) 'launchAction': prefs.launchAction.name,
       if (action != null) 'action': action.name,
       if (reason != null) 'reason': reason,
@@ -303,15 +301,18 @@ class StartupCoordinator {
     } catch (e, st) {
       _logStartupInfo(
         'Startup: state_read_failed',
-        context: _buildStartupContext(source: source, reason: 'state_read_failed'),
+        context: _buildStartupContext(
+          source: source,
+          reason: 'state_read_failed',
+        ),
         error: e,
         stackTrace: st,
       );
       final action = _pendingSharePayload != null
           ? _StartupAction.share
-          : (_pendingWidgetAction != null
-              ? _StartupAction.widget
-              : _StartupAction.none);
+          : (_pendingWidgetLaunch != null
+                ? _StartupAction.widget
+                : _StartupAction.none);
       if (action != _StartupAction.none) {
         _scheduleStartupRetry(action: action, reason: 'state_read_failed');
       }
@@ -320,7 +321,7 @@ class StartupCoordinator {
 
   _StartupAction _selectStartupAction(AppPreferences prefs) {
     if (_pendingSharePayload != null) return _StartupAction.share;
-    if (_pendingWidgetAction != null) return _StartupAction.widget;
+    if (_pendingWidgetLaunch != null) return _StartupAction.widget;
     if (prefs.launchAction != LaunchAction.none) {
       return _StartupAction.launchAction;
     }
@@ -329,7 +330,7 @@ class StartupCoordinator {
 
   String _selectStartupReason(AppPreferences prefs) {
     if (_pendingSharePayload != null) return 'pending_share';
-    if (_pendingWidgetAction != null) return 'pending_widget';
+    if (_pendingWidgetLaunch != null) return 'pending_widget';
     if (prefs.launchAction != LaunchAction.none) return 'prefs_launch_action';
     return 'none';
   }
@@ -349,11 +350,11 @@ class StartupCoordinator {
   }
 
   String? _evaluateWidgetBlockReason({
-    required bool hasAccount,
+    required bool hasWorkspace,
     required bool hasNavigator,
     required bool hasContext,
   }) {
-    if (!hasAccount) return 'no_account';
+    if (!hasWorkspace) return 'no_workspace';
     if (!hasNavigator) return 'no_navigator';
     if (!hasContext) return 'no_context';
     return null;
@@ -369,7 +370,7 @@ class StartupCoordinator {
   }) {
     if (_startupHandled) return;
     final key =
-        '${action.name}|$reason|${_pendingSharePayload != null}|${_pendingWidgetAction != null}';
+        '${action.name}|$reason|${_pendingSharePayload != null}|${_pendingWidgetLaunch != null}';
     if (_startupRetryKey != key) {
       _startupRetryKey = key;
       _startupRetryCount = 0;
@@ -425,7 +426,7 @@ class StartupCoordinator {
     if (_startupHandled) return;
     final action = _selectStartupAction(prefs);
     final key =
-        '$prefsLoaded|$hasWorkspace|$hasAccount|${_pendingSharePayload != null}|${_pendingWidgetAction != null}|${prefs.launchAction}|$action';
+        '$prefsLoaded|$hasWorkspace|$hasAccount|${_pendingSharePayload != null}|${_pendingWidgetLaunch != null}|${prefs.launchAction}|$action';
     if (!force) {
       if (_startupScheduleKey == key) return;
       _startupScheduleKey = key;
@@ -536,9 +537,9 @@ class StartupCoordinator {
       );
       final action = _pendingSharePayload != null
           ? _StartupAction.share
-          : (_pendingWidgetAction != null
-              ? _StartupAction.widget
-              : _StartupAction.none);
+          : (_pendingWidgetLaunch != null
+                ? _StartupAction.widget
+                : _StartupAction.none);
       if (action != _StartupAction.none) {
         _scheduleStartupRetry(action: action, reason: 'state_read_failed');
       }
@@ -625,7 +626,7 @@ class StartupCoordinator {
       case _StartupAction.share:
         handled = _handlePendingShare();
         if (handled) {
-          _pendingWidgetAction = null;
+          _pendingWidgetLaunch = null;
         }
         break;
       case _StartupAction.widget:
@@ -654,7 +655,7 @@ class StartupCoordinator {
       } else if (action == _StartupAction.widget) {
         reason =
             _evaluateWidgetBlockReason(
-              hasAccount: hasAccount,
+              hasWorkspace: hasWorkspace,
               hasNavigator: navigatorReady,
               hasContext: contextReady,
             ) ??
@@ -718,35 +719,76 @@ class StartupCoordinator {
   }
 
   bool _handlePendingWidgetAction() {
-    final type = _pendingWidgetAction;
-    if (type == null) return false;
+    final payload = _pendingWidgetLaunch;
+    if (payload == null) return false;
     final session = _bootstrapAdapter.readSession(_ref);
-    if (session?.currentAccount == null) return false;
+    final localLibrary = _bootstrapAdapter.readCurrentLocalLibrary(_ref);
+    if (session?.currentAccount == null && localLibrary == null) return false;
     final navigator = _navigatorKey.currentState;
     final context = _navigatorKey.currentContext;
     if (navigator == null || context == null) return false;
 
-    _pendingWidgetAction = null;
-    switch (type) {
+    _pendingWidgetLaunch = null;
+    switch (payload.widgetType) {
       case HomeWidgetType.dailyReview:
-        _appNavigator.openDailyReview();
+        final memoUid = payload.memoUid?.trim();
+        if (memoUid == null || memoUid.isEmpty) {
+          _appNavigator.openDailyReview();
+          break;
+        }
+        unawaited(_openWidgetMemoDetail(memoUid));
         break;
       case HomeWidgetType.quickInput:
-        _appNavigator.openAllMemos();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          final sheetContext = _navigatorKey.currentContext;
-          if (sheetContext != null) {
-            final autoFocus =
-                _bootstrapAdapter.readPreferences(_ref).quickInputAutoFocus;
-            NoteInputSheet.show(sheetContext, autoFocus: autoFocus);
-          }
-        });
+        final prefs = _bootstrapAdapter.readPreferences(_ref);
+        unawaited(openQuickInput(autoFocus: prefs.quickInputAutoFocus));
         break;
-      case HomeWidgetType.stats:
-        _appNavigator.openAllMemos();
+      case HomeWidgetType.calendar:
+        final epochSec = payload.dayEpochSec;
+        if (epochSec == null || epochSec <= 0) {
+          _appNavigator.openAllMemos();
+          break;
+        }
+        final selectedDay = DateTime.fromMillisecondsSinceEpoch(
+          epochSec * 1000,
+          isUtc: true,
+        ).toLocal();
+        final normalizedSelectedDay = DateTime(
+          selectedDay.year,
+          selectedDay.month,
+          selectedDay.day,
+        );
+        final now = DateTime.now();
+        final normalizedToday = DateTime(now.year, now.month, now.day);
+        if (normalizedSelectedDay.isAfter(normalizedToday)) {
+          _appNavigator.openAllMemos();
+          break;
+        }
+        _appNavigator.openDayMemos(selectedDay);
         break;
     }
     return true;
+  }
+
+  Future<void> _openWidgetMemoDetail(String memoUid) async {
+    final row = await _bootstrapAdapter
+        .readDatabase(_ref)
+        .getMemoByUid(memoUid);
+    if (!_isMounted()) return;
+    if (row == null) {
+      _appNavigator.openDailyReview();
+      return;
+    }
+    final memo = LocalMemo.fromDb(row);
+    _appNavigator.openAllMemos();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final context = _navigatorKey.currentContext;
+      if (context == null) return;
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MemoDetailScreen(initialMemo: memo),
+        ),
+      );
+    });
   }
 
   bool _handlePendingShare() {
