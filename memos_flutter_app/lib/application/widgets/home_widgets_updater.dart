@@ -78,6 +78,7 @@ class HomeWidgetsUpdater {
         return;
       }
       await _updateDailyReviewWidget(ref);
+      await _updateQuickInputWidget(ref);
       await _updateCalendarWidget(ref);
     } catch (error, stackTrace) {
       debugPrint('[HomeWidgetsUpdater] update failed: $error');
@@ -128,6 +129,15 @@ class HomeWidgetsUpdater {
     );
   }
 
+  Future<void> _updateQuickInputWidget(WidgetRef ref) async {
+    if (!_isMounted()) return;
+    final prefs = _tryReadPreferences(ref, source: '_updateQuickInputWidget');
+    if (prefs == null) return;
+    await HomeWidgetService.updateQuickInputWidget(
+      hint: trByLanguageKey(language: prefs.language, key: 'legacy.msg_what_s'),
+    );
+  }
+
   Future<void> _updateCalendarWidget(WidgetRef ref) async {
     if (!_isMounted()) return;
     final prefs = _tryReadPreferences(ref, source: '_updateCalendarWidget');
@@ -136,10 +146,7 @@ class HomeWidgetsUpdater {
     final session = _tryReadSession(ref, source: '_updateCalendarWidget');
     final now = DateTime.now();
     final month = DateTime(now.year, now.month);
-    final rows = await database.listMemos(
-      state: 'NORMAL',
-      limit: null,
-    );
+    final rows = await database.listMemos(state: 'NORMAL', limit: null);
     if (!_isMounted()) return;
     final themeColor = prefs.resolveThemeColor(session?.currentKey);
     final snapshot = buildCalendarWidgetSnapshot(
@@ -157,12 +164,15 @@ class HomeWidgetsUpdater {
     );
     final maxHeatScore = snapshot.heatScores.fold<int>(
       0,
-      (maxValue, entry) => entry.heatScore > maxValue ? entry.heatScore : maxValue,
+      (maxValue, entry) =>
+          entry.heatScore > maxValue ? entry.heatScore : maxValue,
     );
     debugPrint(
       '[HomeWidgetsUpdater] calendar snapshot month=${snapshot.monthLabel} rows=${rows.length} heatScores=${snapshot.heatScores.length} filledDays=$filledDays maxIntensity=$maxIntensity maxHeatScore=$maxHeatScore theme=${snapshot.themeColorArgb}',
     );
-    final result = await HomeWidgetService.updateCalendarWidget(snapshot: snapshot);
+    final result = await HomeWidgetService.updateCalendarWidget(
+      snapshot: snapshot,
+    );
     debugPrint('[HomeWidgetsUpdater] updateCalendarWidget result=$result');
   }
 
@@ -172,9 +182,10 @@ class HomeWidgetsUpdater {
   }
 
   bool _hasActiveWorkspace(WidgetRef ref) {
-    final currentKey = _tryReadSession(ref, source: '_hasActiveWorkspace')
-        ?.currentKey
-        ?.trim();
+    final currentKey = _tryReadSession(
+      ref,
+      source: '_hasActiveWorkspace',
+    )?.currentKey?.trim();
     if (currentKey != null && currentKey.isNotEmpty) {
       return true;
     }
@@ -215,7 +226,9 @@ class HomeWidgetsUpdater {
     }
   }
 
-  Future<Uint8List?> _resolveCurrentAvatarBytes(AppSessionState? session) async {
+  Future<Uint8List?> _resolveCurrentAvatarBytes(
+    AppSessionState? session,
+  ) async {
     final account = session?.currentAccount;
     if (account == null) {
       _cachedAvatarKey = null;
@@ -249,7 +262,10 @@ class HomeWidgetsUpdater {
       final headers = <String, dynamic>{};
       final token = account.personalAccessToken.trim();
       if (token.isNotEmpty &&
-          _shouldAttachAvatarAuth(baseUrl: account.baseUrl, resolvedUrl: resolvedUrl)) {
+          _shouldAttachAvatarAuth(
+            baseUrl: account.baseUrl,
+            resolvedUrl: resolvedUrl,
+          )) {
         headers['Authorization'] = 'Bearer $token';
       }
 
@@ -287,7 +303,9 @@ class HomeWidgetsUpdater {
     final resolved = Uri.tryParse(resolvedUrl);
     if (resolved == null) return false;
     if (!resolved.hasScheme) return true;
-    final basePort = baseUrl.hasPort ? baseUrl.port : _defaultPortForScheme(baseUrl.scheme);
+    final basePort = baseUrl.hasPort
+        ? baseUrl.port
+        : _defaultPortForScheme(baseUrl.scheme);
     final resolvedPort = resolved.hasPort
         ? resolved.port
         : _defaultPortForScheme(resolved.scheme);

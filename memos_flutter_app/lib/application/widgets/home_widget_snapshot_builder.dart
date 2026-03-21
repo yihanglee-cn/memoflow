@@ -1,4 +1,4 @@
-﻿import 'package:intl/intl.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/app_localization.dart';
 import '../../data/models/app_preferences.dart';
@@ -58,7 +58,10 @@ String _buildRandomWalkHeaderLabel(
 }) {
   final days = exactDaysAgo(createdAt, now);
   final daysLabel = formatExactDaysAgo(days, language);
-  final periodLabel = _resolveDayPeriodForLanguage(createdAt, language: language);
+  final periodLabel = _resolveDayPeriodForLanguage(
+    createdAt,
+    language: language,
+  );
   return '$daysLabel • $periodLabel';
 }
 
@@ -176,15 +179,16 @@ CalendarWidgetSnapshot buildCalendarWidgetSnapshot({
       isToday: _normalizeDay(day) == normalizedToday,
     );
   });
-  final heatScoreEntries = heatScores.entries
-      .map(
-        (entry) => CalendarWidgetHeatScore(
-          dayEpochSec: entry.key.toUtc().millisecondsSinceEpoch ~/ 1000,
-          heatScore: entry.value,
-        ),
-      )
-      .toList(growable: false)
-    ..sort((a, b) => a.dayEpochSec.compareTo(b.dayEpochSec));
+  final heatScoreEntries =
+      heatScores.entries
+          .map(
+            (entry) => CalendarWidgetHeatScore(
+              dayEpochSec: entry.key.toUtc().millisecondsSinceEpoch ~/ 1000,
+              heatScore: entry.value,
+            ),
+          )
+          .toList(growable: false)
+        ..sort((a, b) => a.dayEpochSec.compareTo(b.dayEpochSec));
 
   return CalendarWidgetSnapshot(
     monthLabel: _formatMonthLabel(normalizedMonth, localeTag),
@@ -236,13 +240,12 @@ List<String> _buildWeekdayLabels(
 
 String _formatMonthLabel(DateTime month, String localeTag) {
   try {
-    return DateFormat.yMMMM(localeTag).format(month);
+    return DateFormat('yyyy-MM').format(month);
   } catch (_) {
     final mm = month.month.toString().padLeft(2, '0');
     return '${month.year}-$mm';
   }
 }
-
 
 String _localeTagForLanguage(AppLanguage language) {
   return switch (language) {
@@ -263,4 +266,3 @@ bool _startsWeekOnMonday(AppLanguage language) {
 }
 
 DateTime _normalizeDay(DateTime day) => DateTime(day.year, day.month, day.day);
-

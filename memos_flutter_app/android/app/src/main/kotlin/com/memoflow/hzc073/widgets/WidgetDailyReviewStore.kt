@@ -10,6 +10,7 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Base64
+import com.memoflow.hzc073.R
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -97,9 +98,14 @@ object WidgetDailyReviewStore {
 
     fun load(context: Context): WidgetDailyReviewData {
         val prefs = context.getSharedPreferences(DAILY_REVIEW_PREFS, Context.MODE_PRIVATE)
-        val title = prefs.getString(KEY_TITLE, "Random Review") ?: "Random Review"
-        val fallbackBody = prefs.getString(KEY_FALLBACK_BODY, "Tap to open daily review")
-            ?: "Tap to open daily review"
+        val title =
+            prefs.getString(KEY_TITLE, context.getString(R.string.widget_daily_review_placeholder_title))
+                ?: context.getString(R.string.widget_daily_review_placeholder_title)
+        val fallbackBody =
+            prefs.getString(
+                KEY_FALLBACK_BODY,
+                context.getString(R.string.widget_daily_review_placeholder_body),
+            ) ?: context.getString(R.string.widget_daily_review_placeholder_body)
         val items = parseItems(prefs.getString(KEY_ITEMS, null))
         val rawIndex = prefs.getInt(KEY_INDEX, 0)
         val currentIndex = normalizeIndex(rawIndex, items.size)
@@ -182,30 +188,48 @@ object WidgetDailyReviewStore {
     }
 
     private fun formatCountdownLabel(localeTag: String, remainingMs: Long): String {
-        val zh = localeTag.trim().startsWith("zh", ignoreCase = true)
+        val normalizedLocale = localeTag.trim().lowercase()
+        val zh = normalizedLocale.startsWith("zh")
+        val ja = normalizedLocale.startsWith("ja")
+        val de = normalizedLocale.startsWith("de")
         if (remainingMs <= 45_000L) {
-            return if (zh) "\u9A6C\u4E0A\u6362\u4E00\u6761" else "Refreshing soon"
+            return when {
+                zh -> "\u5373\u5C06\u5237\u65B0"
+                ja -> "\u307E\u3082\u306A\u304F\u66F4\u65B0"
+                de -> "Wird bald aktualisiert"
+                else -> "Refreshing soon"
+            }
         }
 
         val totalMinutes = ((remainingMs + 59_999L) / 60_000L).coerceAtLeast(1L)
         if (totalMinutes < 60L) {
-            return if (zh) {
-                "\u518D\u8FC7 ${totalMinutes} \u5206\u949F"
-            } else {
-                "In ${totalMinutes} min"
+            return when {
+                zh -> "\u518D\u8FC7 ${totalMinutes} \u5206\u949F"
+                ja -> "${totalMinutes}\u5206\u5F8C"
+                de -> "In ${totalMinutes} Min"
+                else -> "In ${totalMinutes} min"
             }
         }
 
         val hours = totalMinutes / 60L
         val minutes = totalMinutes % 60L
-        return if (zh) {
-            when {
+        return when {
+            zh -> when {
                 minutes == 0L -> "\u518D\u8FC7 ${hours} \u5C0F\u65F6"
                 hours <= 1L -> "\u518D\u8FC7 ${hours} \u5C0F\u65F6 ${minutes} \u5206\u949F"
                 else -> "\u518D\u8FC7 ${hours} \u5C0F\u65F6"
             }
-        } else {
-            when {
+            ja -> when {
+                minutes == 0L -> "${hours}\u6642\u9593\u5F8C"
+                hours <= 1L -> "${hours}\u6642\u9593${minutes}\u5206\u5F8C"
+                else -> "${hours}\u6642\u9593\u5F8C"
+            }
+            de -> when {
+                minutes == 0L -> "In ${hours} Std"
+                hours <= 1L -> "In ${hours} Std ${minutes} Min"
+                else -> "In ${hours} Std"
+            }
+            else -> when {
                 minutes == 0L -> "In ${hours} hr"
                 hours <= 1L -> "In ${hours} hr ${minutes} min"
                 else -> "In ${hours} hr"

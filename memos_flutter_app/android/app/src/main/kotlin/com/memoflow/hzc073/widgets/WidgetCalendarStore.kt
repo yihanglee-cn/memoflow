@@ -446,7 +446,7 @@ object WidgetCalendarStore {
         val gridStart = (monthStart.clone() as Calendar).apply {
             add(Calendar.DAY_OF_MONTH, -offset)
         }
-        val monthLabel = SimpleDateFormat("MMMM yyyy", locale).format(monthStart.time)
+        val monthLabel = SimpleDateFormat("yyyy-MM", locale).format(monthStart.time)
         val weekdayLabels = buildFallbackWeekdayLabels(locale, startOfWeek)
         val heatScoreByDay = heatScores.associate { it.dayEpochSec to it.heatScore }
 

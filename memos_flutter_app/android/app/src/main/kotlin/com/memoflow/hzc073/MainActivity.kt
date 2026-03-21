@@ -26,6 +26,7 @@ import com.memoflow.hzc073.widgets.WidgetCalendarStore
 import com.memoflow.hzc073.widgets.WidgetDailyReviewItem
 import com.memoflow.hzc073.widgets.WidgetDailyReviewStore
 import com.memoflow.hzc073.widgets.WidgetIntents
+import com.memoflow.hzc073.widgets.WidgetQuickInputStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -116,8 +117,16 @@ class MainActivity : FlutterActivity() {
                     result.success(action)
                 }
                 "updateDailyReviewWidget" -> {
-                    val title = call.argument<String>("title") ?: "Random Review"
-                    val fallbackBody = call.argument<String>("fallbackBody") ?: "Tap to open daily review"
+                    val title =
+                        call.argument<String>("title")
+                            ?.trim()
+                            .takeUnless { it.isNullOrEmpty() }
+                            ?: getString(R.string.widget_daily_review_placeholder_title)
+                    val fallbackBody =
+                        call.argument<String>("fallbackBody")
+                            ?.trim()
+                            .takeUnless { it.isNullOrEmpty() }
+                            ?: getString(R.string.widget_daily_review_placeholder_body)
                     val items = parseDailyReviewItems(call.argument<List<*>>("items"))
                     val avatarBytes = call.argument<ByteArray>("avatarBytes")
                     val clearAvatar = call.argument<Boolean>("clearAvatar") ?: false
@@ -135,6 +144,16 @@ class MainActivity : FlutterActivity() {
                     DailyReviewWidgetProvider.ensureRotation(this)
                     result.success(true)
                 }
+                "updateQuickInputWidget" -> {
+                    val hint =
+                        call.argument<String>("hint")
+                            ?.trim()
+                            .takeUnless { it.isNullOrEmpty() }
+                            ?: getString(R.string.widget_quick_input_hint)
+                    WidgetQuickInputStore.save(this, hint)
+                    QuickInputWidgetProvider.updateAllWidgets(this)
+                    result.success(true)
+                }
                 "advanceDailyReviewWidget" -> {
                     WidgetDailyReviewStore.advance(this)
                     DailyReviewWidgetProvider.updateAllWidgets(this)
@@ -142,7 +161,11 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "updateCalendarWidget" -> {
-                    val monthLabel = call.argument<String>("monthLabel") ?: "Calendar Heatmap"
+                    val monthLabel =
+                        call.argument<String>("monthLabel")
+                            ?.trim()
+                            .takeUnless { it.isNullOrEmpty() }
+                            ?: getString(R.string.widget_calendar_placeholder_title)
                     val weekdayLabels = parseStringList(call.argument<List<*>>("weekdayLabels"))
                     val days = parseCalendarDays(call.argument<List<*>>("days"))
                     val monthStartEpochSec = call.argument<Number>("monthStartEpochSec")?.toLong()
@@ -178,9 +201,11 @@ class MainActivity : FlutterActivity() {
                 }
                 "clearHomeWidgets" -> {
                     WidgetDailyReviewStore.clear(this)
+                    WidgetQuickInputStore.clear(this)
                     WidgetCalendarStore.clear(this)
                     DailyReviewWidgetProvider.updateAllWidgets(this)
                     DailyReviewWidgetProvider.cancelRotation(this)
+                    QuickInputWidgetProvider.updateAllWidgets(this)
                     StatsWidgetProvider.updateAllWidgets(this)
                     result.success(true)
                 }

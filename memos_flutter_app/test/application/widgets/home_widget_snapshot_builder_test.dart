@@ -91,6 +91,7 @@ See [link](https://example.com) and ```code``` text''',
         today: DateTime(2024, 2, 21, 10),
       );
 
+      expect(snapshot.monthLabel, '2024-02');
       expect(snapshot.days, hasLength(42));
       expect(snapshot.themeColorArgb, 0xFF123456);
       expect(snapshot.weekdayLabels, hasLength(7));
@@ -225,9 +226,9 @@ See [link](https://example.com) and ```code``` text''',
     );
 
     int intensityForDay(String label) {
-      return snapshot.days.firstWhere(
-        (day) => day.label == label && day.isCurrentMonth,
-      ).intensity;
+      return snapshot.days
+          .firstWhere((day) => day.label == label && day.isCurrentMonth)
+          .intensity;
     }
 
     expect(intensityForDay('1'), 1);

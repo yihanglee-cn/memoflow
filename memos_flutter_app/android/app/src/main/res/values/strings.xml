@@ -3,11 +3,11 @@
     <string name="app_name">MemoFlow</string>
     <string name="widget_daily_review_label">Random Review</string>
     <string name="widget_quick_input_label">Quick Input</string>
-    <string name="widget_stats_label">Calendar Heatmap</string>
+    <string name="widget_stats_label">Activity Heatmap</string>
     <string name="widget_daily_review_placeholder_title">Random Review</string>
     <string name="widget_daily_review_placeholder_countdown">Refreshing soon</string>
-    <string name="widget_daily_review_placeholder_body">Tap to open daily review</string>
-    <string name="widget_quick_input_hint">Write a quick memo</string>
-    <string name="widget_calendar_placeholder_title">Calendar Heatmap</string>
+    <string name="widget_daily_review_placeholder_body">Remember the moment, feel the warmth of life.\nTake a quick review every day.</string>
+    <string name="widget_quick_input_hint">What\'s new?</string>
+    <string name="widget_calendar_placeholder_title">Activity Heatmap</string>
     <string name="widget_send">Send</string>
 </resources>

@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/app_localization.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../application/widgets/home_widget_service.dart';
@@ -64,7 +63,7 @@ class WidgetsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           _Section(
-            title: context.tr(zh: '日历热力图', en: 'Calendar Heatmap'),
+            title: context.t.strings.legacy.msg_activity_heatmap,
             textMuted: textMuted,
             child: _WidgetCard(
               card: card,
@@ -81,7 +80,7 @@ class WidgetsScreen extends StatelessWidget {
           const SizedBox(height: 18),
           Center(
             child: Text(
-              'MemoFlow · v1.0.18',
+              'MemoFlow 鐠?v1.0.18',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -336,10 +335,12 @@ class _RandomMemoPreview extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  context.tr(
-                    zh: '下雨天坐在窗边，突然想起去年的今天。',
-                    en: 'Rain on the window pulled me back to this day last year.',
-                  ),
+                  context
+                      .t
+                      .strings
+                      .legacy
+                      .msg_remember_moment_feel_warmth_life_take
+                      .replaceAll(r'\n', ' '),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -422,12 +423,13 @@ class _CalendarPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const outsideColor = Color(0xFF5A6170);
-    const weekColor = Color(0xFF7A8190);
-    const dayColor = Color(0xFFD0D5DD);
-    const todayBorder = Color(0xFF8D95A3);
+    const monthLabelColor = Color(0xFF182230);
+    const weekColor = Color(0xFF667085);
+    const outsideColor = Color(0xFF98A2B3);
+    const dayColor = Color(0xFF344054);
+    final todayBorder = MemoFlowPalette.primary.withValues(alpha: 0.64);
     final hot = MemoFlowPalette.primary;
-    final labels = <String>[
+    const labels = <String>[
       '1',
       '2',
       '3',
@@ -463,38 +465,80 @@ class _CalendarPreview extends StatelessWidget {
       '2',
       '3',
       '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      '11',
     ];
-    final activeLevels = <int, int>{14: 3, 17: 2, 19: 3};
+    const currentMonthCount = 31;
     const todayIndex = 20;
-    return DecoratedBox(
+    final activeLevels = <int, int>{0: 1, 4: 2, 11: 3, 16: 4, 22: 5, 28: 6};
+
+    Color fillColorForLevel(int level) {
+      final alpha = switch (level) {
+        6 => 0.94,
+        5 => 0.84,
+        4 => 0.72,
+        3 => 0.58,
+        2 => 0.42,
+        _ => 0.26,
+      };
+      return Color.alphaBlend(hot.withValues(alpha: alpha), Colors.white);
+    }
+
+    return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1E26),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xF8FFFFFF), Color(0xFFF5F1EC), Color(0xFFEFE8E1)],
+        ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF2B313D)),
+        border: Border.all(
+          color: const Color(0xFFFFFFFF).withValues(alpha: 0.65),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 const Expanded(
                   child: Text(
-                    'March 2026',
+                    '2026-03',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFFF3F5F8),
+                      color: monthLabelColor,
                     ),
                   ),
                 ),
                 Text(
-                  '? ?',
+                  '\u2039',
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: weekColor,
+                    color: weekColor.withValues(alpha: 0.92),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '\u203A',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: weekColor.withValues(alpha: 0.92),
                   ),
                 ),
               ],
@@ -508,7 +552,7 @@ class _CalendarPreview extends StatelessWidget {
                         child: Text(
                           label,
                           style: TextStyle(
-                            fontSize: 9,
+                            fontSize: 8.5,
                             fontWeight: FontWeight.w600,
                             color: weekColor,
                           ),
@@ -522,48 +566,45 @@ class _CalendarPreview extends StatelessWidget {
             Expanded(
               child: GridView.builder(
                 physics: const NeverScrollableScrollPhysics(),
+                padding: EdgeInsets.zero,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 7,
-                  mainAxisSpacing: 2,
-                  crossAxisSpacing: 2,
+                  mainAxisSpacing: 1.5,
+                  crossAxisSpacing: 1.5,
                 ),
                 itemCount: labels.length,
                 itemBuilder: (context, index) {
                   final level = activeLevels[index] ?? 0;
-                  final isCurrentMonth = index < 31;
+                  final isCurrentMonth = index < currentMonthCount;
                   final isToday = index == todayIndex;
-                  final decoration = level > 0
+                  final hasHeat = level > 0 && isCurrentMonth;
+                  final decoration = hasHeat
                       ? BoxDecoration(
-                          color: hot.withValues(
-                            alpha: switch (level) {
-                              3 => 0.82,
-                              2 => 0.64,
-                              _ => 0.42,
-                            },
-                          ),
                           shape: BoxShape.circle,
+                          color: fillColorForLevel(level),
                         )
-                      : isToday
+                      : isToday && isCurrentMonth
                       ? BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: todayBorder),
+                          border: Border.all(color: todayBorder, width: 1.4),
                         )
                       : null;
-                  final textColor = level > 0
-                      ? Colors.white
+                  final textColor = hasHeat
+                      ? (level >= 4 ? Colors.white : const Color(0xFF243041))
                       : isCurrentMonth
-                      ? (isToday ? Colors.white : dayColor)
+                      ? dayColor
                       : outsideColor;
+
                   return Center(
                     child: Container(
-                      width: 28,
-                      height: 28,
-                      decoration: decoration,
+                      width: 20,
+                      height: 20,
                       alignment: Alignment.center,
+                      decoration: decoration,
                       child: Text(
                         labels[index],
                         style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 9.5,
                           fontWeight: FontWeight.w600,
                           color: textColor,
                         ),

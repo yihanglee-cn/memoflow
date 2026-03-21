@@ -242,6 +242,20 @@ class HomeWidgetService {
     }
   }
 
+  static Future<bool> updateQuickInputWidget({required String hint}) async {
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'updateQuickInputWidget',
+        {'hint': hint},
+      );
+      return result ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   static Future<bool> moveTaskToBack() async {
     try {
       final result = await _channel.invokeMethod<bool>('moveTaskToBack');

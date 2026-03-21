@@ -104,4 +104,25 @@ void main() {
     expect(result, isTrue);
     expect(capturedCall?.method, 'clearHomeWidgets');
   });
+
+  test('updateQuickInputWidget forwards localized hint', () async {
+    MethodCall? capturedCall;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          capturedCall = call;
+          return true;
+        });
+
+    final result = await HomeWidgetService.updateQuickInputWidget(
+      hint: 'What\'s new?',
+    );
+
+    expect(result, isTrue);
+    expect(capturedCall?.method, 'updateQuickInputWidget');
+    expect(capturedCall?.arguments, isA<Map<dynamic, dynamic>>());
+    expect(
+      (capturedCall!.arguments as Map<dynamic, dynamic>)['hint'],
+      'What\'s new?',
+    );
+  });
 }
