@@ -47,6 +47,8 @@ String memoDetailMarkdownCacheKey(LocalMemo memo) {
   return 'detail|${memo.uid}|${memo.contentFingerprint}|renderImages=0|highlight=';
 }
 
+const _likeReactionType = '❤️';
+
 class _MemoDetailDeferredContent {
   const _MemoDetailDeferredContent({
     required this.imageEntries,
@@ -976,6 +978,7 @@ class _MemoEngagementSectionState
   int _commentTotal = 0;
   bool _reactionsLoading = false;
   bool _commentsLoading = false;
+  bool _reactionUpdating = false;
   bool _commenting = false;
   bool _commentSending = false;
   String? _reactionsError;
@@ -998,6 +1001,7 @@ class _MemoEngagementSectionState
     _comments = [];
     _reactionTotal = 0;
     _commentTotal = 0;
+    _reactionUpdating = false;
     _commenting = false;
     _commentSending = false;
     _replyingCommentCreator = null;
@@ -1036,7 +1040,7 @@ class _MemoEngagementSectionState
       if (!mounted) return;
       setState(() {
         _reactions = result.reactions;
-        _reactionTotal = result.totalSize;
+        _reactionTotal = _countLikeCreators(result.reactions);
       });
       unawaited(_prefetchCreators(result.reactions.map((r) => r.creator)));
     } catch (e) {
@@ -1045,6 +1049,83 @@ class _MemoEngagementSectionState
     } finally {
       if (mounted) {
         setState(() => _reactionsLoading = false);
+      }
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    final uid = widget.memoUid.trim();
+    if (uid.isEmpty || _reactionUpdating) return;
+    final currentUser =
+        ref
+            .read(appSessionProvider)
+            .valueOrNull
+            ?.currentAccount
+            ?.user
+            .name
+            .trim() ??
+        '';
+    if (currentUser.isEmpty) return;
+
+    setState(() => _reactionUpdating = true);
+    final reactions = List<Reaction>.from(_reactions);
+    final mine = reactions
+        .where(
+          (reaction) =>
+              _isLikeReaction(reaction) &&
+              reaction.creator.trim() == currentUser,
+        )
+        .toList(growable: false);
+
+    try {
+      final api = ref.read(memosApiProvider);
+      if (mine.isNotEmpty) {
+        final updated = reactions
+            .where((reaction) => !mine.contains(reaction))
+            .toList(growable: false);
+        _updateReactions(updated);
+        for (final reaction in mine) {
+          await api.deleteMemoReaction(reaction: reaction);
+        }
+      } else {
+        final optimistic = Reaction(
+          name: '',
+          creator: currentUser,
+          contentId: 'memos/$uid',
+          reactionType: _likeReactionType,
+        );
+        final updated = [...reactions, optimistic];
+        _updateReactions(updated);
+        final created = await api.upsertMemoReaction(
+          memoUid: uid,
+          reactionType: _likeReactionType,
+        );
+        if (!mounted) return;
+        final currentList = List<Reaction>.from(_reactions);
+        final index = currentList.indexWhere(
+          (reaction) =>
+              reaction.creator.trim() == currentUser &&
+              _isLikeReaction(reaction) &&
+              reaction.name.trim().isEmpty,
+        );
+        if (index >= 0) {
+          currentList[index] = created;
+        } else {
+          currentList.add(created);
+        }
+        _updateReactions(currentList);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _updateReactions(reactions);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_failed_react(e: e)),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _reactionUpdating = false);
       }
     }
   }
@@ -1326,6 +1407,161 @@ class _MemoEngagementSectionState
       }
     }
     return unique;
+  }
+
+  bool _isLikeReaction(Reaction reaction) {
+    final type = reaction.reactionType.trim();
+    return type == _likeReactionType || type == 'HEART';
+  }
+
+  int _countLikeCreators(Iterable<Reaction> reactions) {
+    final creators = <String>{};
+    for (final reaction in reactions) {
+      if (!_isLikeReaction(reaction)) continue;
+      final creator = reaction.creator.trim();
+      if (creator.isEmpty) continue;
+      creators.add(creator);
+    }
+    return creators.length;
+  }
+
+  List<Reaction> _likeReactions() {
+    return _reactions.where(_isLikeReaction).toList(growable: false);
+  }
+
+  bool _hasMyLike(String currentUser) {
+    if (currentUser.isEmpty) return false;
+    return _reactions.any(
+      (reaction) =>
+          _isLikeReaction(reaction) && reaction.creator.trim() == currentUser,
+    );
+  }
+
+  List<({String reactionType, int count})> _otherReactionSummaries() {
+    if (_reactions.isEmpty) return const [];
+    final creatorsByType = <String, Set<String>>{};
+    final anonymousCounts = <String, int>{};
+    for (final reaction in _reactions) {
+      if (_isLikeReaction(reaction)) continue;
+      final type = reaction.reactionType.trim();
+      if (type.isEmpty) continue;
+      final creator = reaction.creator.trim();
+      if (creator.isEmpty) {
+        anonymousCounts[type] = (anonymousCounts[type] ?? 0) + 1;
+        continue;
+      }
+      creatorsByType.putIfAbsent(type, () => <String>{}).add(creator);
+    }
+
+    final summaries = <({String reactionType, int count})>[];
+    for (final entry in creatorsByType.entries) {
+      summaries.add((reactionType: entry.key, count: entry.value.length));
+    }
+    for (final entry in anonymousCounts.entries) {
+      final index = summaries.indexWhere(
+        (summary) => summary.reactionType == entry.key,
+      );
+      if (index >= 0) {
+        final current = summaries[index];
+        summaries[index] = (
+          reactionType: current.reactionType,
+          count: current.count + entry.value,
+        );
+      } else {
+        summaries.add((reactionType: entry.key, count: entry.value));
+      }
+    }
+    summaries.sort((a, b) {
+      final countCompare = b.count.compareTo(a.count);
+      if (countCompare != 0) return countCompare;
+      return a.reactionType.compareTo(b.reactionType);
+    });
+    return summaries;
+  }
+
+  void _updateReactions(List<Reaction> reactions) {
+    setState(() {
+      _reactions = reactions;
+      _reactionTotal = _countLikeCreators(reactions);
+    });
+  }
+
+  String _remainingPeopleLabel(BuildContext context, int count) {
+    final locale = Localizations.localeOf(context);
+    return switch (locale.languageCode) {
+      'zh' => '\u7b49 $count \u4eba',
+      'ja' => '\u307b\u304b$count\u4eba',
+      'de' => 'und $count weitere',
+      _ => 'and $count more',
+    };
+  }
+
+  void _showLikersSheet({required Color textMuted, required Uri? baseUrl}) {
+    final likers = _uniqueReactions(_likeReactions());
+    if (likers.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.65,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+                  child: Text(
+                    '${sheetContext.t.strings.legacy.msg_like_2} $_reactionTotal',
+                    style: Theme.of(sheetContext).textTheme.titleMedium,
+                  ),
+                ),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                    itemCount: likers.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final reaction = likers[index];
+                      final creator = reaction.creator;
+                      final user = _creatorCache[creator];
+                      final displayName = _creatorDisplayName(
+                        user,
+                        creator,
+                        context,
+                      );
+                      return Row(
+                        children: [
+                          _buildAvatar(
+                            creator: user,
+                            fallback: creator,
+                            textMuted: textMuted,
+                            baseUrl: baseUrl,
+                            size: 32,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              displayName,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   static String _commentSnippet(String content) {
@@ -1616,77 +1852,136 @@ class _MemoEngagementSectionState
       );
     }
 
-    if (_reactions.isEmpty) {
-      return Row(
-        children: [
-          Icon(Icons.favorite_border, size: 16, color: textMuted),
-          const SizedBox(width: 8),
-          Text(
-            context.t.strings.legacy.msg_no_likes_yet,
-            style: TextStyle(fontSize: 12, color: textMuted),
-          ),
-        ],
-      );
+    final likeReactions = _likeReactions();
+    final reactionSummaries = _otherReactionSummaries();
+    if (likeReactions.isEmpty && reactionSummaries.isEmpty) {
+      return const SizedBox.shrink();
     }
 
-    final total = _reactionTotal > 0 ? _reactionTotal : _reactions.length;
-    final unique = _uniqueReactions(_reactions);
-    final shown = unique.take(3).toList(growable: false);
+    final total = _reactionTotal > 0
+        ? _reactionTotal
+        : _countLikeCreators(likeReactions);
+    final unique = _uniqueReactions(likeReactions);
+    final shown = unique.take(8).toList(growable: false);
     final remaining = total - shown.length;
     const avatarSize = 28.0;
     const overlap = 18.0;
-    final width =
-        avatarSize +
-        ((shown.length - 1) * overlap) +
-        (remaining > 0 ? overlap : 0);
+    final width = shown.isEmpty
+        ? 0.0
+        : avatarSize + ((shown.length - 1) * overlap);
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.favorite, size: 16, color: MemoFlowPalette.primary),
-        const SizedBox(width: 8),
-        SizedBox(
-          height: avatarSize,
-          width: width < avatarSize ? avatarSize : width,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              for (var i = 0; i < shown.length; i++)
-                Positioned(
-                  left: i * overlap,
-                  child: _buildAvatar(
-                    creator: _creatorCache[shown[i].creator],
-                    fallback: shown[i].creator,
-                    textMuted: textMuted,
-                    baseUrl: baseUrl,
-                    size: avatarSize,
+        if (total > 0)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Icon(Icons.favorite, size: 16, color: MemoFlowPalette.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _showLikersSheet(
+                        textMuted: textMuted,
+                        baseUrl: baseUrl,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          children: [
+                            if (shown.isNotEmpty) ...[
+                              SizedBox(
+                                height: avatarSize,
+                                width: width,
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    for (var i = 0; i < shown.length; i++)
+                                      Positioned(
+                                        left: i * overlap,
+                                        child: _buildAvatar(
+                                          creator:
+                                              _creatorCache[shown[i].creator],
+                                          fallback: shown[i].creator,
+                                          textMuted: textMuted,
+                                          baseUrl: baseUrl,
+                                          size: avatarSize,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            if (remaining > 0) ...[
+                              if (shown.isNotEmpty) const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _remainingPeopleLabel(context, remaining),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: textMuted,
+                                  ),
+                                ),
+                              ),
+                            ] else if (shown.isEmpty)
+                              Expanded(
+                                child: Text(
+                                  total.toString(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: textMuted,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              if (remaining > 0)
-                Positioned(
-                  left: shown.length * overlap,
-                  child: Container(
-                    width: avatarSize,
-                    height: avatarSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : Colors.black.withValues(alpha: 0.06),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      '+$remaining',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: textMuted,
-                      ),
+              ],
+            ),
+          ),
+        if (reactionSummaries.isNotEmpty) ...[
+          if (total > 0) const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final summary in reactionSummaries)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.black.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '${summary.reactionType} ${summary.count}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: textMuted,
                     ),
                   ),
                 ),
             ],
           ),
-        ),
+        ],
       ],
     );
   }
@@ -1757,13 +2052,20 @@ class _MemoEngagementSectionState
         : 'Bearer ${account!.personalAccessToken}';
     final reactionCount = _reactionTotal > 0
         ? _reactionTotal
-        : _reactions.length;
+        : _countLikeCreators(_reactions);
     final commentCount = _commentTotal > 0 ? _commentTotal : _comments.length;
     final currentUser = account?.user.name.trim() ?? '';
+    final hasOwnLike = _hasMyLike(currentUser);
     final hasOwnComment =
         currentUser.isNotEmpty &&
         _comments.any((comment) => comment.creator.trim() == currentUser);
     final commentActive = _commenting || hasOwnComment;
+    final otherReactionSummaries = _otherReactionSummaries();
+    final showReactionSummary =
+        (_reactionsLoading && _reactions.isEmpty) ||
+        (_reactionsError != null && _reactions.isEmpty) ||
+        reactionCount > 0 ||
+        otherReactionSummaries.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.only(top: 16),
@@ -1773,10 +2075,11 @@ class _MemoEngagementSectionState
           Row(
             children: [
               _EngagementAction(
-                icon: Icons.favorite,
+                icon: hasOwnLike ? Icons.favorite : Icons.favorite_border,
                 label: context.t.strings.legacy.msg_like_2,
                 count: reactionCount,
-                color: MemoFlowPalette.primary,
+                color: hasOwnLike ? MemoFlowPalette.primary : textMuted,
+                onTap: _reactionUpdating ? null : _toggleLike,
               ),
               const SizedBox(width: 18),
               _EngagementAction(
@@ -1801,10 +2104,12 @@ class _MemoEngagementSectionState
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildReactionsRow(textMuted: textMuted, baseUrl: baseUrl),
-                const SizedBox(height: 12),
-                Divider(height: 1, color: borderColor.withValues(alpha: 0.6)),
-                const SizedBox(height: 10),
+                if (showReactionSummary) ...[
+                  _buildReactionsRow(textMuted: textMuted, baseUrl: baseUrl),
+                  const SizedBox(height: 12),
+                  Divider(height: 1, color: borderColor.withValues(alpha: 0.6)),
+                  const SizedBox(height: 10),
+                ],
                 _buildCommentsList(
                   textMain: textMain,
                   textMuted: textMuted,
