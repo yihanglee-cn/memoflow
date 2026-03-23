@@ -1,9 +1,13 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import 'parsers/bilibili_share_page_parser.dart';
+import 'parsers/generic_share_page_parser.dart';
+import 'parsers/share_page_parser.dart';
+import 'parsers/xiaohongshu_share_page_parser.dart';
 import 'share_capture_engine.dart';
 import 'share_clip_models.dart';
 
@@ -16,6 +20,7 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
   static const _pageLoadTimeout = Duration(seconds: 12);
   static const _dynamicWaitWindow = Duration(milliseconds: 2500);
   static const _dynamicPollInterval = Duration(milliseconds: 300);
+  static const _maxNetworkRecords = 200;
 
   final AssetBundle _assetBundle;
 
@@ -41,12 +46,25 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
     HeadlessInAppWebView? headlessWebView;
     final controllerCompleter = Completer<InAppWebViewController>();
     final pageReadyCompleter = Completer<void>();
+    final networkRecords = <ShareNetworkRecord>[];
     String? webViewError;
+
+    void addNetworkRecord(ShareNetworkRecord record) {
+      if (networkRecords.length >= _maxNetworkRecords) return;
+      if (normalizeShareText(record.url) == null) return;
+      networkRecords.add(record);
+    }
 
     try {
       headlessWebView = HeadlessInAppWebView(
         initialUrlRequest: URLRequest(url: WebUri.uri(request.url)),
-        initialSettings: InAppWebViewSettings(javaScriptEnabled: true),
+        initialSettings: InAppWebViewSettings(
+          javaScriptEnabled: true,
+          useOnLoadResource: true,
+          useShouldInterceptAjaxRequest: true,
+          useShouldInterceptFetchRequest: true,
+          mediaPlaybackRequiresUserGesture: false,
+        ),
         onWebViewCreated: (controller) {
           if (!controllerCompleter.isCompleted) {
             controllerCompleter.complete(controller);
@@ -64,6 +82,68 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
               pageReadyCompleter.complete();
             }
           }
+        },
+        shouldInterceptRequest: (controller, requestInfo) async {
+          addNetworkRecord(
+            ShareNetworkRecord(
+              kind: ShareNetworkRecordKind.request,
+              url: requestInfo.url.toString(),
+              method: normalizeShareText(requestInfo.method),
+              referer: requestInfo.headers?['Referer'],
+              headers: requestInfo.headers,
+            ),
+          );
+          return null;
+        },
+        shouldInterceptAjaxRequest: (controller, ajaxRequest) async {
+          addNetworkRecord(
+            ShareNetworkRecord(
+              kind: ShareNetworkRecordKind.ajax,
+              url: ajaxRequest.url?.toString() ?? '',
+              method: normalizeShareText(ajaxRequest.method),
+              referer: normalizeShareText(ajaxRequest.headers?.getHeaders()['Referer']?.toString()),
+              headers: ajaxRequest.headers?.getHeaders().map((key, value) => MapEntry(key, value.toString())),
+            ),
+          );
+          return ajaxRequest;
+        },
+        onAjaxReadyStateChange: (controller, ajaxRequest) async {
+          if (ajaxRequest.readyState == AjaxRequestReadyState.DONE) {
+            addNetworkRecord(
+              ShareNetworkRecord(
+                kind: ShareNetworkRecordKind.ajax,
+                url: ajaxRequest.url?.toString() ?? '',
+                method: normalizeShareText(ajaxRequest.method),
+                referer: normalizeShareText(ajaxRequest.headers?.getHeaders()['Referer']?.toString()),
+                headers: ajaxRequest.headers?.getHeaders().map((key, value) => MapEntry(key, value.toString())),
+                responseBody: _serializeResponseBody(ajaxRequest.response),
+              ),
+            );
+          }
+          return AjaxRequestAction.PROCEED;
+        },
+        shouldInterceptFetchRequest: (controller, fetchRequest) async {
+          addNetworkRecord(
+            ShareNetworkRecord(
+              kind: ShareNetworkRecordKind.fetch,
+              url: fetchRequest.url?.toString() ?? '',
+              method: normalizeShareText(fetchRequest.method),
+              referer: normalizeShareText(fetchRequest.referrer),
+              headers: fetchRequest.headers?.map(
+                (key, value) => MapEntry(key, value.toString()),
+              ),
+            ),
+          );
+          return fetchRequest;
+        },
+        onLoadResource: (controller, resource) {
+          addNetworkRecord(
+            ShareNetworkRecord(
+              kind: ShareNetworkRecordKind.resource,
+              url: resource.url?.toString() ?? '',
+              mimeType: normalizeShareText(resource.initiatorType),
+            ),
+          );
         },
       );
 
@@ -84,7 +164,7 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
       onStageChanged?.call(ShareCaptureStage.waitingForDynamicContent);
       await _waitForDynamicContent(controller);
 
-      onStageChanged?.call(ShareCaptureStage.parsingArticle);
+      onStageChanged?.call(ShareCaptureStage.detectingMedia);
       final rawResult = await controller.evaluateJavascript(
         source: _buildCaptureScript(
           readabilitySource: readabilitySource,
@@ -93,7 +173,7 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
       );
 
       onStageChanged?.call(ShareCaptureStage.buildingPreview);
-      return _parseCaptureResult(request, rawResult);
+      return _parseCaptureResult(request, rawResult, networkRecords);
     } on TimeoutException {
       return ShareCaptureResult.failure(
         finalUrl: request.url,
@@ -175,6 +255,7 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
   ShareCaptureResult _parseCaptureResult(
     ShareCaptureRequest request,
     dynamic rawResult,
+    List<ShareNetworkRecord> networkRecords,
   ) {
     final decoded = _decodeJsonMap(rawResult);
     if (decoded == null) {
@@ -187,54 +268,126 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
 
     final finalUrl =
         Uri.tryParse(decoded['finalUrl']?.toString() ?? '') ?? request.url;
-    final contentHtml = _normalizeText(decoded['contentHtml']?.toString());
-    final textContent = _normalizeText(decoded['textContent']?.toString());
+    final genericParser = GenericSharePageParser();
+    final specializedParsers = <SharePageParser>[
+      BilibiliSharePageParser(),
+      XiaohongshuSharePageParser(),
+    ];
+    final snapshot = SharePageSnapshot(
+      requestUrl: request.url,
+      finalUrl: finalUrl,
+      host: finalUrl.host.toLowerCase(),
+      bridgeData: decoded,
+      networkRecords: networkRecords,
+      userAgent: normalizeShareText(decoded['pageUserAgent']?.toString()),
+    );
+    final parserResults = <SharePageParserResult>[];
+    for (final parser in specializedParsers) {
+      if (parser.canParse(snapshot)) {
+        parserResults.add(parser.parse(snapshot));
+      }
+    }
+    parserResults.add(genericParser.parse(snapshot));
+    final merged = mergeSharePageParserResults(parserResults);
+
+    final contentHtml = normalizeShareText(merged.contentHtml) ??
+        normalizeShareText(decoded['contentHtml']?.toString());
+    final textContent = normalizeShareText(merged.textContent) ??
+        normalizeShareText(decoded['textContent']?.toString());
     final readabilitySucceeded = decoded['readabilitySucceeded'] == true;
     final length = (decoded['length'] as num?)?.toInt() ?? textContent?.length ?? 0;
-    final failureMessage = _normalizeText(decoded['error']?.toString());
+    final failureMessage = normalizeShareText(decoded['error']?.toString());
 
-    if ((contentHtml == null || contentHtml.isEmpty) &&
+    final resolvedPageKind = merged.pageKind != SharePageKind.unknown
+        ? merged.pageKind
+        : ((contentHtml ?? '').isNotEmpty || (textContent ?? '').length >= 80)
+        ? SharePageKind.article
+        : SharePageKind.unknown;
+
+    if (resolvedPageKind != SharePageKind.video &&
+        (contentHtml == null || contentHtml.isEmpty) &&
         (textContent == null || textContent.length < 80)) {
       return ShareCaptureResult.failure(
         finalUrl: finalUrl,
         failure: ShareCaptureFailure.parserEmpty,
-        failureMessage: failureMessage ?? 'Could not extract readable content from the shared page.',
-        pageTitle: _normalizeText(decoded['pageTitle']?.toString()),
-        articleTitle: _normalizeText(decoded['articleTitle']?.toString()),
-        siteName: _normalizeText(decoded['siteName']?.toString()),
-        excerpt: _normalizeText(decoded['excerpt']?.toString()),
+        failureMessage:
+            failureMessage ??
+            'Could not extract readable content from the shared page.',
+        pageTitle: normalizeShareText(decoded['pageTitle']?.toString()),
+        articleTitle:
+            normalizeShareText(merged.title) ??
+            normalizeShareText(decoded['articleTitle']?.toString()),
+        siteName:
+            normalizeShareText(merged.siteName) ??
+            normalizeShareText(decoded['siteName']?.toString()),
+        excerpt:
+            normalizeShareText(merged.excerpt) ??
+            normalizeShareText(decoded['excerpt']?.toString()),
         textContent: textContent,
+        pageKind: resolvedPageKind,
+        videoCandidates: merged.videoCandidates,
+        unsupportedVideoCandidates: merged.unsupportedVideoCandidates,
+        siteParserTag: merged.parserTag,
+        pageUserAgent: snapshot.userAgent,
       );
     }
 
     return ShareCaptureResult.success(
       finalUrl: finalUrl,
-      pageTitle: _normalizeText(decoded['pageTitle']?.toString()),
-      articleTitle: _normalizeText(decoded['articleTitle']?.toString()),
-      siteName: _normalizeText(decoded['siteName']?.toString()),
-      byline: _normalizeText(decoded['byline']?.toString()),
-      excerpt: _normalizeText(decoded['excerpt']?.toString()),
+      pageTitle: normalizeShareText(decoded['pageTitle']?.toString()),
+      articleTitle:
+          normalizeShareText(merged.title) ??
+          normalizeShareText(decoded['articleTitle']?.toString()),
+      siteName:
+          normalizeShareText(merged.siteName) ??
+          normalizeShareText(decoded['siteName']?.toString()),
+      byline:
+          normalizeShareText(merged.byline) ??
+          normalizeShareText(decoded['byline']?.toString()),
+      excerpt:
+          normalizeShareText(merged.excerpt) ??
+          normalizeShareText(decoded['excerpt']?.toString()),
       contentHtml: contentHtml,
       textContent: textContent,
-      leadImageUrl: _normalizeText(decoded['leadImageUrl']?.toString()),
+      leadImageUrl:
+          normalizeShareText(merged.leadImageUrl) ??
+          normalizeShareText(decoded['leadImageUrl']?.toString()),
       length: length,
       readabilitySucceeded: readabilitySucceeded,
+      pageKind: resolvedPageKind,
+      videoCandidates: merged.videoCandidates,
+      unsupportedVideoCandidates: merged.unsupportedVideoCandidates,
+      siteParserTag: merged.parserTag,
+      pageUserAgent: snapshot.userAgent,
     );
+  }
+
+  String? _serializeResponseBody(Object? value) {
+    if (value == null) return null;
+    try {
+      if (value is String) {
+        return value.length <= 12000 ? value : value.substring(0, 12000);
+      }
+      final encoded = jsonEncode(value);
+      return encoded.length <= 12000 ? encoded : encoded.substring(0, 12000);
+    } catch (_) {
+      return value.toString();
+    }
   }
 
   Map<String, dynamic>? _decodeJsonMap(dynamic rawResult) {
     if (rawResult is Map<String, dynamic>) return rawResult;
+    if (rawResult is Map) {
+      return rawResult.map((key, value) => MapEntry(key.toString(), value));
+    }
     if (rawResult is String && rawResult.isNotEmpty) {
       final decoded = jsonDecode(rawResult);
       if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) {
+        return decoded.map((key, value) => MapEntry(key.toString(), value));
+      }
     }
     return null;
-  }
-
-  String? _normalizeText(String? value) {
-    if (value == null) return null;
-    final normalized = value.trim();
-    return normalized.isEmpty ? null : normalized;
   }
 }
 
@@ -250,3 +403,4 @@ class _DomMetrics {
     return textDelta <= 40 && nodeDelta <= 4;
   }
 }
+

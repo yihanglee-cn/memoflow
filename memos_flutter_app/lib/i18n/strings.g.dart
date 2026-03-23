@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 7570 (1514 per locale)
+/// Strings: 7630 (1526 per locale)
 ///
-/// Built on 2026-03-20 at 02:54 UTC
+/// Built on 2026-03-23 at 03:00 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -171,6 +171,7 @@ class _StringsStringsEn {
 	late final _StringsStringsAiInsightEn aiInsight = _StringsStringsAiInsightEn._(_root);
 	late final _StringsStringsAiProxyEn aiProxy = _StringsStringsAiProxyEn._(_root);
 	late final _StringsStringsLegacyEn legacy = _StringsStringsLegacyEn._(_root);
+	late final _StringsStringsShareClipEn shareClip = _StringsStringsShareClipEn._(_root);
 }
 
 // Path: strings.common
@@ -1583,6 +1584,45 @@ class _StringsStringsLegacyEn {
 	String get msg_links_label => 'Links';
 	late final _StringsStringsLegacyAppDrawerEn app_drawer = _StringsStringsLegacyAppDrawerEn._(_root);
 	late final _StringsStringsLegacyAiSummaryEn ai_summary = _StringsStringsLegacyAiSummaryEn._(_root);
+}
+
+// Path: strings.shareClip
+class _StringsStringsShareClipEn {
+	_StringsStringsShareClipEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get videoDetected => 'Detected as video content';
+	String get linkOnlyLabel => 'Save Link Only';
+	String get originalLinkLabel => 'Original link';
+	String get videoCandidatesTitle => 'Video candidates';
+	String get downloadAndAttach => 'Download & Attach';
+	String get notSupportedLabel => 'Not supported';
+	String get directLinkLabel => 'Direct link';
+	String get xiaohongshuLabel => 'Xiaohongshu';
+	String get unsupportedDash => 'Separate DASH stream is not supported';
+	String get unsupportedStream => 'Streaming-only resource is not supported';
+	String get fileTooLargeTitle => 'Video is larger than 30 MB';
+	String fileTooLargeBody({required Object size}) => 'This video is ${size}, which exceeds the server attachment limit.';
+	String get compressAndSave => 'Compress & Save';
+	String get fallbackParseFailed => 'Video parsing failed, so the app saved the link only.';
+	String get fallbackDownloadFailed => 'Video download failed, so the app saved the link only.';
+	String get fallbackCompressionFailed => 'Video compression failed, so the app saved the link only.';
+	String get fallbackCompressionStillTooLarge => 'Compressed video is still larger than 30 MB, so the app saved the link only.';
+	String get failureUnsupportedUrl => 'Unsupported URL scheme.';
+	String get failureLoadTimeout => 'Timed out while loading the page.';
+	String get failureWebView => 'WebView failed to load the page.';
+	String get failureDom => 'Unable to read page content.';
+	String get failureParserEmpty => 'Could not extract readable content.';
+	String get failureUnknown => 'Something went wrong while preparing this share preview.';
+	String get stageLoadingPage => 'Loading page';
+	String get stageWaitingContent => 'Waiting for dynamic content';
+	String get stageDetectingMedia => 'Detecting video resources';
+	String get stageParsingArticle => 'Parsing article';
+	String get stageBuildingPreview => 'Building preview';
+	String get stageDownloadingVideo => 'Downloading video';
+	String get stageCompressingVideo => 'Compressing video';
 }
 
 // Path: strings.login.mode
@@ -6267,6 +6307,7 @@ class _StringsStringsZhHans extends _StringsStringsEn {
 	@override late final _StringsStringsAiInsightZhHans aiInsight = _StringsStringsAiInsightZhHans._(_root);
 	@override late final _StringsStringsAiProxyZhHans aiProxy = _StringsStringsAiProxyZhHans._(_root);
 	@override late final _StringsStringsLegacyZhHans legacy = _StringsStringsLegacyZhHans._(_root);
+	@override late final _StringsStringsShareClipZhHans shareClip = _StringsStringsShareClipZhHans._(_root);
 }
 
 // Path: strings.common
@@ -7679,6 +7720,45 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override late final _StringsStringsLegacyAppDrawerZhHans app_drawer = _StringsStringsLegacyAppDrawerZhHans._(_root);
 	@override late final _StringsStringsLegacyAiSummaryZhHans ai_summary = _StringsStringsLegacyAiSummaryZhHans._(_root);
 	@override String get msg_random_review_source_scope => '笔记来源';
+}
+
+// Path: strings.shareClip
+class _StringsStringsShareClipZhHans extends _StringsStringsShareClipEn {
+	_StringsStringsShareClipZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get videoDetected => '已识别为视频内容';
+	@override String get linkOnlyLabel => '仅保存链接';
+	@override String get originalLinkLabel => '原始链接';
+	@override String get videoCandidatesTitle => '视频候选';
+	@override String get downloadAndAttach => '下载并附加';
+	@override String get notSupportedLabel => '暂不支持';
+	@override String get directLinkLabel => '直链';
+	@override String get xiaohongshuLabel => '小红书';
+	@override String get unsupportedDash => 'DASH 音视频分离资源暂不支持';
+	@override String get unsupportedStream => '仅流媒体资源暂不支持';
+	@override String get fileTooLargeTitle => '视频大小超过 30MB';
+	@override String fileTooLargeBody({required Object size}) => '当前视频大小为 ${size}，已超过服务器附件限制。';
+	@override String get compressAndSave => '压缩后保存';
+	@override String get fallbackParseFailed => '视频解析失败，已回退为仅保存链接。';
+	@override String get fallbackDownloadFailed => '视频下载失败，已回退为仅保存链接。';
+	@override String get fallbackCompressionFailed => '视频压缩失败，已回退为仅保存链接。';
+	@override String get fallbackCompressionStillTooLarge => '压缩后视频仍超过 30MB，已回退为仅保存链接。';
+	@override String get failureUnsupportedUrl => '不支持的 URL 类型。';
+	@override String get failureLoadTimeout => '加载页面超时。';
+	@override String get failureWebView => 'WebView 加载页面失败。';
+	@override String get failureDom => '无法读取页面内容。';
+	@override String get failureParserEmpty => '未能提取到可阅读内容。';
+	@override String get failureUnknown => '准备分享预览时发生异常。';
+	@override String get stageLoadingPage => '正在加载页面';
+	@override String get stageWaitingContent => '等待动态内容';
+	@override String get stageDetectingMedia => '正在识别视频资源';
+	@override String get stageParsingArticle => '正在解析图文内容';
+	@override String get stageBuildingPreview => '正在生成预览';
+	@override String get stageDownloadingVideo => '正在下载视频';
+	@override String get stageCompressingVideo => '正在压缩视频';
 }
 
 // Path: strings.login.mode
@@ -11805,6 +11885,36 @@ extension on Translations {
 			case 'strings.legacy.ai_summary.error_empty_response': return 'AI response is empty';
 			case 'strings.legacy.ai_summary.error_missing_content': return 'AI response content is missing';
 			case 'strings.legacy.ai_summary.default_prompt': return 'You are a minimalist note assistant. Extract key points and present them in a clean format. Keep the tone professional, warm, and concise. Prefer lists and short paragraphs.';
+			case 'strings.shareClip.videoDetected': return 'Detected as video content';
+			case 'strings.shareClip.linkOnlyLabel': return 'Save Link Only';
+			case 'strings.shareClip.originalLinkLabel': return 'Original link';
+			case 'strings.shareClip.videoCandidatesTitle': return 'Video candidates';
+			case 'strings.shareClip.downloadAndAttach': return 'Download & Attach';
+			case 'strings.shareClip.notSupportedLabel': return 'Not supported';
+			case 'strings.shareClip.directLinkLabel': return 'Direct link';
+			case 'strings.shareClip.xiaohongshuLabel': return 'Xiaohongshu';
+			case 'strings.shareClip.unsupportedDash': return 'Separate DASH stream is not supported';
+			case 'strings.shareClip.unsupportedStream': return 'Streaming-only resource is not supported';
+			case 'strings.shareClip.fileTooLargeTitle': return 'Video is larger than 30 MB';
+			case 'strings.shareClip.fileTooLargeBody': return ({required Object size}) => 'This video is ${size}, which exceeds the server attachment limit.';
+			case 'strings.shareClip.compressAndSave': return 'Compress & Save';
+			case 'strings.shareClip.fallbackParseFailed': return 'Video parsing failed, so the app saved the link only.';
+			case 'strings.shareClip.fallbackDownloadFailed': return 'Video download failed, so the app saved the link only.';
+			case 'strings.shareClip.fallbackCompressionFailed': return 'Video compression failed, so the app saved the link only.';
+			case 'strings.shareClip.fallbackCompressionStillTooLarge': return 'Compressed video is still larger than 30 MB, so the app saved the link only.';
+			case 'strings.shareClip.failureUnsupportedUrl': return 'Unsupported URL scheme.';
+			case 'strings.shareClip.failureLoadTimeout': return 'Timed out while loading the page.';
+			case 'strings.shareClip.failureWebView': return 'WebView failed to load the page.';
+			case 'strings.shareClip.failureDom': return 'Unable to read page content.';
+			case 'strings.shareClip.failureParserEmpty': return 'Could not extract readable content.';
+			case 'strings.shareClip.failureUnknown': return 'Something went wrong while preparing this share preview.';
+			case 'strings.shareClip.stageLoadingPage': return 'Loading page';
+			case 'strings.shareClip.stageWaitingContent': return 'Waiting for dynamic content';
+			case 'strings.shareClip.stageDetectingMedia': return 'Detecting video resources';
+			case 'strings.shareClip.stageParsingArticle': return 'Parsing article';
+			case 'strings.shareClip.stageBuildingPreview': return 'Building preview';
+			case 'strings.shareClip.stageDownloadingVideo': return 'Downloading video';
+			case 'strings.shareClip.stageCompressingVideo': return 'Compressing video';
 			default: return null;
 		}
 	}
@@ -16371,6 +16481,36 @@ extension on _StringsZhHans {
 			case 'strings.legacy.ai_summary.error_missing_content': return 'AI 响应内容缺失';
 			case 'strings.legacy.ai_summary.default_prompt': return '你是一位极简主义的笔记助手，擅长提炼核心观点并以优雅的格式排版。在回复时，请保持专业、温和且简洁的语气。尽量使用列表和简短的段落。';
 			case 'strings.legacy.msg_random_review_source_scope': return '笔记来源';
+			case 'strings.shareClip.videoDetected': return '已识别为视频内容';
+			case 'strings.shareClip.linkOnlyLabel': return '仅保存链接';
+			case 'strings.shareClip.originalLinkLabel': return '原始链接';
+			case 'strings.shareClip.videoCandidatesTitle': return '视频候选';
+			case 'strings.shareClip.downloadAndAttach': return '下载并附加';
+			case 'strings.shareClip.notSupportedLabel': return '暂不支持';
+			case 'strings.shareClip.directLinkLabel': return '直链';
+			case 'strings.shareClip.xiaohongshuLabel': return '小红书';
+			case 'strings.shareClip.unsupportedDash': return 'DASH 音视频分离资源暂不支持';
+			case 'strings.shareClip.unsupportedStream': return '仅流媒体资源暂不支持';
+			case 'strings.shareClip.fileTooLargeTitle': return '视频大小超过 30MB';
+			case 'strings.shareClip.fileTooLargeBody': return ({required Object size}) => '当前视频大小为 ${size}，已超过服务器附件限制。';
+			case 'strings.shareClip.compressAndSave': return '压缩后保存';
+			case 'strings.shareClip.fallbackParseFailed': return '视频解析失败，已回退为仅保存链接。';
+			case 'strings.shareClip.fallbackDownloadFailed': return '视频下载失败，已回退为仅保存链接。';
+			case 'strings.shareClip.fallbackCompressionFailed': return '视频压缩失败，已回退为仅保存链接。';
+			case 'strings.shareClip.fallbackCompressionStillTooLarge': return '压缩后视频仍超过 30MB，已回退为仅保存链接。';
+			case 'strings.shareClip.failureUnsupportedUrl': return '不支持的 URL 类型。';
+			case 'strings.shareClip.failureLoadTimeout': return '加载页面超时。';
+			case 'strings.shareClip.failureWebView': return 'WebView 加载页面失败。';
+			case 'strings.shareClip.failureDom': return '无法读取页面内容。';
+			case 'strings.shareClip.failureParserEmpty': return '未能提取到可阅读内容。';
+			case 'strings.shareClip.failureUnknown': return '准备分享预览时发生异常。';
+			case 'strings.shareClip.stageLoadingPage': return '正在加载页面';
+			case 'strings.shareClip.stageWaitingContent': return '等待动态内容';
+			case 'strings.shareClip.stageDetectingMedia': return '正在识别视频资源';
+			case 'strings.shareClip.stageParsingArticle': return '正在解析图文内容';
+			case 'strings.shareClip.stageBuildingPreview': return '正在生成预览';
+			case 'strings.shareClip.stageDownloadingVideo': return '正在下载视频';
+			case 'strings.shareClip.stageCompressingVideo': return '正在压缩视频';
 			default: return null;
 		}
 	}

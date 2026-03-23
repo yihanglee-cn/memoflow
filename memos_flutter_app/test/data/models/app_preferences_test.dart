@@ -2,6 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/data/models/app_preferences.dart';
 
 void main() {
+  test('disables third-party share by default', () {
+    expect(AppPreferences.defaults.thirdPartyShareEnabled, isFalse);
+  });
+
   test('ignores legacy supporter crown field when reading preferences', () {
     final json = <String, dynamic>{
       ...AppPreferences.defaultsForLanguage(AppLanguage.en).toJson(),

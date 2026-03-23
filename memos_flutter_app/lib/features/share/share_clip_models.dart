@@ -16,11 +16,137 @@ enum ShareCaptureFailure {
 enum ShareCaptureStage {
   loadingPage,
   waitingForDynamicContent,
+  detectingMedia,
   parsingArticle,
   buildingPreview,
+  downloadingVideo,
+  compressingVideo,
 }
 
-enum ShareClipPhase { loading, success, failure, composing }
+enum ShareClipPhase { loading, success, failure, processingVideo, composing }
+
+enum SharePageKind { article, video, unknown }
+
+enum ShareVideoSource {
+  parser,
+  meta,
+  dom,
+  jsonLd,
+  link,
+  request,
+  ajax,
+  fetch,
+  resource,
+}
+
+@immutable
+class ShareVideoCandidate {
+  const ShareVideoCandidate({
+    required this.id,
+    required this.url,
+    required this.source,
+    this.title,
+    this.mimeType,
+    this.thumbnailUrl,
+    this.referer,
+    this.headers,
+    this.cookieUrl,
+    this.isDirectDownloadable = false,
+    this.priority = 0,
+    this.parserTag,
+    this.reason,
+  });
+
+  final String id;
+  final String url;
+  final String? title;
+  final String? mimeType;
+  final String? thumbnailUrl;
+  final ShareVideoSource source;
+  final String? referer;
+  final Map<String, String>? headers;
+  final String? cookieUrl;
+  final bool isDirectDownloadable;
+  final int priority;
+  final String? parserTag;
+  final String? reason;
+
+  String get dedupeKey => normalizeShareVideoUrl(url);
+
+  ShareVideoCandidate copyWith({
+    String? id,
+    String? url,
+    String? title,
+    String? mimeType,
+    String? thumbnailUrl,
+    ShareVideoSource? source,
+    String? referer,
+    Map<String, String>? headers,
+    String? cookieUrl,
+    bool? isDirectDownloadable,
+    int? priority,
+    String? parserTag,
+    String? reason,
+  }) {
+    return ShareVideoCandidate(
+      id: id ?? this.id,
+      url: url ?? this.url,
+      title: title ?? this.title,
+      mimeType: mimeType ?? this.mimeType,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      source: source ?? this.source,
+      referer: referer ?? this.referer,
+      headers: headers ?? this.headers,
+      cookieUrl: cookieUrl ?? this.cookieUrl,
+      isDirectDownloadable:
+          isDirectDownloadable ?? this.isDirectDownloadable,
+      priority: priority ?? this.priority,
+      parserTag: parserTag ?? this.parserTag,
+      reason: reason ?? this.reason,
+    );
+  }
+}
+
+@immutable
+class ShareDeferredVideoAttachmentRequest {
+  const ShareDeferredVideoAttachmentRequest({
+    required this.captureResult,
+    required this.candidate,
+  });
+
+  final ShareCaptureResult captureResult;
+  final ShareVideoCandidate candidate;
+
+  String get id => candidate.id;
+
+  String get title =>
+      normalizeShareText(candidate.title) ??
+      normalizeShareText(captureResult.articleTitle) ??
+      normalizeShareText(captureResult.pageTitle) ??
+      captureResult.finalUrl.host;
+
+  String? get thumbnailUrl =>
+      normalizeShareText(candidate.thumbnailUrl) ??
+      normalizeShareText(captureResult.leadImageUrl);
+}
+
+String normalizeShareVideoUrl(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return '';
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return trimmed;
+  if (uri.scheme == 'blob' || uri.scheme == 'data') {
+    return trimmed;
+  }
+  final normalized = uri.replace(fragment: '');
+  return normalized.toString();
+}
+
+String? normalizeShareText(String? value) {
+  if (value == null) return null;
+  final normalized = value.trim();
+  return normalized.isEmpty ? null : normalized;
+}
 
 @immutable
 class ShareCaptureRequest {
@@ -52,6 +178,11 @@ class ShareCaptureResult {
     this.leadImageUrl,
     this.length = 0,
     this.readabilitySucceeded = false,
+    this.pageKind = SharePageKind.unknown,
+    this.videoCandidates = const [],
+    this.unsupportedVideoCandidates = const [],
+    this.siteParserTag,
+    this.pageUserAgent,
     this.failure,
     this.failureMessage,
   });
@@ -68,6 +199,11 @@ class ShareCaptureResult {
     String? leadImageUrl,
     int length = 0,
     bool readabilitySucceeded = false,
+    SharePageKind pageKind = SharePageKind.unknown,
+    List<ShareVideoCandidate> videoCandidates = const [],
+    List<ShareVideoCandidate> unsupportedVideoCandidates = const [],
+    String? siteParserTag,
+    String? pageUserAgent,
   }) : this(
          status: ShareCaptureStatus.success,
          finalUrl: finalUrl,
@@ -81,6 +217,11 @@ class ShareCaptureResult {
          leadImageUrl: leadImageUrl,
          length: length,
          readabilitySucceeded: readabilitySucceeded,
+         pageKind: pageKind,
+         videoCandidates: videoCandidates,
+         unsupportedVideoCandidates: unsupportedVideoCandidates,
+         siteParserTag: siteParserTag,
+         pageUserAgent: pageUserAgent,
        );
 
   const ShareCaptureResult.failure({
@@ -92,6 +233,11 @@ class ShareCaptureResult {
     String? siteName,
     String? excerpt,
     String? textContent,
+    SharePageKind pageKind = SharePageKind.unknown,
+    List<ShareVideoCandidate> videoCandidates = const [],
+    List<ShareVideoCandidate> unsupportedVideoCandidates = const [],
+    String? siteParserTag,
+    String? pageUserAgent,
   }) : this(
          status: ShareCaptureStatus.failure,
          finalUrl: finalUrl,
@@ -102,6 +248,11 @@ class ShareCaptureResult {
          siteName: siteName,
          excerpt: excerpt,
          textContent: textContent,
+         pageKind: pageKind,
+         videoCandidates: videoCandidates,
+         unsupportedVideoCandidates: unsupportedVideoCandidates,
+         siteParserTag: siteParserTag,
+         pageUserAgent: pageUserAgent,
        );
 
   final ShareCaptureStatus status;
@@ -116,6 +267,11 @@ class ShareCaptureResult {
   final String? leadImageUrl;
   final int length;
   final bool readabilitySucceeded;
+  final SharePageKind pageKind;
+  final List<ShareVideoCandidate> videoCandidates;
+  final List<ShareVideoCandidate> unsupportedVideoCandidates;
+  final String? siteParserTag;
+  final String? pageUserAgent;
   final ShareCaptureFailure? failure;
   final String? failureMessage;
 
@@ -124,6 +280,13 @@ class ShareCaptureResult {
   bool get hasHtmlContent => (contentHtml ?? '').trim().isNotEmpty;
 
   bool get hasTextContent => (textContent ?? '').trim().isNotEmpty;
+
+  bool get hasDirectVideoCandidates => videoCandidates.isNotEmpty;
+
+  bool get hasAnyVideoCandidates =>
+      videoCandidates.isNotEmpty || unsupportedVideoCandidates.isNotEmpty;
+
+  bool get isVideoPage => pageKind == SharePageKind.video;
 }
 
 @immutable
@@ -132,11 +295,32 @@ class ShareComposeRequest {
     required this.text,
     required this.selectionOffset,
     this.attachmentPaths = const [],
+    this.deferredVideoAttachments = const [],
+    this.userMessage,
   });
 
   final String text;
   final int selectionOffset;
   final List<String> attachmentPaths;
+  final List<ShareDeferredVideoAttachmentRequest> deferredVideoAttachments;
+  final String? userMessage;
+
+  ShareComposeRequest copyWith({
+    String? text,
+    int? selectionOffset,
+    List<String>? attachmentPaths,
+    List<ShareDeferredVideoAttachmentRequest>? deferredVideoAttachments,
+    String? userMessage,
+  }) {
+    return ShareComposeRequest(
+      text: text ?? this.text,
+      selectionOffset: selectionOffset ?? this.selectionOffset,
+      attachmentPaths: attachmentPaths ?? this.attachmentPaths,
+      deferredVideoAttachments:
+          deferredVideoAttachments ?? this.deferredVideoAttachments,
+      userMessage: userMessage ?? this.userMessage,
+    );
+  }
 }
 
 @immutable
@@ -147,6 +331,11 @@ class ShareClipViewState {
     required this.linkOnlyRequest,
     this.result,
     this.previewText,
+    this.processingMessage,
+    this.activeVideoId,
+    this.downloadProgress,
+    this.compressionProgress,
+    this.autoComposeRequest,
   });
 
   const ShareClipViewState.loading({
@@ -163,6 +352,11 @@ class ShareClipViewState {
   final ShareComposeRequest linkOnlyRequest;
   final ShareCaptureResult? result;
   final String? previewText;
+  final String? processingMessage;
+  final String? activeVideoId;
+  final double? downloadProgress;
+  final double? compressionProgress;
+  final ShareComposeRequest? autoComposeRequest;
 
   ShareClipViewState copyWith({
     ShareClipPhase? phase,
@@ -170,8 +364,18 @@ class ShareClipViewState {
     ShareComposeRequest? linkOnlyRequest,
     ShareCaptureResult? result,
     String? previewText,
+    String? processingMessage,
+    String? activeVideoId,
+    double? downloadProgress,
+    double? compressionProgress,
+    ShareComposeRequest? autoComposeRequest,
     bool clearResult = false,
     bool clearPreviewText = false,
+    bool clearProcessingMessage = false,
+    bool clearActiveVideoId = false,
+    bool clearDownloadProgress = false,
+    bool clearCompressionProgress = false,
+    bool clearAutoComposeRequest = false,
   }) {
     return ShareClipViewState(
       phase: phase ?? this.phase,
@@ -179,6 +383,21 @@ class ShareClipViewState {
       linkOnlyRequest: linkOnlyRequest ?? this.linkOnlyRequest,
       result: clearResult ? null : (result ?? this.result),
       previewText: clearPreviewText ? null : (previewText ?? this.previewText),
+      processingMessage: clearProcessingMessage
+          ? null
+          : (processingMessage ?? this.processingMessage),
+      activeVideoId: clearActiveVideoId
+          ? null
+          : (activeVideoId ?? this.activeVideoId),
+      downloadProgress: clearDownloadProgress
+          ? null
+          : (downloadProgress ?? this.downloadProgress),
+      compressionProgress: clearCompressionProgress
+          ? null
+          : (compressionProgress ?? this.compressionProgress),
+      autoComposeRequest: clearAutoComposeRequest
+          ? null
+          : (autoComposeRequest ?? this.autoComposeRequest),
     );
   }
 }

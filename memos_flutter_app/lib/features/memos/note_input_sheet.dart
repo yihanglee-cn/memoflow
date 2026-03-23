@@ -34,7 +34,11 @@ import '../../state/settings/preferences_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../../state/memos/note_input_providers.dart';
+import '../share/share_clip_models.dart';
+import '../share/share_video_compression_service.dart';
+import '../share/share_video_download_service.dart';
 import 'attachment_gallery_screen.dart';
+import 'attachment_video_screen.dart';
 import 'compose_toolbar_shared.dart';
 import 'gallery_attachment_picker.dart';
 import 'memo_video_grid.dart';
@@ -48,29 +52,89 @@ import '../../i18n/strings.g.dart';
 typedef _PendingAttachment = MemoComposerPendingAttachment;
 typedef _LinkedMemo = MemoComposerLinkedMemo;
 
+enum _DeferredShareVideoPhase {
+  preparing,
+  downloading,
+  awaitingCompression,
+  compressing,
+  completed,
+  removed,
+}
+
+enum _DeferredShareVideoFailure {
+  downloadFailed,
+  compressionFailed,
+  compressionStillTooLarge,
+}
+
+class _DeferredShareVideoTask {
+  _DeferredShareVideoTask({required this.request});
+
+  final ShareDeferredVideoAttachmentRequest request;
+  Map<String, String> headers = const <String, String>{};
+  int? remoteSize;
+  double progress = 0;
+  _DeferredShareVideoPhase phase = _DeferredShareVideoPhase.preparing;
+  bool cancelled = false;
+
+  String get id => request.id;
+
+  String get title => request.title;
+
+  String? get thumbnailUrl => request.thumbnailUrl;
+
+  bool get isPending =>
+      !cancelled &&
+      phase != _DeferredShareVideoPhase.completed &&
+      phase != _DeferredShareVideoPhase.removed;
+
+  bool get isRemovable => phase != _DeferredShareVideoPhase.completed;
+
+  double get overallProgress {
+    return switch (phase) {
+      _DeferredShareVideoPhase.preparing => 0,
+      _DeferredShareVideoPhase.downloading => progress.clamp(0, 1) * 0.72,
+      _DeferredShareVideoPhase.awaitingCompression => 0.72,
+      _DeferredShareVideoPhase.compressing =>
+        0.72 + progress.clamp(0, 1) * 0.28,
+      _DeferredShareVideoPhase.completed || _DeferredShareVideoPhase.removed => 1,
+    };
+  }
+}
+
 class NoteInputSheet extends ConsumerStatefulWidget {
   const NoteInputSheet({
     super.key,
     this.initialText,
     this.initialSelection,
     this.initialAttachmentPaths = const [],
+    this.initialDeferredVideoAttachments = const [],
     this.ignoreDraft = false,
     this.autoFocus = true,
+    this.shareVideoDownloadService,
+    this.shareVideoCompressionService,
   });
 
   final String? initialText;
   final TextSelection? initialSelection;
   final List<String> initialAttachmentPaths;
+  final List<ShareDeferredVideoAttachmentRequest> initialDeferredVideoAttachments;
   final bool ignoreDraft;
   final bool autoFocus;
+  final ShareVideoDownloadService? shareVideoDownloadService;
+  final ShareVideoCompressionService? shareVideoCompressionService;
 
   static Future<void> show(
     BuildContext context, {
     String? initialText,
     TextSelection? initialSelection,
     List<String> initialAttachmentPaths = const [],
+    List<ShareDeferredVideoAttachmentRequest> initialDeferredVideoAttachments =
+        const [],
     bool ignoreDraft = false,
     bool autoFocus = true,
+    ShareVideoDownloadService? shareVideoDownloadService,
+    ShareVideoCompressionService? shareVideoCompressionService,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -83,8 +147,11 @@ class NoteInputSheet extends ConsumerStatefulWidget {
         initialText: initialText,
         initialSelection: initialSelection,
         initialAttachmentPaths: initialAttachmentPaths,
+        initialDeferredVideoAttachments: initialDeferredVideoAttachments,
         ignoreDraft: ignoreDraft,
         autoFocus: autoFocus,
+        shareVideoDownloadService: shareVideoDownloadService,
+        shareVideoCompressionService: shareVideoCompressionService,
       ),
     );
   }
@@ -103,11 +170,32 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   ProviderSubscription<AsyncValue<String>>? _draftSubscription;
   var _didApplyDraft = false;
   var _didSeedInitialAttachments = false;
+  var _didSeedInitialDeferredVideos = false;
   List<TagStat> _tagStatsCache = const [];
   late final NoteDraftController _noteDraftController;
+  late final ShareVideoDownloadService _shareVideoDownloadService;
+  late final ShareVideoCompressionService _shareVideoCompressionService;
+  final List<_DeferredShareVideoTask> _deferredShareVideoTasks = [];
   List<_LinkedMemo> get _linkedMemos => _composer.linkedMemos;
   List<_PendingAttachment> get _pendingAttachments =>
       _composer.pendingAttachments;
+  List<_DeferredShareVideoTask> get _visibleDeferredShareVideoTasks =>
+      _deferredShareVideoTasks
+          .where((task) => task.phase != _DeferredShareVideoPhase.removed)
+          .toList(growable: false);
+  bool get _hasPendingDeferredShareVideoTasks =>
+      _deferredShareVideoTasks.any((task) => task.isPending);
+  double? get _deferredShareVideoProgress {
+    final active = _deferredShareVideoTasks.where((task) => task.isPending).toList(
+      growable: false,
+    );
+    if (active.isEmpty) return null;
+    final total = active.fold<double>(
+      0,
+      (sum, task) => sum + task.overallProgress,
+    );
+    return (total / active.length).clamp(0, 1);
+  }
   final _tagMenuKey = GlobalKey();
   final _templateMenuKey = GlobalKey();
   final _todoMenuKey = GlobalKey();
@@ -126,6 +214,10 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   void initState() {
     super.initState();
     _noteDraftController = ref.read(noteDraftProvider.notifier);
+    _shareVideoDownloadService =
+        widget.shareVideoDownloadService ?? ShareVideoDownloadService();
+    _shareVideoCompressionService =
+        widget.shareVideoCompressionService ?? ShareVideoCompressionService();
     _composer = MemoComposerController(
       initialText: widget.initialText ?? '',
       initialSelection: widget.initialSelection,
@@ -133,7 +225,8 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     _editorFocusNode = FocusNode();
     if (widget.ignoreDraft ||
         _controller.text.trim().isNotEmpty ||
-        widget.initialAttachmentPaths.isNotEmpty) {
+        widget.initialAttachmentPaths.isNotEmpty ||
+        widget.initialDeferredVideoAttachments.isNotEmpty) {
       _didApplyDraft = true;
     }
     _controller.addListener(_handleContentChanged);
@@ -142,6 +235,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     _applyDefaultVisibility(ref.read(userGeneralSettingProvider));
     _loadTagStats();
     unawaited(_seedInitialAttachments());
+    unawaited(_seedInitialDeferredShareVideos());
     _draftSubscription = ref.listenManual<AsyncValue<String>>(
       noteDraftProvider,
       (prev, next) {
@@ -235,6 +329,252 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     setState(() {
       _composer.addPendingAttachments(added);
     });
+  }
+
+  Future<void> _seedInitialDeferredShareVideos() async {
+    if (_didSeedInitialDeferredVideos) return;
+    _didSeedInitialDeferredVideos = true;
+    final requests = widget.initialDeferredVideoAttachments;
+    if (requests.isEmpty) return;
+
+    final tasks = requests
+        .map((request) => _DeferredShareVideoTask(request: request))
+        .toList(growable: false);
+    if (!mounted) return;
+    setState(() => _deferredShareVideoTasks.addAll(tasks));
+    for (final task in tasks) {
+      unawaited(_processDeferredShareVideo(task.id));
+    }
+  }
+
+  _DeferredShareVideoTask? _findDeferredShareVideoTask(String id) {
+    for (final task in _deferredShareVideoTasks) {
+      if (task.id == id) return task;
+    }
+    return null;
+  }
+
+  Future<void> _processDeferredShareVideo(String id) async {
+    final task = _findDeferredShareVideoTask(id);
+    if (task == null || task.cancelled) return;
+
+    String? downloadedPath;
+    String? compressedPath;
+    try {
+      final probe = await _shareVideoDownloadService.probe(
+        result: task.request.captureResult,
+        candidate: task.request.candidate,
+      );
+      final stillActive = _findDeferredShareVideoTask(id);
+      if (!mounted || stillActive == null || stillActive.cancelled) {
+        return;
+      }
+      setState(() {
+        stillActive.headers = probe.headers;
+        stillActive.remoteSize = probe.contentLength;
+        stillActive.phase = _DeferredShareVideoPhase.downloading;
+        stillActive.progress = 0;
+      });
+
+      final download = await _shareVideoDownloadService.download(
+        result: task.request.captureResult,
+        candidate: task.request.candidate,
+        onProgress: (progress) {
+          final activeTask = _findDeferredShareVideoTask(id);
+          if (!mounted || activeTask == null || activeTask.cancelled) return;
+          setState(() {
+            activeTask.phase = _DeferredShareVideoPhase.downloading;
+            activeTask.progress = progress.clamp(0, 1);
+          });
+        },
+      );
+      downloadedPath = download.filePath;
+
+      final activeTask = _findDeferredShareVideoTask(id);
+      if (!mounted || activeTask == null || activeTask.cancelled) {
+        await _cleanupShareVideoFile(downloadedPath);
+        return;
+      }
+
+      var resolvedPath = download.filePath;
+      var resolvedSize = download.fileSize;
+      if (resolvedSize > kShareVideoAttachmentLimitBytes) {
+        setState(() {
+          activeTask.phase = _DeferredShareVideoPhase.awaitingCompression;
+          activeTask.progress = 1;
+        });
+        final shouldCompress = await _confirmDeferredVideoCompression(
+          resolvedSize,
+        );
+        final compressionTask = _findDeferredShareVideoTask(id);
+        if (!mounted || compressionTask == null || compressionTask.cancelled) {
+          await _cleanupShareVideoFile(downloadedPath);
+          return;
+        }
+        if (!shouldCompress) {
+          await _cleanupShareVideoFile(downloadedPath);
+          await _removeDeferredShareVideoTask(id);
+          return;
+        }
+
+        setState(() {
+          compressionTask.phase = _DeferredShareVideoPhase.compressing;
+          compressionTask.progress = 0;
+        });
+        final compression = await _shareVideoCompressionService.compressToFit(
+          inputPath: download.filePath,
+          onProgress: (progress) {
+            final nextTask = _findDeferredShareVideoTask(id);
+            if (!mounted || nextTask == null || nextTask.cancelled) return;
+            setState(() {
+              nextTask.phase = _DeferredShareVideoPhase.compressing;
+              nextTask.progress = progress.clamp(0, 1);
+            });
+          },
+        );
+        if (compression == null) {
+          await _cleanupShareVideoFile(downloadedPath);
+          await _removeDeferredShareVideoTask(id);
+          _showDeferredVideoFailure(
+            _DeferredShareVideoFailure.compressionFailed,
+          );
+          return;
+        }
+        compressedPath = compression.filePath;
+        resolvedPath = compression.filePath;
+        resolvedSize = compression.fileSize;
+        if (compression.wasCompressed && compressedPath != downloadedPath) {
+          await _cleanupShareVideoFile(downloadedPath);
+          downloadedPath = null;
+        }
+        if (resolvedSize > kShareVideoAttachmentLimitBytes) {
+          await _cleanupShareVideoFile(resolvedPath);
+          await _removeDeferredShareVideoTask(id);
+          _showDeferredVideoFailure(
+            _DeferredShareVideoFailure.compressionStillTooLarge,
+          );
+          return;
+        }
+      }
+
+      final completionTask = _findDeferredShareVideoTask(id);
+      if (!mounted || completionTask == null || completionTask.cancelled) {
+        await _cleanupShareVideoFile(resolvedPath);
+        return;
+      }
+
+      final filename = resolvedPath.split(Platform.pathSeparator).last;
+      final mimeType = _guessMimeType(filename);
+      setState(() {
+        completionTask.phase = _DeferredShareVideoPhase.completed;
+        completionTask.progress = 1;
+        _composer.addPendingAttachments([
+          _PendingAttachment(
+            uid: generateUid(),
+            filePath: resolvedPath,
+            filename: filename,
+            mimeType: mimeType,
+            size: resolvedSize,
+          ),
+        ]);
+        completionTask.phase = _DeferredShareVideoPhase.removed;
+      });
+    } catch (_) {
+      final failedTask = _findDeferredShareVideoTask(id);
+      await _cleanupShareVideoFile(compressedPath);
+      await _cleanupShareVideoFile(downloadedPath);
+      await _removeDeferredShareVideoTask(id);
+      if (failedTask?.cancelled == true) {
+        return;
+      }
+      _showDeferredVideoFailure(_DeferredShareVideoFailure.downloadFailed);
+    }
+  }
+
+  Future<void> _removeDeferredShareVideoTask(String id) async {
+    final task = _findDeferredShareVideoTask(id);
+    if (task == null) return;
+    if (!mounted) {
+      task.cancelled = true;
+      task.phase = _DeferredShareVideoPhase.removed;
+      return;
+    }
+    setState(() {
+      task.cancelled = true;
+      task.phase = _DeferredShareVideoPhase.removed;
+    });
+  }
+
+  Future<void> _cleanupShareVideoFile(String? path) async {
+    if (path == null || path.trim().isEmpty) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+    try {
+      await file.delete();
+    } catch (_) {}
+  }
+
+  Future<bool> _confirmDeferredVideoCompression(int fileSize) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(context.t.strings.shareClip.fileTooLargeTitle),
+          content: Text(
+            context.t.strings.shareClip.fileTooLargeBody(
+              size: _formatFileSize(fileSize),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(context.t.strings.common.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(context.t.strings.shareClip.compressAndSave),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  void _showDeferredVideoFailure(_DeferredShareVideoFailure failure) {
+    if (!mounted) return;
+    showTopToast(context, _deferredVideoFailureMessage(failure));
+  }
+
+  String _deferredVideoFailureMessage(_DeferredShareVideoFailure failure) {
+    return switch (failure) {
+      _DeferredShareVideoFailure.downloadFailed =>
+        context.t.strings.shareClip.fallbackDownloadFailed,
+      _DeferredShareVideoFailure.compressionFailed =>
+        context.t.strings.shareClip.fallbackCompressionFailed,
+      _DeferredShareVideoFailure.compressionStillTooLarge =>
+        context.t.strings.shareClip.fallbackCompressionStillTooLarge,
+    };
+  }
+
+  Future<void> _openDeferredVideoPreview(_DeferredShareVideoTask task) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AttachmentVideoScreen(
+          title: task.title,
+          videoUrl: task.request.candidate.url,
+          thumbnailUrl: task.thumbnailUrl,
+          headers: task.headers,
+          cacheId: task.id,
+          cacheSize: task.remoteSize ?? 0,
+        ),
+      ),
+    );
+  }
+
+  String _formatFileSize(int bytes) {
+    final mb = bytes / (1024 * 1024);
+    return '${mb.toStringAsFixed(1)} MB';
   }
 
   void _scheduleDraftSave() {
@@ -1242,7 +1582,10 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   }
 
   Widget _buildAttachmentPreview(bool isDark) {
-    if (_pendingAttachments.isEmpty) return const SizedBox.shrink();
+    final deferredTasks = _visibleDeferredShareVideoTasks;
+    if (_pendingAttachments.isEmpty && deferredTasks.isEmpty) {
+      return const SizedBox.shrink();
+    }
     const tileSize = 62.0;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1253,8 +1596,16 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           physics: const BouncingScrollPhysics(),
           child: Row(
             children: [
-              for (var i = 0; i < _pendingAttachments.length; i++) ...[
+              for (var i = 0; i < deferredTasks.length; i++) ...[
                 if (i > 0) const SizedBox(width: 10),
+                _buildDeferredVideoTile(
+                  deferredTasks[i],
+                  isDark: isDark,
+                  size: tileSize,
+                ),
+              ],
+              for (var i = 0; i < _pendingAttachments.length; i++) ...[
+                if (i > 0 || deferredTasks.isNotEmpty) const SizedBox(width: 10),
                 _buildAttachmentTile(
                   _pendingAttachments[i],
                   isDark: isDark,
@@ -1265,6 +1616,128 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _openPendingVideoPreview(_PendingAttachment attachment) async {
+    final file = _resolvePendingAttachmentFile(attachment);
+    if (file == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AttachmentVideoScreen(
+          title: attachment.filename,
+          localFile: file,
+          cacheId: attachment.uid,
+          cacheSize: attachment.size,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeferredVideoTile(
+    _DeferredShareVideoTask task, {
+    required bool isDark,
+    required double size,
+  }) {
+    final borderColor = isDark
+        ? MemoFlowPalette.borderDark
+        : MemoFlowPalette.borderLight;
+    final surfaceColor = isDark
+        ? MemoFlowPalette.audioSurfaceDark
+        : MemoFlowPalette.audioSurfaceLight;
+    final removeBg = isDark
+        ? Colors.black.withValues(alpha: 0.55)
+        : Colors.black.withValues(alpha: 0.5);
+    final shadowColor = Colors.black.withValues(alpha: isDark ? 0.35 : 0.12);
+    final thumbnailUrl = task.thumbnailUrl?.trim() ?? '';
+
+    final tile = Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: surfaceColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor.withValues(alpha: 0.7)),
+        boxShadow: [
+          BoxShadow(
+            color: shadowColor,
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (thumbnailUrl.isNotEmpty)
+              Image.network(
+                thumbnailUrl,
+                fit: BoxFit.cover,
+                headers: task.headers,
+                errorBuilder: (context, error, stackTrace) {
+                  return _attachmentFallback(
+                    iconColor: Colors.white,
+                    surfaceColor: surfaceColor,
+                    isImage: false,
+                    isVideo: true,
+                  );
+                },
+              )
+            else
+              _attachmentFallback(
+                iconColor: Colors.white,
+                surfaceColor: surfaceColor,
+                isImage: false,
+                isVideo: true,
+              ),
+            Container(color: Colors.black.withValues(alpha: 0.26)),
+            Align(
+              alignment: Alignment.center,
+              child: SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(
+                  value: task.overallProgress,
+                  strokeWidth: 2.2,
+                  color: Colors.white,
+                  backgroundColor: Colors.white.withValues(alpha: 0.2),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: () => _openDeferredVideoPreview(task),
+          child: tile,
+        ),
+        Positioned(
+          top: 4,
+          right: 4,
+          child: GestureDetector(
+            onTap: (_busy || !task.isRemovable)
+                ? null
+                : () => unawaited(_removeDeferredShareVideoTask(task.id)),
+            child: Container(
+              width: 18,
+              height: 18,
+              decoration: BoxDecoration(
+                color: removeBg,
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: const Icon(Icons.close, size: 12, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1356,6 +1829,8 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         GestureDetector(
           onTap: (isImage && file != null)
               ? () => _openAttachmentViewer(attachment)
+              : (isVideo && file != null)
+              ? () => _openPendingVideoPreview(attachment)
               : null,
           child: tile,
         ),
@@ -1474,6 +1949,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
 
   Future<void> _submitOrVoice() async {
     if (_busy) return;
+    if (_hasPendingDeferredShareVideoTasks) return;
     final content = _controller.text.trimRight();
     final relations = _linkedMemos
         .map((m) => m.toRelationJson())
@@ -1878,78 +2354,136 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: _busy ? null : _submitOrVoice,
-                                  child: AnimatedScale(
-                                    duration: const Duration(milliseconds: 120),
-                                    scale: _busy ? 0.98 : 1.0,
-                                    child: Container(
-                                      width: 56,
-                                      height: 56,
-                                      decoration: BoxDecoration(
-                                        color: MemoFlowPalette.primary,
-                                        shape: BoxShape.circle,
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: MemoFlowPalette.primary
-                                                .withValues(
-                                                  alpha: isDark ? 0.3 : 0.4,
+                                Builder(
+                                  builder: (context) {
+                                    final hasPendingDeferred =
+                                        _hasPendingDeferredShareVideoTasks;
+                                    final deferredProgress =
+                                        _deferredShareVideoProgress;
+                                    final buttonEnabled =
+                                        !_busy && !hasPendingDeferred;
+                                    final buttonColor = buttonEnabled
+                                        ? MemoFlowPalette.primary
+                                        : Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest;
+                                    final buttonShadowColor = buttonEnabled
+                                        ? MemoFlowPalette.primary.withValues(
+                                            alpha: isDark ? 0.3 : 0.4,
+                                          )
+                                        : Colors.black.withValues(
+                                            alpha: isDark ? 0.18 : 0.1,
+                                          );
+
+                                    return GestureDetector(
+                                      onTap: buttonEnabled ? _submitOrVoice : null,
+                                      child: AnimatedScale(
+                                        duration: const Duration(milliseconds: 120),
+                                        scale: _busy ? 0.98 : 1.0,
+                                        child: SizedBox(
+                                          width: 64,
+                                          height: 64,
+                                          child: Stack(
+                                            alignment: Alignment.center,
+                                            children: [
+                                              if (hasPendingDeferred &&
+                                                  deferredProgress != null)
+                                                SizedBox(
+                                                  width: 64,
+                                                  height: 64,
+                                                  child: CircularProgressIndicator(
+                                                    value: deferredProgress,
+                                                    strokeWidth: 3,
+                                                    color: MemoFlowPalette.primary,
+                                                    backgroundColor: MemoFlowPalette.primary
+                                                        .withValues(alpha: 0.18),
+                                                  ),
                                                 ),
-                                            blurRadius: 16,
-                                            offset: const Offset(0, 8),
-                                          ),
-                                        ],
-                                      ),
-                                      child: Center(
-                                        child: _busy
-                                            ? const SizedBox.square(
-                                                dimension: 22,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      color: Colors.white,
+                                              Container(
+                                                width: 56,
+                                                height: 56,
+                                                decoration: BoxDecoration(
+                                                  color: buttonColor,
+                                                  shape: BoxShape.circle,
+                                                  boxShadow: [
+                                                    BoxShadow(
+                                                      color: buttonShadowColor,
+                                                      blurRadius: 16,
+                                                      offset: const Offset(0, 8),
                                                     ),
-                                              )
-                                            : ValueListenableBuilder<
-                                                TextEditingValue
-                                              >(
-                                                valueListenable: _controller,
-                                                builder: (context, value, _) {
-                                                  final hasText = value.text
-                                                      .trim()
-                                                      .isNotEmpty;
-                                                  final hasAttachments =
-                                                      _pendingAttachments
-                                                          .isNotEmpty;
-                                                  final showSend =
-                                                      hasText || hasAttachments;
-                                                  return AnimatedSwitcher(
-                                                    duration: const Duration(
-                                                      milliseconds: 160,
-                                                    ),
-                                                    transitionBuilder:
-                                                        (child, animation) {
-                                                          return ScaleTransition(
-                                                            scale: animation,
-                                                            child: child,
-                                                          );
-                                                        },
-                                                    child: Icon(
-                                                      showSend
-                                                          ? Icons.send_rounded
-                                                          : Icons.graphic_eq,
-                                                      key: ValueKey<bool>(
-                                                        showSend,
-                                                      ),
-                                                      color: Colors.white,
-                                                      size: showSend ? 24 : 28,
-                                                    ),
-                                                  );
-                                                },
+                                                  ],
+                                                ),
+                                                child: Center(
+                                                  child: _busy
+                                                      ? const SizedBox.square(
+                                                          dimension: 22,
+                                                          child:
+                                                              CircularProgressIndicator(
+                                                                strokeWidth: 2,
+                                                                color: Colors.white,
+                                                              ),
+                                                        )
+                                                      : ValueListenableBuilder<
+                                                          TextEditingValue
+                                                        >(
+                                                          valueListenable: _controller,
+                                                          builder:
+                                                              (context, value, _) {
+                                                                final hasText = value
+                                                                    .text
+                                                                    .trim()
+                                                                    .isNotEmpty;
+                                                                final hasAttachments =
+                                                                    _pendingAttachments
+                                                                        .isNotEmpty ||
+                                                                    _visibleDeferredShareVideoTasks
+                                                                        .isNotEmpty;
+                                                                final showSend =
+                                                                    hasText ||
+                                                                    hasAttachments;
+                                                                return AnimatedSwitcher(
+                                                                  duration:
+                                                                      const Duration(
+                                                                        milliseconds:
+                                                                            160,
+                                                                      ),
+                                                                  transitionBuilder:
+                                                                      (
+                                                                        child,
+                                                                        animation,
+                                                                      ) {
+                                                                        return ScaleTransition(
+                                                                          scale:
+                                                                              animation,
+                                                                          child:
+                                                                              child,
+                                                                        );
+                                                                      },
+                                                                  child: Icon(
+                                                                    showSend
+                                                                        ? Icons.send_rounded
+                                                                        : Icons.graphic_eq,
+                                                                    key:
+                                                                        ValueKey<bool>(
+                                                                          showSend,
+                                                                        ),
+                                                                    color:
+                                                                        Colors.white,
+                                                                    size: showSend
+                                                                        ? 24
+                                                                        : 28,
+                                                                  ),
+                                                                );
+                                                              },
+                                                        ),
+                                                ),
                                               ),
+                                            ],
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
+                                    );
+                                  },
                                 ),
                               ],
                             ),

@@ -1,4 +1,4 @@
-part of 'startup_coordinator.dart';
+﻿part of 'startup_coordinator.dart';
 
 extension _StartupCoordinatorShare on StartupCoordinator {
   Future<void> _loadPendingShare() async {
@@ -191,8 +191,15 @@ extension _StartupCoordinatorShare on StartupCoordinator {
       initialText: request.text,
       initialSelection: TextSelection.collapsed(offset: request.selectionOffset),
       initialAttachmentPaths: request.attachmentPaths,
+      initialDeferredVideoAttachments: request.deferredVideoAttachments,
       ignoreDraft: true,
     );
+    if ((request.userMessage ?? '').trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_isMounted()) return;
+        showTopToast(context, request.userMessage!);
+      });
+    }
   }
 
   void _openComposeRequestWithCurrentContext(ShareComposeRequest request) {
@@ -210,3 +217,4 @@ extension _StartupCoordinatorShare on StartupCoordinator {
     );
   }
 }
+

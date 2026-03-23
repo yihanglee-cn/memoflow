@@ -1,4 +1,4 @@
-import 'package:flutter_test/flutter_test.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/features/share/share_capture_formatter.dart';
 import 'package:memos_flutter_app/features/share/share_clip_models.dart';
 import 'package:memos_flutter_app/features/share/share_handler.dart';
@@ -24,7 +24,7 @@ void main() {
       final text = buildShareCaptureMemoText(result: result, payload: payload);
 
       expect(text, startsWith('# Article Title'));
-      expect(text, contains('[Example](https://example.com/posts/42)'));
+      expect(text, contains('[Article Title](https://example.com/posts/42)'));
       expect(text, contains('> Short summary'));
       expect(text, contains('href="https://example.com/about"'));
       expect(text, contains('src="https://example.com/cover.png"'));
@@ -48,6 +48,28 @@ void main() {
       expect(text, isNot(contains('> ')));
     });
 
+
+    test('uses compact memo body for video pages', () {
+      const payload = SharePayload(
+        type: SharePayloadType.text,
+        text: 'https://example.com/videos/42',
+        title: 'Shared Video',
+      );
+      final result = ShareCaptureResult.success(
+        finalUrl: Uri.parse('https://example.com/videos/42'),
+        articleTitle: 'Video Title',
+        excerpt: 'Video summary',
+        textContent: 'Long body that should not be included in full.',
+        pageKind: SharePageKind.video,
+      );
+
+      final text = buildShareCaptureMemoText(result: result, payload: payload);
+
+      expect(text, contains('# Video Title'));
+      expect(text, contains('[Video Title](https://example.com/videos/42)'));
+      expect(text, contains('> Video summary'));
+      expect(text, isNot(contains('<p>Long body')));
+    });
     test('falls back to text paragraphs when html content is absent', () {
       const payload = SharePayload(
         type: SharePayloadType.text,
@@ -66,3 +88,4 @@ void main() {
     });
   });
 }
+

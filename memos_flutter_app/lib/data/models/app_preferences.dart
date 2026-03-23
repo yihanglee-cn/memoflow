@@ -105,7 +105,7 @@ class AppPreferences {
     showDrawerResources: true,
     showDrawerArchive: true,
     aiSummaryAllowPrivateMemos: false,
-    thirdPartyShareEnabled: true,
+    thirdPartyShareEnabled: false,
     windowsCloseToTray: true,
     memoToolbarPreferences: MemoToolbarPreferences.defaults,
     desktopShortcutBindings: desktopShortcutDefaultBindings,

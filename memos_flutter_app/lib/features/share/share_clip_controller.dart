@@ -43,6 +43,36 @@ class ShareClipController extends ChangeNotifier {
     return request;
   }
 
+  ShareComposeRequest? takeAutoComposeRequest() {
+    final request = _state.autoComposeRequest;
+    if (request == null) return null;
+    _state = _state.copyWith(clearAutoComposeRequest: true);
+    notifyListeners();
+    return request;
+  }
+
+  ShareComposeRequest? attachVideo(ShareVideoCandidate candidate) {
+    final result = _state.result;
+    if (result == null || !result.isSuccess) {
+      return null;
+    }
+
+    final request = buildShareComposeRequestFromCapture(
+      result: result,
+      payload: _payload,
+    ).copyWith(
+      deferredVideoAttachments: [
+        ShareDeferredVideoAttachmentRequest(
+          captureResult: result,
+          candidate: candidate,
+        ),
+      ],
+    );
+    _state = _state.copyWith(phase: ShareClipPhase.composing);
+    notifyListeners();
+    return request;
+  }
+
   Future<void> _capture() async {
     _state = ShareClipViewState.loading(
       linkOnlyRequest: _state.linkOnlyRequest,
@@ -60,11 +90,14 @@ class ShareClipController extends ChangeNotifier {
         result: result,
         payload: _payload,
       );
+      final shouldAutoFallback =
+          result.isVideoPage && !result.hasDirectVideoCandidates;
       _state = _state.copyWith(
         phase: ShareClipPhase.success,
         stage: ShareCaptureStage.buildingPreview,
         result: result,
         previewText: previewText,
+        autoComposeRequest: shouldAutoFallback ? _state.linkOnlyRequest : null,
       );
       notifyListeners();
       return;

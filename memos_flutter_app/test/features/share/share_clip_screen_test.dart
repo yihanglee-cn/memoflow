@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -7,7 +7,9 @@ import 'package:memos_flutter_app/features/share/share_capture_engine.dart';
 import 'package:memos_flutter_app/features/share/share_clip_models.dart';
 import 'package:memos_flutter_app/features/share/share_clip_screen.dart';
 import 'package:memos_flutter_app/features/share/share_handler.dart';
+import 'package:memos_flutter_app/features/share/share_video_download_service.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
+
 
 void main() {
   late SharePayload payload;
@@ -31,6 +33,7 @@ void main() {
         excerpt: 'Summary',
         contentHtml: '<p>Hello world</p>',
         readabilitySucceeded: true,
+        pageKind: SharePageKind.article,
       ),
     );
     final navigatorKey = GlobalKey<NavigatorState>();
@@ -76,7 +79,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Save Link Only'));
+    await tester.tap(find.text(AppLocale.en.build().strings.shareClip.linkOnlyLabel));
     await tester.pumpAndSettle();
 
     final result = await routeFuture;
@@ -87,36 +90,96 @@ void main() {
     );
   });
 
-  testWidgets('retry triggers capture again after a failure', (
+  testWidgets('video page shows candidates in preview', (
     WidgetTester tester,
   ) async {
-    final engine = _SequencedFakeShareCaptureEngine([
-      ShareCaptureResult.failure(
-        finalUrl: Uri.parse('https://example.com/articles/1'),
-        failure: ShareCaptureFailure.parserEmpty,
+    final downloadService = ShareVideoDownloadService(
+      client: _FakeShareVideoHttpClient(
+        probeResult: const ShareVideoHttpProbeResult(
+          contentLength: 2097152,
+          mimeType: 'video/mp4',
+        ),
       ),
-      ShareCaptureResult.success(
-        finalUrl: Uri.parse('https://example.com/articles/1'),
-        articleTitle: 'Interesting Article',
-        siteName: 'Example',
-        contentHtml: '<p>Hello again</p>',
+      readCookieHeader: (_) async => null,
+    );
+    final engine = _FakeShareCaptureEngine(
+      result: ShareCaptureResult.success(
+        finalUrl: Uri.parse('https://www.bilibili.com/video/BV1xx'),
+        articleTitle: 'Bilibili Video',
+        excerpt: 'Video summary',
+        leadImageUrl: 'https://cdn.example.com/poster.jpg',
+        pageKind: SharePageKind.video,
+        videoCandidates: const [
+          ShareVideoCandidate(
+            id: 'video-1',
+            url: 'https://cdn.example.com/video.mp4',
+            title: 'Candidate Video',
+            source: ShareVideoSource.parser,
+            isDirectDownloadable: true,
+            parserTag: 'bilibili',
+          ),
+        ],
       ),
-    ]);
+    );
     final navigatorKey = GlobalKey<NavigatorState>();
     await tester.pumpWidget(_buildTestApp(navigatorKey: navigatorKey));
-    unawaited(navigatorKey.currentState!.push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => ShareClipScreen(payload: payload, engine: engine),
+
+    navigatorKey.currentState!.push<ShareComposeRequest>(
+      MaterialPageRoute<ShareComposeRequest>(
+        builder: (_) => ShareClipScreen(
+          payload: payload,
+          engine: engine,
+          downloadService: downloadService,
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
-    expect(engine.callCount, 1);
-    await tester.tap(find.text(AppLocale.en.build().strings.legacy.msg_retry));
-    await tester.pumpAndSettle();
+    expect(find.text(AppLocale.en.build().strings.shareClip.videoCandidatesTitle), findsOneWidget);
+    expect(find.text('Candidate Video'), findsOneWidget);
+    expect(find.text(AppLocale.en.build().strings.shareClip.downloadAndAttach), findsOneWidget);
+    expect(find.text('2.0 MB'), findsOneWidget);
+    expect(find.text('https://cdn.example.com/video.mp4'), findsNothing);
+  });
+  testWidgets('video page without direct candidates auto falls back to link-only', (
+    WidgetTester tester,
+  ) async {
+    final engine = _FakeShareCaptureEngine(
+      result: ShareCaptureResult.success(
+        finalUrl: Uri.parse('https://www.bilibili.com/video/BV1xx'),
+        articleTitle: 'Bilibili Video',
+        pageKind: SharePageKind.video,
+        unsupportedVideoCandidates: const [
+          ShareVideoCandidate(
+            id: 'stream-1',
+            url: 'https://cdn.example.com/video.m3u8',
+            source: ShareVideoSource.parser,
+            isDirectDownloadable: false,
+            parserTag: 'bilibili',
+          ),
+        ],
+      ),
+    );
+    final navigatorKey = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(_buildTestApp(navigatorKey: navigatorKey));
 
-    expect(engine.callCount, 2);
-    expect(find.text(AppLocale.en.build().strings.legacy.msg_save_memo), findsOneWidget);
+    ShareComposeRequest? fallbackRequest;
+    navigatorKey.currentState!
+        .push<ShareComposeRequest>(
+          MaterialPageRoute<ShareComposeRequest>(
+            builder: (_) => ShareClipScreen(payload: payload, engine: engine),
+          ),
+        )
+        .then((value) => fallbackRequest = value);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(fallbackRequest, isNotNull);
+    expect(fallbackRequest!.attachmentPaths, isEmpty);
+    expect(
+      fallbackRequest!.userMessage,
+      AppLocale.en.build().strings.shareClip.fallbackParseFailed,
+    );
   });
 }
 
@@ -174,22 +237,27 @@ class _CompleterShareCaptureEngine implements ShareCaptureEngine {
   }
 }
 
-class _SequencedFakeShareCaptureEngine implements ShareCaptureEngine {
-  _SequencedFakeShareCaptureEngine(this._results);
+class _FakeShareVideoHttpClient implements ShareVideoHttpClient {
+  _FakeShareVideoHttpClient({
+    this.probeResult = const ShareVideoHttpProbeResult(),
+  });
 
-  final List<ShareCaptureResult> _results;
-  int callCount = 0;
+  final ShareVideoHttpProbeResult probeResult;
 
   @override
-  Future<ShareCaptureResult> capture(
-    ShareCaptureRequest request, {
-    void Function(ShareCaptureStage stage)? onStageChanged,
+  Future<void> download(
+    String url,
+    String savePath, {
+    required Map<String, String> headers,
+    void Function(double progress)? onProgress,
+  }) async {}
+
+  @override
+  Future<ShareVideoHttpProbeResult> probe(
+    String url, {
+    required Map<String, String> headers,
   }) async {
-    callCount += 1;
-    onStageChanged?.call(ShareCaptureStage.loadingPage);
-    await Future<void>.delayed(Duration.zero);
-    onStageChanged?.call(ShareCaptureStage.buildingPreview);
-    final index = (callCount - 1).clamp(0, _results.length - 1);
-    return _results[index];
+    return probeResult;
   }
 }
+

@@ -1,4 +1,4 @@
-name: memos_flutter_app
+﻿name: memos_flutter_app
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -69,6 +69,7 @@ dependencies:
   video_thumbnail: ^0.5.3
   path: ^1.9.1
   path_provider: ^2.1.5
+  native_video_compress: ^0.0.4
   permission_handler: ^12.0.1
   geolocator: ^10.1.0
   record: ^6.1.1
@@ -190,3 +191,4 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+

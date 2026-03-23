@@ -1,4 +1,4 @@
-import 'package:html/dom.dart' as dom;
+﻿import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
 import 'share_clip_models.dart';
@@ -60,11 +60,15 @@ const Set<String> _voidHtmlTags = {'br', 'hr', 'img', 'input'};
 ShareComposeRequest buildShareComposeRequestFromCapture({
   required ShareCaptureResult result,
   required SharePayload payload,
+  List<String> attachmentPaths = const [],
+  String? userMessage,
 }) {
   final text = buildShareCaptureMemoText(result: result, payload: payload);
   return ShareComposeRequest(
     text: text,
     selectionOffset: text.length,
+    attachmentPaths: attachmentPaths,
+    userMessage: userMessage,
   );
 }
 
@@ -80,13 +84,18 @@ String buildShareCaptureMemoText({
   required ShareCaptureResult result,
   required SharePayload payload,
 }) {
+  if (result.pageKind == SharePageKind.video) {
+    return _buildShareVideoMemoText(result: result, payload: payload);
+  }
+
   final resolvedUrl = _resolveFinalUrl(result.finalUrl);
   final title = _resolveTitle(result: result, payload: payload, url: resolvedUrl);
   final siteLabel = _resolveSiteLabel(result: result, url: resolvedUrl);
   final excerpt = _normalizeWhitespace(result.excerpt);
   final fragment = _buildHtmlFragment(result: result, baseUrl: resolvedUrl);
   final buffer = StringBuffer()..writeln('# $title')..writeln();
-  buffer.writeln('[${_escapeMarkdownText(siteLabel)}](${resolvedUrl.toString()})');
+  final linkLabel = title.isNotEmpty ? title : siteLabel;
+  buffer.writeln(_buildMarkdownLink(linkLabel, resolvedUrl));
   if (excerpt != null) {
     buffer..writeln()..writeln('> $excerpt');
   }
@@ -94,6 +103,25 @@ String buildShareCaptureMemoText({
     buffer..writeln()..writeln(fragment);
   }
   return buffer.toString().trimRight();
+}
+
+String _buildShareVideoMemoText({
+  required ShareCaptureResult result,
+  required SharePayload payload,
+}) {
+  final resolvedUrl = _resolveFinalUrl(result.finalUrl);
+  final title = _resolveTitle(result: result, payload: payload, url: resolvedUrl);
+  final excerpt = _normalizeWhitespace(result.excerpt);
+  final buffer = StringBuffer()..writeln('# $title')..writeln();
+  buffer.writeln(_buildMarkdownLink(title, resolvedUrl));
+  if (excerpt != null) {
+    buffer..writeln()..writeln('> $excerpt');
+  }
+  return buffer.toString().trimRight();
+}
+
+String _buildMarkdownLink(String label, Uri url) {
+  return '[${_escapeMarkdownText(label)}](${url.toString()})';
 }
 
 String _resolveTitle({
