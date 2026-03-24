@@ -1,3 +1,5 @@
+import 'package:html/parser.dart' as html_parser;
+
 final RegExp _markdownImagePattern = RegExp(
   r'!\[[^\]]*]\(([^)\s]+)(?:\s+"[^"]*")?\)',
 );
@@ -41,6 +43,47 @@ List<String> extractMarkdownImageUrls(String text) {
   }
 
   return urls;
+}
+
+List<String> extractHtmlImageUrls(String text) {
+  if (text.trim().isEmpty) return const [];
+
+  final fragment = html_parser.parseFragment(_removeFencedCodeBlocks(text));
+  final urls = <String>[];
+  for (final element in fragment.querySelectorAll('img[src]')) {
+    final raw = (element.attributes['src'] ?? '').trim();
+    if (raw.isEmpty) continue;
+    final normalized = normalizeMarkdownImageSrc(raw);
+    if (normalized.isEmpty) continue;
+    urls.add(normalized);
+  }
+  return urls;
+}
+
+String _removeFencedCodeBlocks(String text) {
+  if (text.trim().isEmpty) return text;
+  final buffer = StringBuffer();
+  var inFence = false;
+  for (final line in text.split('\n')) {
+    if (_codeFencePattern.hasMatch(line.trimLeft())) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (buffer.isNotEmpty) {
+      buffer.writeln();
+    }
+    buffer.write(line);
+  }
+  return buffer.toString();
+}
+
+List<String> extractMemoImageUrls(String text) {
+  if (text.trim().isEmpty) return const [];
+  return <String>[
+    ...extractMarkdownImageUrls(text),
+    ...extractHtmlImageUrls(text),
+  ];
 }
 
 String _normalizeGithubBlobImageUrl(String value) {

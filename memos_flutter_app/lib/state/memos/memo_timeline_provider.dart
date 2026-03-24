@@ -357,6 +357,9 @@ class MemoTimelineService {
         ? createTimeSec
         : now.millisecondsSinceEpoch ~/ 1000;
 
+    await db.deleteOutboxForMemo(memoUid);
+    await db.deleteMemoDeleteTombstone(memoUid);
+
     await db.upsertMemo(
       uid: memoUid,
       content: content,
@@ -543,22 +546,29 @@ class MemoTimelineService {
     final backed = <Attachment>[];
     try {
       for (final attachment in attachments) {
-        final archiveName = attachmentArchiveName(attachment);
-        final destination = File(p.join(dir.path, archiveName));
-        await _copyAttachmentSnapshot(
-          attachment: attachment,
-          destination: destination,
-        );
-        final size = destination.existsSync() ? destination.lengthSync() : 0;
-        backed.add(
-          Attachment(
-            name: attachment.name,
-            filename: attachment.filename,
-            type: attachment.type,
-            size: size,
-            externalLink: Uri.file(destination.path).toString(),
-          ),
-        );
+        try {
+          final archiveName = attachmentArchiveName(attachment);
+          final destination = File(p.join(dir.path, archiveName));
+          await _copyAttachmentSnapshot(
+            attachment: attachment,
+            destination: destination,
+          );
+          final size = destination.existsSync() ? destination.lengthSync() : 0;
+          backed.add(
+            Attachment(
+              name: attachment.name,
+              filename: attachment.filename,
+              type: attachment.type,
+              size: size,
+              externalLink: Uri.file(destination.path).toString(),
+              width: attachment.width,
+              height: attachment.height,
+              hash: attachment.hash,
+            ),
+          );
+        } catch (_) {
+          backed.add(attachment);
+        }
       }
       return backed;
     } catch (_) {
@@ -578,14 +588,6 @@ class MemoTimelineService {
     for (final item in rawAttachments) {
       if (item is! Map) continue;
       final attachment = Attachment.fromJson(item.cast<String, dynamic>());
-      final sourcePath = _resolveLocalAttachmentPath(attachment);
-      if (sourcePath == null || sourcePath.trim().isEmpty) {
-        throw StateError('Attachment file missing');
-      }
-      final sourceFile = File(sourcePath);
-      if (!sourceFile.existsSync()) {
-        throw StateError('Attachment file missing: $sourcePath');
-      }
       final newUid = generateUid();
       final archiveName = attachmentArchiveNameFromPayload(
         attachmentUid: newUid,
@@ -599,7 +601,14 @@ class MemoTimelineService {
       if (!destination.parent.existsSync()) {
         destination.parent.createSync(recursive: true);
       }
-      await sourceFile.copy(destination.path);
+      try {
+        await _copyAttachmentSnapshot(
+          attachment: attachment,
+          destination: destination,
+        );
+      } catch (_) {
+        continue;
+      }
       final size = destination.existsSync() ? destination.lengthSync() : 0;
       restored.add(
         Attachment(
@@ -608,6 +617,9 @@ class MemoTimelineService {
           type: attachment.type,
           size: size,
           externalLink: Uri.file(destination.path).toString(),
+          width: attachment.width,
+          height: attachment.height,
+          hash: attachment.hash,
         ),
       );
     }

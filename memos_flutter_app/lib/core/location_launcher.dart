@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'app_localization.dart';
 import 'log_sanitizer.dart';
+import '../data/location/coordinate_transform.dart';
+import '../data/location/models/canonical_coordinate.dart';
 import '../data/logs/log_manager.dart';
 import '../data/models/memo_location.dart';
 import '../data/models/location_settings.dart';
@@ -118,15 +120,68 @@ List<Uri> _amapCandidates({
   required String lng,
   required String label,
 }) {
-  final scheme = Platform.isIOS ? 'iosamap' : 'androidamap';
+  final latitude = double.parse(lat);
+  final longitude = double.parse(lng);
+  return debugBuildAmapCandidates(
+    latitude: latitude,
+    longitude: longitude,
+    label: label,
+    useIosScheme: Platform.isIOS,
+  );
+}
+
+@visibleForTesting
+List<Uri> debugBuildAmapCandidates({
+  required double latitude,
+  required double longitude,
+  required String label,
+  required bool useIosScheme,
+}) {
   return [
-    Uri.parse(
-      '$scheme://viewMap?sourceApplication=MemoFlow&lat=$lat&lon=$lng&dev=0&poiname=${Uri.encodeComponent(label)}',
+    debugBuildAmapWebUri(
+      latitude: latitude,
+      longitude: longitude,
+      label: label,
     ),
-    Uri.parse(
-      'https://uri.amap.com/marker?position=$lng,$lat&name=${Uri.encodeComponent(label)}',
+    debugBuildAmapAppUri(
+      latitude: latitude,
+      longitude: longitude,
+      label: label,
+      useIosScheme: useIosScheme,
     ),
   ];
+}
+
+@visibleForTesting
+Uri debugBuildAmapAppUri({
+  required double latitude,
+  required double longitude,
+  required String label,
+  required bool useIosScheme,
+}) {
+  final scheme = useIosScheme ? 'iosamap' : 'androidamap';
+  final converted = wgs84ToGcj02(
+    CanonicalCoordinate(latitude: latitude, longitude: longitude),
+  );
+  return Uri.parse(
+    '$scheme://viewMap?sourceApplication=MemoFlow&lat=${converted.latitude.toStringAsFixed(6)}&lon=${converted.longitude.toStringAsFixed(6)}&dev=0&poiname=${Uri.encodeComponent(label)}',
+  );
+}
+
+@visibleForTesting
+Uri debugBuildAmapWebUri({
+  required double latitude,
+  required double longitude,
+  required String label,
+}) {
+  return Uri.https('uri.amap.com', '/marker', <String, String>{
+    'position':
+        '${longitude.toStringAsFixed(6)},${latitude.toStringAsFixed(6)}',
+    'name': label,
+    'src': 'MemoFlow',
+    'coordinate': 'wgs84',
+    'callnative': '1',
+  });
 }
 
 List<Uri> _baiduCandidates({
@@ -134,12 +189,21 @@ List<Uri> _baiduCandidates({
   required String lng,
   required String label,
 }) {
+  return debugBuildBaiduCandidates(lat: lat, lng: lng, label: label);
+}
+
+@visibleForTesting
+List<Uri> debugBuildBaiduCandidates({
+  required String lat,
+  required String lng,
+  required String label,
+}) {
   return [
     Uri.parse(
-      'baidumap://map/marker?location=$lat,$lng&title=${Uri.encodeComponent(label)}&content=${Uri.encodeComponent(label)}&coord_type=wgs84&src=MemoFlow',
+      'https://api.map.baidu.com/marker?location=$lat,$lng&title=${Uri.encodeComponent(label)}&content=${Uri.encodeComponent(label)}&output=html&coord_type=wgs84',
     ),
     Uri.parse(
-      'https://api.map.baidu.com/marker?location=$lat,$lng&title=${Uri.encodeComponent(label)}&content=${Uri.encodeComponent(label)}&output=html&coord_type=wgs84',
+      'baidumap://map/marker?location=$lat,$lng&title=${Uri.encodeComponent(label)}&content=${Uri.encodeComponent(label)}&coord_type=wgs84&src=MemoFlow',
     ),
   ];
 }
@@ -149,11 +213,20 @@ List<Uri> _googleCandidates({
   required String lng,
   required String label,
 }) {
+  return debugBuildGoogleCandidates(lat: lat, lng: lng, label: label);
+}
+
+@visibleForTesting
+List<Uri> debugBuildGoogleCandidates({
+  required String lat,
+  required String lng,
+  required String label,
+}) {
   final appUri = Platform.isIOS
       ? Uri.parse('comgooglemaps://?q=$lat,$lng(${Uri.encodeComponent(label)})')
       : Uri.parse('geo:$lat,$lng?q=$lat,$lng(${Uri.encodeComponent(label)})');
   return [
-    appUri,
     Uri.parse('https://www.google.com/maps/search/?api=1&query=$lat,$lng'),
+    appUri,
   ];
 }

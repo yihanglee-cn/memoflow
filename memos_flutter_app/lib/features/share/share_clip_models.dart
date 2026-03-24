@@ -98,8 +98,7 @@ class ShareVideoCandidate {
       referer: referer ?? this.referer,
       headers: headers ?? this.headers,
       cookieUrl: cookieUrl ?? this.cookieUrl,
-      isDirectDownloadable:
-          isDirectDownloadable ?? this.isDirectDownloadable,
+      isDirectDownloadable: isDirectDownloadable ?? this.isDirectDownloadable,
       priority: priority ?? this.priority,
       parserTag: parserTag ?? this.parserTag,
       reason: reason ?? this.reason,
@@ -128,6 +127,21 @@ class ShareDeferredVideoAttachmentRequest {
   String? get thumbnailUrl =>
       normalizeShareText(candidate.thumbnailUrl) ??
       normalizeShareText(captureResult.leadImageUrl);
+}
+
+@immutable
+class ShareDeferredInlineImageAttachmentRequest {
+  const ShareDeferredInlineImageAttachmentRequest({
+    required this.captureResult,
+    required this.sourceUrl,
+    required this.index,
+  });
+
+  final ShareCaptureResult captureResult;
+  final String sourceUrl;
+  final int index;
+
+  String get id => 'inline-image-$index';
 }
 
 String normalizeShareVideoUrl(String raw) {
@@ -295,6 +309,8 @@ class ShareComposeRequest {
     required this.text,
     required this.selectionOffset,
     this.attachmentPaths = const [],
+    this.initialAttachmentSeeds = const [],
+    this.deferredInlineImageAttachments = const [],
     this.deferredVideoAttachments = const [],
     this.userMessage,
   });
@@ -302,6 +318,9 @@ class ShareComposeRequest {
   final String text;
   final int selectionOffset;
   final List<String> attachmentPaths;
+  final List<ShareAttachmentSeed> initialAttachmentSeeds;
+  final List<ShareDeferredInlineImageAttachmentRequest>
+  deferredInlineImageAttachments;
   final List<ShareDeferredVideoAttachmentRequest> deferredVideoAttachments;
   final String? userMessage;
 
@@ -309,6 +328,9 @@ class ShareComposeRequest {
     String? text,
     int? selectionOffset,
     List<String>? attachmentPaths,
+    List<ShareAttachmentSeed>? initialAttachmentSeeds,
+    List<ShareDeferredInlineImageAttachmentRequest>?
+    deferredInlineImageAttachments,
     List<ShareDeferredVideoAttachmentRequest>? deferredVideoAttachments,
     String? userMessage,
   }) {
@@ -316,11 +338,40 @@ class ShareComposeRequest {
       text: text ?? this.text,
       selectionOffset: selectionOffset ?? this.selectionOffset,
       attachmentPaths: attachmentPaths ?? this.attachmentPaths,
+      initialAttachmentSeeds:
+          initialAttachmentSeeds ?? this.initialAttachmentSeeds,
+      deferredInlineImageAttachments:
+          deferredInlineImageAttachments ?? this.deferredInlineImageAttachments,
       deferredVideoAttachments:
           deferredVideoAttachments ?? this.deferredVideoAttachments,
       userMessage: userMessage ?? this.userMessage,
     );
   }
+}
+
+@immutable
+class ShareAttachmentSeed {
+  const ShareAttachmentSeed({
+    required this.uid,
+    required this.filePath,
+    required this.filename,
+    required this.mimeType,
+    required this.size,
+    this.skipCompression = false,
+    this.shareInlineImage = false,
+    this.fromThirdPartyShare = false,
+    this.sourceUrl,
+  });
+
+  final String uid;
+  final String filePath;
+  final String filename;
+  final String mimeType;
+  final int size;
+  final bool skipCompression;
+  final bool shareInlineImage;
+  final bool fromThirdPartyShare;
+  final String? sourceUrl;
 }
 
 @immutable

@@ -1,4 +1,4 @@
-﻿part of 'startup_coordinator.dart';
+part of 'startup_coordinator.dart';
 
 extension _StartupCoordinatorShare on StartupCoordinator {
   Future<void> _loadPendingShare() async {
@@ -158,7 +158,9 @@ extension _StartupCoordinatorShare on StartupCoordinator {
 
   Route<ShareComposeRequest> _buildSharePreviewRoute(SharePayload payload) {
     return _sharePreviewRouteBuilder?.call(payload) ??
-        _buildInstantRoute<ShareComposeRequest>(ShareClipScreen(payload: payload));
+        _buildInstantRoute<ShareComposeRequest>(
+          ShareClipScreen(payload: payload),
+        );
   }
 
   void _openShareComposer(BuildContext context, SharePayload payload) {
@@ -189,8 +191,13 @@ extension _StartupCoordinatorShare on StartupCoordinator {
     NoteInputSheet.show(
       context,
       initialText: request.text,
-      initialSelection: TextSelection.collapsed(offset: request.selectionOffset),
+      initialSelection: TextSelection.collapsed(
+        offset: request.selectionOffset,
+      ),
       initialAttachmentPaths: request.attachmentPaths,
+      initialAttachmentSeeds: request.initialAttachmentSeeds,
+      initialDeferredInlineImageAttachments:
+          request.deferredInlineImageAttachments,
       initialDeferredVideoAttachments: request.deferredVideoAttachments,
       ignoreDraft: true,
     );
@@ -217,4 +224,3 @@ extension _StartupCoordinatorShare on StartupCoordinator {
     );
   }
 }
-

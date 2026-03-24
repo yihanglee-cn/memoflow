@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
@@ -105,6 +106,7 @@ import 'note_input_sheet.dart';
 import 'tag_autocomplete.dart';
 import 'windows_camera_capture_screen.dart';
 import 'widgets/audio_row.dart';
+import 'widgets/floating_collapse_button.dart';
 import '../../i18n/strings.g.dart';
 
 const _maxPreviewLines = 6;
@@ -362,6 +364,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _titleKey = GlobalKey();
   final _scrollController = ScrollController();
+  final _floatingCollapseViewportKey = GlobalKey();
+  final Map<String, GlobalKey<_MemoCardState>> _memoCardKeys =
+      <String, GlobalKey<_MemoCardState>>{};
   GlobalKey<SliverAnimatedListState> _listKey =
       GlobalKey<SliverAnimatedListState>();
 
@@ -411,6 +416,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   bool _currentShowSearchLanding = false;
   double _mobileBottomPullDistance = 0;
   bool _mobileBottomPullArmed = false;
+  bool _floatingCollapseScrolling = false;
+  bool _floatingCollapseRecomputeScheduled = false;
+  String? _floatingCollapseMemoUid;
   DateTime? _lastDesktopWheelLoadAt;
   bool _scrollToTopAnimating = false;
   Timer? _scrollToTopTimer;
@@ -994,6 +1002,87 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     if (shouldShow != _showBackToTop && mounted) {
       setState(() => _showBackToTop = shouldShow);
     }
+
+    _scheduleFloatingCollapseRecompute();
+  }
+
+  GlobalKey<_MemoCardState> _memoCardKeyFor(String memoUid) {
+    return _memoCardKeys.putIfAbsent(memoUid, GlobalKey<_MemoCardState>.new);
+  }
+
+  void _syncMemoCardKeys(List<LocalMemo> memos) {
+    final keepUids = memos.map((memo) => memo.uid).toSet();
+    _memoCardKeys.removeWhere((uid, _) => !keepUids.contains(uid));
+  }
+
+  void _scheduleFloatingCollapseRecompute() {
+    if (_floatingCollapseRecomputeScheduled) return;
+    _floatingCollapseRecomputeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _floatingCollapseRecomputeScheduled = false;
+      if (!mounted) return;
+      _recomputeFloatingCollapseTarget();
+    });
+  }
+
+  void _recomputeFloatingCollapseTarget() {
+    final viewportRect = _globalRectForKey(_floatingCollapseViewportKey);
+    if (viewportRect == null) return;
+
+    _MemoFloatingCollapseCandidate? nextCandidate;
+    for (final key in _memoCardKeys.values) {
+      final candidate = key.currentState?.resolveFloatingCollapseCandidate(
+        viewportRect,
+      );
+      if (candidate == null) continue;
+      if (nextCandidate == null ||
+          candidate.visibleHeight > nextCandidate.visibleHeight) {
+        nextCandidate = candidate;
+      }
+    }
+
+    final nextMemoUid = nextCandidate?.memoUid;
+    if (nextMemoUid == _floatingCollapseMemoUid) return;
+    setState(() => _floatingCollapseMemoUid = nextMemoUid);
+  }
+
+  void _setFloatingCollapseScrolling(bool value) {
+    if (_floatingCollapseScrolling == value || !mounted) return;
+    setState(() => _floatingCollapseScrolling = value);
+  }
+
+  void _handleFloatingCollapseScrollNotification(
+    ScrollNotification notification,
+  ) {
+    if (notification.metrics.axis != Axis.vertical) return;
+
+    if (notification is ScrollStartNotification ||
+        notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification) {
+      _setFloatingCollapseScrolling(true);
+    } else if (notification is UserScrollNotification) {
+      _setFloatingCollapseScrolling(
+        notification.direction != ScrollDirection.idle,
+      );
+    } else if (notification is ScrollEndNotification) {
+      _setFloatingCollapseScrolling(false);
+    }
+
+    _scheduleFloatingCollapseRecompute();
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    _handleFloatingCollapseScrollNotification(notification);
+    return _handleLoadMoreScrollNotification(notification);
+  }
+
+  void _collapseActiveMemoFromFloatingButton() {
+    final memoUid = _floatingCollapseMemoUid;
+    if (memoUid == null) return;
+    final memoState = _memoCardKeys[memoUid]?.currentState;
+    if (memoState == null) return;
+    memoState.collapseFromFloating();
+    _scheduleFloatingCollapseRecompute();
   }
 
   void _triggerLoadMore({required String source}) {
@@ -5739,7 +5828,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final highlightQuery = _searchController.text.trim();
 
     return _MemoCard(
-      key: ValueKey(memo.uid),
+      key: _memoCardKeyFor(memo.uid),
       memo: memo,
       dateText: _dateFmt.format(displayTime),
       reminderText: reminderText,
@@ -5804,6 +5893,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                 duration: const Duration(milliseconds: 1200),
               );
             },
+      onFloatingStateChanged: _scheduleFloatingCollapseRecompute,
       onAction: removing
           ? (_) {}
           : (action) async => _handleMemoAction(memo, action),
@@ -6008,6 +6098,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       _syncAnimatedMemos(sortedMemos, listSignature);
     }
     final visibleMemos = _animatedMemos;
+    _syncMemoCardKeys(visibleMemos);
+    _scheduleFloatingCollapseRecompute();
     _maybeLogMemosLoadingPhase(
       queryKey: queryKey,
       memosLoading: memosLoading,
@@ -6195,6 +6287,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             : null,
         body: (() {
           final memoListBody = Stack(
+            key: _floatingCollapseViewportKey,
             children: [
               RefreshIndicator(
                 onRefresh: () async {
@@ -6278,7 +6371,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                   }
                 },
                 child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleLoadMoreScrollNotification,
+                  onNotification: _handleScrollNotification,
                   child: Listener(
                     onPointerSignal: _handleDesktopPointerSignal,
                     child: CustomScrollView(
@@ -6678,6 +6771,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                       ],
                     ),
                   ),
+                ),
+              ),
+              Positioned.fill(
+                child: MemoFloatingCollapseButton(
+                  visible: _floatingCollapseMemoUid != null,
+                  scrolling: _floatingCollapseScrolling,
+                  label: context.t.strings.legacy.msg_collapse,
+                  onPressed: _collapseActiveMemoFromFloatingButton,
                 ),
               ),
               Positioned(
@@ -7790,6 +7891,24 @@ enum _MemoCardAction {
   delete,
 }
 
+Rect? _globalRectForKey(GlobalKey key) {
+  final context = key.currentContext;
+  if (context == null) return null;
+  final renderObject = context.findRenderObject();
+  if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+  return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+}
+
+class _MemoFloatingCollapseCandidate {
+  const _MemoFloatingCollapseCandidate({
+    required this.memoUid,
+    required this.visibleHeight,
+  });
+
+  final String memoUid;
+  final double visibleHeight;
+}
+
 class _MemoCard extends StatefulWidget {
   const _MemoCard({
     super.key,
@@ -7816,6 +7935,7 @@ class _MemoCard extends StatefulWidget {
     required this.onTap,
     this.onLongPress,
     this.onDoubleTap,
+    this.onFloatingStateChanged,
     required this.onAction,
   });
 
@@ -7842,6 +7962,7 @@ class _MemoCard extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onDoubleTap;
+  final VoidCallback? onFloatingStateChanged;
   final ValueChanged<_MemoCardAction> onAction;
 
   @override
@@ -7850,11 +7971,49 @@ class _MemoCard extends StatefulWidget {
 
 class _MemoCardState extends State<_MemoCard> {
   late bool _expanded;
+  final _cardKey = GlobalKey();
+  final _toggleButtonKey = GlobalKey();
+  bool _showToggle = false;
 
   @override
   void initState() {
     super.initState();
     _expanded = widget.initiallyExpanded;
+  }
+
+  void _notifyFloatingStateChanged() {
+    widget.onFloatingStateChanged?.call();
+  }
+
+  void collapseFromFloating() {
+    if (!_expanded) return;
+    setState(() => _expanded = false);
+    _notifyFloatingStateChanged();
+  }
+
+  _MemoFloatingCollapseCandidate? resolveFloatingCollapseCandidate(
+    Rect viewportRect,
+  ) {
+    if (!_expanded || !_showToggle) return null;
+    final cardRect = _globalRectForKey(_cardKey);
+    final toggleRect = _globalRectForKey(_toggleButtonKey);
+    if (cardRect == null || toggleRect == null) return null;
+    final visibleHeight = math.max(
+      0.0,
+      math.min(cardRect.bottom, viewportRect.bottom) -
+          math.max(cardRect.top, viewportRect.top),
+    );
+    if (visibleHeight <= 0) return null;
+    if (!shouldShowFloatingCollapseForToggle(
+      viewportRect: viewportRect,
+      toggleRect: toggleRect,
+    )) {
+      return null;
+    }
+    return _MemoFloatingCollapseCandidate(
+      memoUid: widget.memo.uid,
+      visibleHeight: visibleHeight,
+    );
   }
 
   static String _previewText(
@@ -7893,10 +8052,12 @@ class _MemoCardState extends State<_MemoCard> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.memo.uid != widget.memo.uid) {
       _expanded = widget.initiallyExpanded;
+      _notifyFloatingStateChanged();
       return;
     }
     if (oldWidget.initiallyExpanded != widget.initiallyExpanded) {
       _expanded = widget.initiallyExpanded;
+      _notifyFloatingStateChanged();
     }
   }
 
@@ -8029,6 +8190,7 @@ class _MemoCardState extends State<_MemoCard> {
       );
     }
     final showToggle = preview.truncated;
+    _showToggle = showToggle;
     final showCollapsed = showToggle && !_expanded;
     final displayText = previewText;
     final markdownCacheKey = '$cacheKey|md|searchhl=v2|hl=$highlightKey';
@@ -8146,7 +8308,11 @@ class _MemoCardState extends State<_MemoCard> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
-                  onPressed: () => setState(() => _expanded = !_expanded),
+                  key: _toggleButtonKey,
+                  onPressed: () {
+                    setState(() => _expanded = !_expanded);
+                    _notifyFloatingStateChanged();
+                  },
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -8245,6 +8411,7 @@ class _MemoCardState extends State<_MemoCard> {
           onTap: onTap,
           onLongPress: onLongPress,
           child: Container(
+            key: _cardKey,
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: cardSurface,

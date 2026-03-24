@@ -1,8 +1,9 @@
-﻿import 'package:html/dom.dart' as dom;
+import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
 import 'share_clip_models.dart';
 import 'share_handler.dart';
+import 'share_inline_image_content.dart';
 
 const Set<String> _blockedHtmlTags = {'script', 'style', 'noscript'};
 
@@ -61,13 +62,25 @@ ShareComposeRequest buildShareComposeRequestFromCapture({
   required ShareCaptureResult result,
   required SharePayload payload,
   List<String> attachmentPaths = const [],
+  List<ShareAttachmentSeed> initialAttachmentSeeds = const [],
+  String? contentHtmlOverride,
   String? userMessage,
 }) {
-  final text = buildShareCaptureMemoText(result: result, payload: payload);
+  final text = buildShareCaptureMemoText(
+    result: result,
+    payload: payload,
+    contentHtmlOverride: contentHtmlOverride,
+    allowedLocalImageUrls: initialAttachmentSeeds
+        .where((attachment) => attachment.shareInlineImage)
+        .map((attachment) => shareInlineLocalUrlFromPath(attachment.filePath))
+        .where((url) => url.isNotEmpty)
+        .toSet(),
+  );
   return ShareComposeRequest(
     text: text,
     selectionOffset: text.length,
     attachmentPaths: attachmentPaths,
+    initialAttachmentSeeds: initialAttachmentSeeds,
     userMessage: userMessage,
   );
 }
@@ -83,25 +96,45 @@ ShareComposeRequest buildLinkOnlyComposeRequest(SharePayload payload) {
 String buildShareCaptureMemoText({
   required ShareCaptureResult result,
   required SharePayload payload,
+  String? contentHtmlOverride,
+  Set<String> allowedLocalImageUrls = const <String>{},
 }) {
   if (result.pageKind == SharePageKind.video) {
     return _buildShareVideoMemoText(result: result, payload: payload);
   }
 
   final resolvedUrl = _resolveFinalUrl(result.finalUrl);
-  final title = _resolveTitle(result: result, payload: payload, url: resolvedUrl);
+  final title = _resolveTitle(
+    result: result,
+    payload: payload,
+    url: resolvedUrl,
+  );
   final siteLabel = _resolveSiteLabel(result: result, url: resolvedUrl);
   final excerpt = _normalizeWhitespace(result.excerpt);
-  final fragment = _buildHtmlFragment(result: result, baseUrl: resolvedUrl);
-  final buffer = StringBuffer()..writeln('# $title')..writeln();
+  final fragment = _buildHtmlFragment(
+    result: result,
+    baseUrl: resolvedUrl,
+    contentHtmlOverride: contentHtmlOverride,
+    allowedLocalImageUrls: allowedLocalImageUrls,
+  );
+  final buffer = StringBuffer()
+    ..writeln('# $title')
+    ..writeln();
   final linkLabel = title.isNotEmpty ? title : siteLabel;
   buffer.writeln(_buildMarkdownLink(linkLabel, resolvedUrl));
   if (excerpt != null) {
-    buffer..writeln()..writeln('> $excerpt');
+    buffer
+      ..writeln()
+      ..writeln('> $excerpt');
   }
   if (fragment != null) {
-    buffer..writeln()..writeln(fragment);
+    buffer
+      ..writeln()
+      ..writeln(fragment);
   }
+  buffer
+    ..writeln()
+    ..writeln(buildThirdPartyShareMemoMarker());
   return buffer.toString().trimRight();
 }
 
@@ -110,12 +143,20 @@ String _buildShareVideoMemoText({
   required SharePayload payload,
 }) {
   final resolvedUrl = _resolveFinalUrl(result.finalUrl);
-  final title = _resolveTitle(result: result, payload: payload, url: resolvedUrl);
+  final title = _resolveTitle(
+    result: result,
+    payload: payload,
+    url: resolvedUrl,
+  );
   final excerpt = _normalizeWhitespace(result.excerpt);
-  final buffer = StringBuffer()..writeln('# $title')..writeln();
+  final buffer = StringBuffer()
+    ..writeln('# $title')
+    ..writeln();
   buffer.writeln(_buildMarkdownLink(title, resolvedUrl));
   if (excerpt != null) {
-    buffer..writeln()..writeln('> $excerpt');
+    buffer
+      ..writeln()
+      ..writeln('> $excerpt');
   }
   return buffer.toString().trimRight();
 }
@@ -154,10 +195,16 @@ Uri _resolveFinalUrl(Uri url) {
 String? _buildHtmlFragment({
   required ShareCaptureResult result,
   required Uri baseUrl,
+  String? contentHtmlOverride,
+  Set<String> allowedLocalImageUrls = const <String>{},
 }) {
-  final rawHtml = (result.contentHtml ?? '').trim();
+  final rawHtml = (contentHtmlOverride ?? result.contentHtml ?? '').trim();
   if (rawHtml.isNotEmpty) {
-    return _sanitizeFragment(rawHtml, baseUrl);
+    return _sanitizeFragment(
+      rawHtml,
+      baseUrl,
+      allowedLocalImageUrls: allowedLocalImageUrls,
+    );
   }
 
   final fallback = _buildTextFallback(result.textContent);
@@ -165,20 +212,50 @@ String? _buildHtmlFragment({
   return fallback;
 }
 
-String? _sanitizeFragment(String rawHtml, Uri baseUrl) {
+String? _sanitizeFragment(
+  String rawHtml,
+  Uri baseUrl, {
+  Set<String> allowedLocalImageUrls = const <String>{},
+}) {
   final fragment = html_parser.parseFragment(rawHtml);
-  _absolutizeAttribute(fragment, tagName: 'a', attribute: 'href', baseUrl: baseUrl);
-  _absolutizeAttribute(fragment, tagName: 'img', attribute: 'src', baseUrl: baseUrl);
-  final sanitized = _sanitizeFragmentToHtml(fragment).trim();
+  _absolutizeAttribute(
+    fragment,
+    tagName: 'a',
+    attribute: 'href',
+    baseUrl: baseUrl,
+  );
+  _absolutizeAttribute(
+    fragment,
+    tagName: 'img',
+    attribute: 'src',
+    baseUrl: baseUrl,
+  );
+  final sanitized = _sanitizeFragmentToHtml(
+    fragment,
+    allowedLocalImageUrls: allowedLocalImageUrls,
+  ).trim();
   if (sanitized.isEmpty) return null;
   return sanitized;
 }
 
-String _sanitizeFragmentToHtml(dom.DocumentFragment fragment) {
-  return fragment.nodes.map(_sanitizeNodeToHtml).join();
+String _sanitizeFragmentToHtml(
+  dom.DocumentFragment fragment, {
+  Set<String> allowedLocalImageUrls = const <String>{},
+}) {
+  return fragment.nodes
+      .map(
+        (node) => _sanitizeNodeToHtml(
+          node,
+          allowedLocalImageUrls: allowedLocalImageUrls,
+        ),
+      )
+      .join();
 }
 
-String _sanitizeNodeToHtml(dom.Node node) {
+String _sanitizeNodeToHtml(
+  dom.Node node, {
+  Set<String> allowedLocalImageUrls = const <String>{},
+}) {
   if (node.nodeType == dom.Node.COMMENT_NODE) {
     return '';
   }
@@ -193,13 +270,31 @@ String _sanitizeNodeToHtml(dom.Node node) {
     return '';
   }
   if (!_allowedHtmlTags.contains(tag)) {
-    return node.nodes.map(_sanitizeNodeToHtml).join();
+    return node.nodes
+        .map(
+          (child) => _sanitizeNodeToHtml(
+            child,
+            allowedLocalImageUrls: allowedLocalImageUrls,
+          ),
+        )
+        .join();
   }
-  final attributes = _sanitizeAttributeMap(node, tag);
+  final attributes = _sanitizeAttributeMap(
+    node,
+    tag,
+    allowedLocalImageUrls: allowedLocalImageUrls,
+  );
   if (attributes == null) {
     return tag == 'img' || tag == 'input'
         ? ''
-        : node.nodes.map(_sanitizeNodeToHtml).join();
+        : node.nodes
+              .map(
+                (child) => _sanitizeNodeToHtml(
+                  child,
+                  allowedLocalImageUrls: allowedLocalImageUrls,
+                ),
+              )
+              .join();
   }
   final renderedAttributes = attributes.entries
       .map((entry) => ' ${entry.key}="${_escapeHtmlAttribute(entry.value)}"')
@@ -207,11 +302,22 @@ String _sanitizeNodeToHtml(dom.Node node) {
   if (_voidHtmlTags.contains(tag)) {
     return '<$tag$renderedAttributes>';
   }
-  final children = node.nodes.map(_sanitizeNodeToHtml).join();
+  final children = node.nodes
+      .map(
+        (child) => _sanitizeNodeToHtml(
+          child,
+          allowedLocalImageUrls: allowedLocalImageUrls,
+        ),
+      )
+      .join();
   return '<$tag$renderedAttributes>$children</$tag>';
 }
 
-Map<String, String>? _sanitizeAttributeMap(dom.Element element, String tag) {
+Map<String, String>? _sanitizeAttributeMap(
+  dom.Element element,
+  String tag, {
+  Set<String> allowedLocalImageUrls = const <String>{},
+}) {
   final allowedAttributes = _allowedHtmlAttributes[tag] ?? const <String>{};
   final originalAttributes = Map<String, String>.from(element.attributes);
   final sanitizedAttributes = <String, String>{};
@@ -229,7 +335,11 @@ Map<String, String>? _sanitizeAttributeMap(dom.Element element, String tag) {
   }
 
   if (tag == 'img') {
-    final src = _sanitizeUrl(sanitizedAttributes['src']);
+    final src = _sanitizeUrl(
+      sanitizedAttributes['src'],
+      allowFile: true,
+      allowedFileUrls: allowedLocalImageUrls,
+    );
     if (src == null) {
       return null;
     }
@@ -247,7 +357,12 @@ Map<String, String>? _sanitizeAttributeMap(dom.Element element, String tag) {
   return sanitizedAttributes;
 }
 
-String? _sanitizeUrl(String? value, {bool allowMailto = false}) {
+String? _sanitizeUrl(
+  String? value, {
+  bool allowMailto = false,
+  bool allowFile = false,
+  Set<String> allowedFileUrls = const <String>{},
+}) {
   if (value == null) return null;
   final trimmed = value.trim();
   if (trimmed.isEmpty) return null;
@@ -257,6 +372,9 @@ String? _sanitizeUrl(String? value, {bool allowMailto = false}) {
     final scheme = uri.scheme.toLowerCase();
     if (scheme == 'http' || scheme == 'https') return trimmed;
     if (allowMailto && scheme == 'mailto') return trimmed;
+    if (allowFile && scheme == 'file' && allowedFileUrls.contains(trimmed)) {
+      return trimmed;
+    }
     return null;
   }
   return trimmed;

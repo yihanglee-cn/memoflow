@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -31,6 +33,7 @@ import '../../state/settings/preferences_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/settings/location_settings_provider.dart';
+import '../share/share_inline_image_content.dart';
 import 'attachment_gallery_screen.dart';
 import 'memo_editor_screen.dart';
 import 'memo_image_grid.dart';
@@ -41,13 +44,26 @@ import 'memo_hero_flight.dart';
 import 'memo_versions_screen.dart';
 import 'memos_list_screen.dart';
 import 'memo_video_grid.dart';
+import 'widgets/floating_collapse_button.dart';
 import '../../i18n/strings.g.dart';
 
-String memoDetailMarkdownCacheKey(LocalMemo memo) {
-  return 'detail|${memo.uid}|${memo.contentFingerprint}|renderImages=0|highlight=';
+String memoDetailMarkdownCacheKey(
+  LocalMemo memo, {
+  required bool renderImages,
+}) {
+  final renderFlag = renderImages ? 1 : 0;
+  return 'detail|${memo.uid}|${memo.contentFingerprint}|renderImages=$renderFlag|highlight=';
 }
 
 const _likeReactionType = '❤️';
+
+Rect? _globalRectForKey(GlobalKey key) {
+  final context = key.currentContext;
+  if (context == null) return null;
+  final renderObject = context.findRenderObject();
+  if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+  return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+}
 
 class _MemoDetailDeferredContent {
   const _MemoDetailDeferredContent({
@@ -82,11 +98,17 @@ class MemoDetailScreen extends ConsumerStatefulWidget {
 class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
   final _dateFmt = DateFormat('yyyy-MM-dd HH:mm');
   final _player = AudioPlayer();
+  final _scrollController = ScrollController();
+  final _floatingCollapseViewportKey = GlobalKey();
+  final _collapsibleTextKey = GlobalKey<_CollapsibleTextState>();
 
   LocalMemo? _memo;
   String? _currentAudioUrl;
   Animation<double>? _routeAnimation;
   bool _routeSettled = false;
+  bool _floatingCollapseVisible = false;
+  bool _floatingCollapseScrolling = false;
+  bool _floatingCollapseRecomputeScheduled = false;
   _MemoDetailDeferredContent? _deferredContent;
   String? _preparedDeferredContentKey;
   String? _pendingDeferredContentKey;
@@ -95,6 +117,11 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
   void initState() {
     super.initState();
     _memo = widget.initialMemo;
+    _scrollController.addListener(_scheduleFloatingCollapseRecompute);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scheduleFloatingCollapseRecompute();
+    });
   }
 
   @override
@@ -114,6 +141,7 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
   @override
   void dispose() {
     _routeAnimation?.removeStatusListener(_handleRouteAnimationStatusChanged);
+    _scrollController.dispose();
     _player.dispose();
     super.dispose();
   }
@@ -135,9 +163,63 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
   void _setMemo(LocalMemo memo) {
     _memo = memo;
+    _floatingCollapseVisible = false;
     _deferredContent = null;
     _preparedDeferredContentKey = null;
     _pendingDeferredContentKey = null;
+    _scheduleFloatingCollapseRecompute();
+  }
+
+  void _scheduleFloatingCollapseRecompute() {
+    if (_floatingCollapseRecomputeScheduled) return;
+    _floatingCollapseRecomputeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _floatingCollapseRecomputeScheduled = false;
+      if (!mounted) return;
+      _recomputeFloatingCollapseVisibility();
+    });
+  }
+
+  void _recomputeFloatingCollapseVisibility() {
+    final viewportRect = _globalRectForKey(_floatingCollapseViewportKey);
+    final shouldShow =
+        viewportRect != null &&
+        (_collapsibleTextKey.currentState?.shouldShowFloatingCollapse(
+              viewportRect,
+            ) ??
+            false);
+    if (shouldShow == _floatingCollapseVisible) return;
+    setState(() => _floatingCollapseVisible = shouldShow);
+  }
+
+  void _setFloatingCollapseScrolling(bool value) {
+    if (_floatingCollapseScrolling == value || !mounted) return;
+    setState(() => _floatingCollapseScrolling = value);
+  }
+
+  bool _handleFloatingCollapseScrollNotification(
+    ScrollNotification notification,
+  ) {
+    if (notification.metrics.axis == Axis.vertical) {
+      if (notification is ScrollStartNotification ||
+          notification is ScrollUpdateNotification ||
+          notification is OverscrollNotification) {
+        _setFloatingCollapseScrolling(true);
+      } else if (notification is UserScrollNotification) {
+        _setFloatingCollapseScrolling(
+          notification.direction != ScrollDirection.idle,
+        );
+      } else if (notification is ScrollEndNotification) {
+        _setFloatingCollapseScrolling(false);
+      }
+      _scheduleFloatingCollapseRecompute();
+    }
+    return false;
+  }
+
+  void _collapseMemoContentFromFloatingButton() {
+    _collapsibleTextKey.currentState?.collapseFromFloating();
+    _scheduleFloatingCollapseRecompute();
   }
 
   String _buildDeferredContentKey({
@@ -624,10 +706,19 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
     final deferredContent = _preparedDeferredContentKey == deferredContentKey
         ? _deferredContent
         : null;
+    final renderInlineImages = contentHasThirdPartyShareMarker(memo.content);
     final imageEntries =
         deferredContent?.imageEntries ?? const <MemoImageEntry>[];
-    final mediaEntries =
-        deferredContent?.mediaEntries ?? const <MemoMediaEntry>[];
+    final videoEntries =
+        deferredContent?.videoEntries ?? const <MemoVideoEntry>[];
+    final mediaEntries = renderInlineImages
+        ? buildMemoMediaEntries(
+            images: imageEntries
+                .where((entry) => entry.isAttachment)
+                .toList(growable: false),
+            videos: videoEntries,
+          )
+        : (deferredContent?.mediaEntries ?? const <MemoMediaEntry>[]);
     final allowImageEdit =
         canEditAttachments &&
         imageEntries.any((entry) => entry.isAttachment) &&
@@ -648,13 +739,18 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
     final tagColors = ref.watch(tagColorLookupProvider);
 
     final contentWidget = _CollapsibleText(
+      key: _collapsibleTextKey,
       text: memo.content,
-      collapseEnabled: false,
+      collapseEnabled: prefs.collapseLongContent,
       initiallyExpanded: true,
       style: contentStyle,
       hapticsEnabled: hapticsEnabled,
-      markdownCacheKey: memoDetailMarkdownCacheKey(memo),
+      markdownCacheKey: memoDetailMarkdownCacheKey(
+        memo,
+        renderImages: renderInlineImages,
+      ),
       markdownSelectable: _routeSettled,
+      renderImages: renderInlineImages,
       tagColors: tagColors,
       onToggleTask: canToggleTasks
           ? (request) {
@@ -667,7 +763,9 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
               );
             }
           : null,
+      onFloatingStateChanged: _scheduleFloatingCollapseRecompute,
     );
+    _scheduleFloatingCollapseRecompute();
 
     final memoErrorText =
         (memo.lastError == null || memo.lastError!.trim().isEmpty)
@@ -861,6 +959,7 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
               ],
       ),
       body: Stack(
+        key: _floatingCollapseViewportKey,
         children: [
           Positioned.fill(
             child: Hero(
@@ -874,75 +973,91 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
             ),
           ),
           SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                header,
-                if (_routeSettled && shouldShowEngagement)
-                  _MemoEngagementSection(
-                    memoUid: memo.uid,
-                    memoVisibility: memo.visibility,
-                  ),
-                if (_routeSettled) _MemoRelationsSection(memoUid: memo.uid),
-                if (_routeSettled && nonImageAttachments.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    context.t.strings.legacy.msg_attachments,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final attachment in nonImageAttachments)
-                        Builder(
-                          builder: (context) {
-                            final isAudio = attachment.type.startsWith('audio');
-                            final fullUrl = (baseUrl == null)
-                                ? ''
-                                : _attachmentUrl(
-                                    baseUrl,
-                                    attachment,
-                                    thumbnail: false,
-                                  );
-
-                            if (isAudio &&
-                                baseUrl != null &&
-                                fullUrl.isNotEmpty) {
-                              return StreamBuilder<PlayerState>(
-                                stream: _player.playerStateStream,
-                                builder: (context, snap) {
-                                  final playing =
-                                      _player.playing &&
-                                      _currentAudioUrl == fullUrl;
-                                  return ListTile(
-                                    leading: Icon(
-                                      playing ? Icons.pause : Icons.play_arrow,
-                                    ),
-                                    title: Text(attachment.filename),
-                                    subtitle: Text(attachment.type),
-                                    onTap: () => _togglePlayAudio(
-                                      fullUrl,
-                                      headers: authHeader == null
-                                          ? null
-                                          : {'Authorization': authHeader},
-                                    ),
-                                  );
-                                },
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handleFloatingCollapseScrollNotification,
+              child: ListView(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16),
+                children: [
+                  header,
+                  if (_routeSettled && shouldShowEngagement)
+                    _MemoEngagementSection(
+                      memoUid: memo.uid,
+                      memoVisibility: memo.visibility,
+                    ),
+                  if (_routeSettled) _MemoRelationsSection(memoUid: memo.uid),
+                  if (_routeSettled && nonImageAttachments.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      context.t.strings.legacy.msg_attachments,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final attachment in nonImageAttachments)
+                          Builder(
+                            builder: (context) {
+                              final isAudio = attachment.type.startsWith(
+                                'audio',
                               );
-                            }
+                              final fullUrl = (baseUrl == null)
+                                  ? ''
+                                  : _attachmentUrl(
+                                      baseUrl,
+                                      attachment,
+                                      thumbnail: false,
+                                    );
 
-                            return ListTile(
-                              leading: const Icon(Icons.attach_file),
-                              title: Text(attachment.filename),
-                              subtitle: Text(attachment.type),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
+                              if (isAudio &&
+                                  baseUrl != null &&
+                                  fullUrl.isNotEmpty) {
+                                return StreamBuilder<PlayerState>(
+                                  stream: _player.playerStateStream,
+                                  builder: (context, snap) {
+                                    final playing =
+                                        _player.playing &&
+                                        _currentAudioUrl == fullUrl;
+                                    return ListTile(
+                                      leading: Icon(
+                                        playing
+                                            ? Icons.pause
+                                            : Icons.play_arrow,
+                                      ),
+                                      title: Text(attachment.filename),
+                                      subtitle: Text(attachment.type),
+                                      onTap: () => _togglePlayAudio(
+                                        fullUrl,
+                                        headers: authHeader == null
+                                            ? null
+                                            : {'Authorization': authHeader},
+                                      ),
+                                    );
+                                  },
+                                );
+                              }
+
+                              return ListTile(
+                                leading: const Icon(Icons.attach_file),
+                                title: Text(attachment.filename),
+                                subtitle: Text(attachment.type),
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
-              ],
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: MemoFloatingCollapseButton(
+              visible: _floatingCollapseVisible,
+              scrolling: _floatingCollapseScrolling,
+              label: context.t.strings.legacy.msg_collapse,
+              onPressed: _collapseMemoContentFromFloatingButton,
             ),
           ),
         ],
@@ -2530,6 +2645,7 @@ class _RelationGroup extends StatelessWidget {
 
 class _CollapsibleText extends StatefulWidget {
   const _CollapsibleText({
+    super.key,
     required this.text,
     required this.collapseEnabled,
     required this.style,
@@ -2537,8 +2653,10 @@ class _CollapsibleText extends StatefulWidget {
     this.initiallyExpanded = false,
     this.markdownCacheKey,
     this.markdownSelectable = true,
+    this.renderImages = false,
     this.tagColors,
     this.onToggleTask,
+    this.onFloatingStateChanged,
   });
 
   final String text;
@@ -2548,8 +2666,10 @@ class _CollapsibleText extends StatefulWidget {
   final bool initiallyExpanded;
   final String? markdownCacheKey;
   final bool markdownSelectable;
+  final bool renderImages;
   final TagColorLookup? tagColors;
   final ValueChanged<TaskToggleRequest>? onToggleTask;
+  final VoidCallback? onFloatingStateChanged;
 
   @override
   State<_CollapsibleText> createState() => _CollapsibleTextState();
@@ -2560,11 +2680,44 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
   static const _collapsedRunes = 420;
 
   late bool _expanded;
+  final _contentKey = GlobalKey();
+  final _toggleButtonKey = GlobalKey();
+  bool _shouldCollapse = false;
 
   @override
   void initState() {
     super.initState();
     _expanded = widget.initiallyExpanded;
+  }
+
+  void _notifyFloatingStateChanged() {
+    widget.onFloatingStateChanged?.call();
+  }
+
+  void collapseFromFloating() {
+    if (!_expanded) return;
+    if (widget.hapticsEnabled) {
+      HapticFeedback.selectionClick();
+    }
+    setState(() => _expanded = false);
+    _notifyFloatingStateChanged();
+  }
+
+  bool shouldShowFloatingCollapse(Rect viewportRect) {
+    if (!_expanded || !_shouldCollapse) return false;
+    final contentRect = _globalRectForKey(_contentKey);
+    final toggleRect = _globalRectForKey(_toggleButtonKey);
+    if (contentRect == null || toggleRect == null) return false;
+    final visibleHeight = math.max(
+      0,
+      math.min(contentRect.bottom, viewportRect.bottom) -
+          math.max(contentRect.top, viewportRect.top),
+    );
+    if (visibleHeight <= 0) return false;
+    return shouldShowFloatingCollapseForToggle(
+      viewportRect: viewportRect,
+      toggleRect: toggleRect,
+    );
   }
 
   bool _isLong(String text) {
@@ -2602,10 +2755,12 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
     if (text.isEmpty) return const SizedBox.shrink();
 
     final shouldCollapse = widget.collapseEnabled && _isLong(text);
+    _shouldCollapse = shouldCollapse;
     final showCollapsed = shouldCollapse && !_expanded;
     final displayText = showCollapsed ? _collapseText(text) : text;
 
     return Column(
+      key: _contentKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         MemoMarkdown(
@@ -2614,7 +2769,7 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
           textStyle: widget.style,
           selectable: widget.markdownSelectable && !showCollapsed,
           blockSpacing: 8,
-          renderImages: false,
+          renderImages: widget.renderImages && !showCollapsed,
           tagColors: widget.tagColors,
           onToggleTask: showCollapsed ? null : widget.onToggleTask,
         ),
@@ -2622,11 +2777,13 @@ class _CollapsibleTextState extends State<_CollapsibleText> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
+              key: _toggleButtonKey,
               onPressed: () {
                 if (widget.hapticsEnabled) {
                   HapticFeedback.selectionClick();
                 }
                 setState(() => _expanded = !_expanded);
+                _notifyFloatingStateChanged();
               },
               child: Text(
                 _expanded

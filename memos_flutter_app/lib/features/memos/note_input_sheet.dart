@@ -28,6 +28,7 @@ import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/settings/image_compression_settings_provider.dart';
+import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/note_draft_provider.dart';
 import '../../state/settings/preferences_provider.dart';
@@ -35,6 +36,8 @@ import '../../state/tags/tag_color_lookup.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../../state/memos/note_input_providers.dart';
 import '../share/share_clip_models.dart';
+import '../share/share_inline_image_content.dart';
+import '../share/share_inline_image_download_service.dart';
 import '../share/share_video_compression_service.dart';
 import '../share/share_video_download_service.dart';
 import 'attachment_gallery_screen.dart';
@@ -109,9 +112,12 @@ class NoteInputSheet extends ConsumerStatefulWidget {
     this.initialText,
     this.initialSelection,
     this.initialAttachmentPaths = const [],
+    this.initialAttachmentSeeds = const [],
+    this.initialDeferredInlineImageAttachments = const [],
     this.initialDeferredVideoAttachments = const [],
     this.ignoreDraft = false,
     this.autoFocus = true,
+    this.shareInlineImageDownloadService,
     this.shareVideoDownloadService,
     this.shareVideoCompressionService,
   });
@@ -119,10 +125,14 @@ class NoteInputSheet extends ConsumerStatefulWidget {
   final String? initialText;
   final TextSelection? initialSelection;
   final List<String> initialAttachmentPaths;
+  final List<ShareAttachmentSeed> initialAttachmentSeeds;
+  final List<ShareDeferredInlineImageAttachmentRequest>
+  initialDeferredInlineImageAttachments;
   final List<ShareDeferredVideoAttachmentRequest>
   initialDeferredVideoAttachments;
   final bool ignoreDraft;
   final bool autoFocus;
+  final ShareInlineImageDownloadService? shareInlineImageDownloadService;
   final ShareVideoDownloadService? shareVideoDownloadService;
   final ShareVideoCompressionService? shareVideoCompressionService;
 
@@ -131,10 +141,15 @@ class NoteInputSheet extends ConsumerStatefulWidget {
     String? initialText,
     TextSelection? initialSelection,
     List<String> initialAttachmentPaths = const [],
+    List<ShareAttachmentSeed> initialAttachmentSeeds = const [],
+    List<ShareDeferredInlineImageAttachmentRequest>
+        initialDeferredInlineImageAttachments =
+        const [],
     List<ShareDeferredVideoAttachmentRequest> initialDeferredVideoAttachments =
         const [],
     bool ignoreDraft = false,
     bool autoFocus = true,
+    ShareInlineImageDownloadService? shareInlineImageDownloadService,
     ShareVideoDownloadService? shareVideoDownloadService,
     ShareVideoCompressionService? shareVideoCompressionService,
   }) {
@@ -149,9 +164,13 @@ class NoteInputSheet extends ConsumerStatefulWidget {
         initialText: initialText,
         initialSelection: initialSelection,
         initialAttachmentPaths: initialAttachmentPaths,
+        initialAttachmentSeeds: initialAttachmentSeeds,
+        initialDeferredInlineImageAttachments:
+            initialDeferredInlineImageAttachments,
         initialDeferredVideoAttachments: initialDeferredVideoAttachments,
         ignoreDraft: ignoreDraft,
         autoFocus: autoFocus,
+        shareInlineImageDownloadService: shareInlineImageDownloadService,
         shareVideoDownloadService: shareVideoDownloadService,
         shareVideoCompressionService: shareVideoCompressionService,
       ),
@@ -172,11 +191,16 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   ProviderSubscription<AsyncValue<String>>? _draftSubscription;
   var _didApplyDraft = false;
   var _didSeedInitialAttachments = false;
+  var _didSeedInitialDeferredInlineImages = false;
   var _didSeedInitialDeferredVideos = false;
   List<TagStat> _tagStatsCache = const [];
   late final NoteDraftController _noteDraftController;
+  late final ShareInlineImageDownloadService _shareInlineImageDownloadService;
   late final ShareVideoDownloadService _shareVideoDownloadService;
   late final ShareVideoCompressionService _shareVideoCompressionService;
+  final List<ShareDeferredInlineImageAttachmentRequest>
+  _deferredInlineImageRequests = [];
+  final Map<String, String> _thirdPartyShareInlineSourceByLocalUrl = {};
   final List<_DeferredShareVideoTask> _deferredShareVideoTasks = [];
   List<_LinkedMemo> get _linkedMemos => _composer.linkedMemos;
   List<_PendingAttachment> get _pendingAttachments =>
@@ -187,6 +211,11 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           .toList(growable: false);
   bool get _hasPendingDeferredShareVideoTasks =>
       _deferredShareVideoTasks.any((task) => task.isPending);
+  var _submittingDeferredInlineImages = false;
+  var _deferredInlineImageTotal = 0;
+  var _deferredInlineImageCompleted = 0;
+  var _deferredInlineImageActiveProgress = 0.0;
+  Future<void>? _deferredInlineImagePrefetchFuture;
   double? get _deferredShareVideoProgress {
     final active = _deferredShareVideoTasks
         .where((task) => task.isPending)
@@ -197,6 +226,16 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       (sum, task) => sum + task.overallProgress,
     );
     return (total / active.length).clamp(0, 1);
+  }
+
+  double? get _deferredInlineImageProgress {
+    if (!_submittingDeferredInlineImages || _deferredInlineImageTotal <= 0) {
+      return null;
+    }
+    return ((_deferredInlineImageCompleted +
+                _deferredInlineImageActiveProgress.clamp(0, 1)) /
+            _deferredInlineImageTotal)
+        .clamp(0, 1);
   }
 
   final _tagMenuKey = GlobalKey();
@@ -217,6 +256,9 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   void initState() {
     super.initState();
     _noteDraftController = ref.read(noteDraftProvider.notifier);
+    _shareInlineImageDownloadService =
+        widget.shareInlineImageDownloadService ??
+        ShareInlineImageDownloadService();
     _shareVideoDownloadService =
         widget.shareVideoDownloadService ?? ShareVideoDownloadService();
     _shareVideoCompressionService =
@@ -229,6 +271,8 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     if (widget.ignoreDraft ||
         _controller.text.trim().isNotEmpty ||
         widget.initialAttachmentPaths.isNotEmpty ||
+        widget.initialAttachmentSeeds.isNotEmpty ||
+        widget.initialDeferredInlineImageAttachments.isNotEmpty ||
         widget.initialDeferredVideoAttachments.isNotEmpty) {
       _didApplyDraft = true;
     }
@@ -238,6 +282,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     _applyDefaultVisibility(ref.read(userGeneralSettingProvider));
     _loadTagStats();
     unawaited(_seedInitialAttachments());
+    unawaited(_seedInitialDeferredInlineImages());
     unawaited(_seedInitialDeferredShareVideos());
     _draftSubscription = ref.listenManual<AsyncValue<String>>(
       noteDraftProvider,
@@ -306,9 +351,30 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     if (_didSeedInitialAttachments) return;
     _didSeedInitialAttachments = true;
     final paths = widget.initialAttachmentPaths;
-    if (paths.isEmpty) return;
+    final seeds = widget.initialAttachmentSeeds;
+    if (paths.isEmpty && seeds.isEmpty) return;
 
     final added = <_PendingAttachment>[];
+    for (final seed in seeds) {
+      final path = seed.filePath.trim();
+      if (path.isEmpty) continue;
+      final file = File(path);
+      if (!file.existsSync()) continue;
+      final actualSize = file.lengthSync();
+      added.add(
+        _PendingAttachment(
+          uid: seed.uid,
+          filePath: path,
+          filename: seed.filename,
+          mimeType: seed.mimeType,
+          size: actualSize > 0 ? actualSize : seed.size,
+          skipCompression: seed.skipCompression,
+          shareInlineImage: seed.shareInlineImage,
+          fromThirdPartyShare: seed.fromThirdPartyShare,
+          sourceUrl: seed.sourceUrl,
+        ),
+      );
+    }
     for (final raw in paths) {
       final path = raw.trim();
       if (path.isEmpty) continue;
@@ -348,6 +414,184 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     for (final task in tasks) {
       unawaited(_processDeferredShareVideo(task.id));
     }
+  }
+
+  Future<void> _seedInitialDeferredInlineImages() async {
+    if (_didSeedInitialDeferredInlineImages) return;
+    _didSeedInitialDeferredInlineImages = true;
+    final requests = widget.initialDeferredInlineImageAttachments;
+    if (requests.isEmpty || !mounted) return;
+    setState(() {
+      _deferredInlineImageRequests.addAll(requests);
+    });
+    final future = _deferredInlineImagePrefetchFuture ??=
+        _prefetchDeferredInlineImagesInComposer();
+    unawaited(future);
+  }
+
+  Future<void> _prefetchDeferredInlineImagesInComposer() async {
+    final requests = List<ShareDeferredInlineImageAttachmentRequest>.from(
+      _deferredInlineImageRequests,
+    );
+    if (requests.isEmpty) {
+      _deferredInlineImagePrefetchFuture = null;
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _submittingDeferredInlineImages = true;
+        _deferredInlineImageTotal = requests.length;
+        _deferredInlineImageCompleted = 0;
+        _deferredInlineImageActiveProgress = 0;
+      });
+    } else {
+      _submittingDeferredInlineImages = true;
+      _deferredInlineImageTotal = requests.length;
+      _deferredInlineImageCompleted = 0;
+      _deferredInlineImageActiveProgress = 0;
+    }
+
+    try {
+      for (final request in requests) {
+        if (!mounted) return;
+
+        if (!contentContainsShareInlineImageUrl(
+          _controller.text,
+          request.sourceUrl,
+        )) {
+          setState(() {
+            _removeDeferredInlineImageRequest(request);
+            _deferredInlineImageCompleted += 1;
+            _deferredInlineImageActiveProgress = 0;
+          });
+          continue;
+        }
+
+        ShareAttachmentSeed? seed;
+        try {
+          seed = await _shareInlineImageDownloadService
+              .downloadDeferredInlineImageAttachment(
+                request,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() {
+                    _deferredInlineImageActiveProgress = progress.clamp(0, 1);
+                  });
+                },
+              );
+          if (seed != null) {
+            final applied = _applyPrefetchedDeferredInlineImage(
+              request: request,
+              seed: seed,
+            );
+            if (!applied) {
+              await _cleanupShareVideoFile(seed.filePath);
+            }
+          }
+        } catch (_) {
+          if (seed != null) {
+            await _cleanupShareVideoFile(seed.filePath);
+          }
+        } finally {
+          if (mounted) {
+            setState(() {
+              _deferredInlineImageCompleted += 1;
+              _deferredInlineImageActiveProgress = 0;
+            });
+          } else {
+            _deferredInlineImageCompleted += 1;
+            _deferredInlineImageActiveProgress = 0;
+          }
+        }
+      }
+    } finally {
+      _deferredInlineImagePrefetchFuture = null;
+      if (mounted) {
+        setState(() {
+          _submittingDeferredInlineImages = false;
+          _deferredInlineImageTotal = 0;
+          _deferredInlineImageCompleted = 0;
+          _deferredInlineImageActiveProgress = 0;
+        });
+      } else {
+        _submittingDeferredInlineImages = false;
+        _deferredInlineImageTotal = 0;
+        _deferredInlineImageCompleted = 0;
+        _deferredInlineImageActiveProgress = 0;
+      }
+    }
+  }
+
+  bool _applyPrefetchedDeferredInlineImage({
+    required ShareDeferredInlineImageAttachmentRequest request,
+    required ShareAttachmentSeed seed,
+  }) {
+    if (!mounted) return false;
+    if (!contentContainsShareInlineImageUrl(
+      _controller.text,
+      request.sourceUrl,
+    )) {
+      setState(() {
+        _removeDeferredInlineImageRequest(request);
+      });
+      return false;
+    }
+
+    final localUrl = shareInlineLocalUrlFromPath(seed.filePath);
+    if (localUrl.isEmpty) {
+      setState(() {
+        _removeDeferredInlineImageRequest(request);
+      });
+      return false;
+    }
+
+    final nextText = replaceShareInlineImageUrl(
+      _controller.text,
+      fromUrl: request.sourceUrl,
+      toUrl: localUrl,
+    );
+    if (nextText == _controller.text) {
+      setState(() {
+        _removeDeferredInlineImageRequest(request);
+      });
+      return false;
+    }
+
+    setState(() {
+      _thirdPartyShareInlineSourceByLocalUrl[localUrl] = request.sourceUrl;
+      _composer.addPendingAttachments([
+        _PendingAttachment(
+          uid: seed.uid,
+          filePath: seed.filePath,
+          filename: seed.filename,
+          mimeType: seed.mimeType,
+          size: seed.size,
+          skipCompression: seed.skipCompression,
+          shareInlineImage: true,
+          fromThirdPartyShare: true,
+          sourceUrl: request.sourceUrl,
+        ),
+      ]);
+      final caret = _controller.selection.extentOffset
+          .clamp(0, nextText.length)
+          .toInt();
+      _controller.value = _controller.value.copyWith(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: caret),
+        composing: TextRange.empty,
+      );
+      _removeDeferredInlineImageRequest(request);
+    });
+    return true;
+  }
+
+  void _removeDeferredInlineImageRequest(
+    ShareDeferredInlineImageAttachmentRequest request,
+  ) {
+    _deferredInlineImageRequests.removeWhere(
+      (item) => item.id == request.id && item.sourceUrl == request.sourceUrl,
+    );
   }
 
   _DeferredShareVideoTask? _findDeferredShareVideoTask(String id) {
@@ -1568,7 +1812,27 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     final index = _pendingAttachments.indexWhere((a) => a.uid == uid);
     if (index < 0) return;
     final removed = _pendingAttachments[index];
+    final localUrl = removed.shareInlineImage
+        ? shareInlineLocalUrlFromPath(removed.filePath)
+        : '';
     setState(() {
+      if (localUrl.isNotEmpty) {
+        _thirdPartyShareInlineSourceByLocalUrl.remove(localUrl);
+        final nextText = removeShareInlineImageReferences(
+          _controller.text,
+          localUrl: localUrl,
+        );
+        if (nextText != _controller.text) {
+          final caret = _controller.selection.extentOffset
+              .clamp(0, nextText.length)
+              .toInt();
+          _controller.value = _controller.value.copyWith(
+            text: nextText,
+            selection: TextSelection.collapsed(offset: caret),
+            composing: TextRange.empty,
+          );
+        }
+      }
       _composer.removePendingAttachment(uid);
       _pickedImages.removeWhere((x) => x.path == removed.filePath);
     });
@@ -1650,6 +1914,31 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     if (index < 0) return;
     final existing = _pendingAttachments[index];
     setState(() {
+      if (existing.shareInlineImage) {
+        final oldLocalUrl = shareInlineLocalUrlFromPath(existing.filePath);
+        final newLocalUrl = shareInlineLocalUrlFromPath(result.filePath);
+        final sourceUrl = _thirdPartyShareInlineSourceByLocalUrl.remove(
+          oldLocalUrl,
+        );
+        if (sourceUrl != null && newLocalUrl.isNotEmpty) {
+          _thirdPartyShareInlineSourceByLocalUrl[newLocalUrl] = sourceUrl;
+        }
+        final nextText = replaceShareInlineLocalUrlWithRemote(
+          _controller.text,
+          localUrl: oldLocalUrl,
+          remoteUrl: newLocalUrl,
+        );
+        if (nextText != _controller.text) {
+          final caret = _controller.selection.extentOffset
+              .clamp(0, nextText.length)
+              .toInt();
+          _controller.value = _controller.value.copyWith(
+            text: nextText,
+            selection: TextSelection.collapsed(offset: caret),
+            composing: TextRange.empty,
+          );
+        }
+      }
       _composer.replacePendingAttachment(
         uid,
         _PendingAttachment(
@@ -1659,6 +1948,9 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           mimeType: result.mimeType,
           size: result.size,
           skipCompression: existing.skipCompression,
+          shareInlineImage: existing.shareInlineImage,
+          fromThirdPartyShare: existing.fromThirdPartyShare,
+          sourceUrl: existing.sourceUrl,
         ),
       );
     });
@@ -2034,14 +2326,17 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   Future<void> _submitOrVoice() async {
     if (_busy) return;
     if (_hasPendingDeferredShareVideoTasks) return;
-    final content = _controller.text.trimRight();
-    final relations = _linkedMemos
+    var content = _controller.text.trimRight();
+    var relations = _linkedMemos
         .map((m) => m.toRelationJson())
         .toList(growable: false);
-    final pendingAttachments = List<_PendingAttachment>.from(
-      _pendingAttachments,
-    );
-    final hasAttachments = pendingAttachments.isNotEmpty;
+    var pendingAttachments = List<_PendingAttachment>.from(_pendingAttachments)
+      ..removeWhere(
+        (attachment) =>
+            attachment.shareInlineImage &&
+            !contentContainsShareInlineLocalUrl(content, attachment.filePath),
+      );
+    var hasAttachments = pendingAttachments.isNotEmpty;
     if (content.trim().isEmpty && !hasAttachments) {
       if (relations.isNotEmpty) {
         if (!mounted) return;
@@ -2065,10 +2360,73 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
 
     setState(() => _busy = true);
     try {
+      final prefetchFuture = _deferredInlineImagePrefetchFuture;
+      if (prefetchFuture != null) {
+        await prefetchFuture;
+      }
+
+      content = _controller.text.trimRight();
+      relations = _linkedMemos
+          .map((m) => m.toRelationJson())
+          .toList(growable: false);
+      pendingAttachments = List<_PendingAttachment>.from(_pendingAttachments)
+        ..removeWhere(
+          (attachment) =>
+              attachment.shareInlineImage &&
+              !contentContainsShareInlineLocalUrl(content, attachment.filePath),
+        );
+      final deferredInlineImageRequests =
+          List<ShareDeferredInlineImageAttachmentRequest>.from(
+            _deferredInlineImageRequests,
+          )..removeWhere(
+            (request) =>
+                !contentContainsShareInlineImageUrl(content, request.sourceUrl),
+          );
+      pendingAttachments.sort(
+        (left, right) =>
+            switch ((left.shareInlineImage, right.shareInlineImage)) {
+              (true, false) => 1,
+              (false, true) => -1,
+              _ => 0,
+            },
+      );
+      hasAttachments = pendingAttachments.isNotEmpty;
+
       final now = DateTime.now();
       final uid = generateUid();
       final tags = extractTags(content);
       final visibility = _normalizedVisibility();
+      final imageBedEnabled = ref.read(imageBedSettingsProvider).enabled;
+      final hasThirdPartyShareInlineImages = pendingAttachments.any(
+        (attachment) =>
+            attachment.shareInlineImage && attachment.fromThirdPartyShare,
+      );
+      var syncContent = content;
+      if (!imageBedEnabled && hasThirdPartyShareInlineImages) {
+        for (final entry in _thirdPartyShareInlineSourceByLocalUrl.entries) {
+          syncContent = replaceShareInlineLocalUrlWithRemote(
+            syncContent,
+            localUrl: entry.key,
+            remoteUrl: entry.value,
+          );
+        }
+      }
+      syncContent = buildShareInlineSyncContent(
+        syncContent,
+        pendingAttachments.map(
+          (attachment) => ShareAttachmentSeed(
+            uid: attachment.uid,
+            filePath: attachment.filePath,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            skipCompression: attachment.skipCompression,
+            shareInlineImage: attachment.shareInlineImage,
+            fromThirdPartyShare: attachment.fromThirdPartyShare,
+            sourceUrl: attachment.sourceUrl,
+          ),
+        ),
+      );
 
       final attachments = pendingAttachments
           .map((p) {
@@ -2096,6 +2454,9 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
               mimeType: attachment.mimeType,
               size: attachment.size,
               skipCompression: attachment.skipCompression,
+              shareInlineImage: attachment.shareInlineImage,
+              fromThirdPartyShare: attachment.fromThirdPartyShare,
+              sourceUrl: attachment.sourceUrl,
             ),
           )
           .toList(growable: false);
@@ -2105,6 +2466,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           .createMemo(
             uid: uid,
             content: content,
+            syncContent: syncContent,
             visibility: visibility,
             now: now,
             tags: tags,
@@ -2114,6 +2476,11 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
             relations: relations,
             pendingAttachments: pendingUploads,
           );
+
+      await _processDeferredInlineImagesAfterSubmit(
+        memoUid: uid,
+        requests: deferredInlineImageRequests,
+      );
 
       unawaited(
         ref
@@ -2129,6 +2496,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       _composer.replaceText('', clearHistory: true);
       _clearLinkedMemos();
       _composer.clearPendingAttachments();
+      _deferredInlineImageRequests.clear();
       _pickedImages.clear();
       await ref.read(noteDraftProvider.notifier).clear();
 
@@ -2143,6 +2511,90 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       );
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _processDeferredInlineImagesAfterSubmit({
+    required String memoUid,
+    required List<ShareDeferredInlineImageAttachmentRequest> requests,
+  }) async {
+    if (requests.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _submittingDeferredInlineImages = true;
+        _deferredInlineImageTotal = requests.length;
+        _deferredInlineImageCompleted = 0;
+        _deferredInlineImageActiveProgress = 0;
+      });
+    } else {
+      _submittingDeferredInlineImages = true;
+      _deferredInlineImageTotal = requests.length;
+      _deferredInlineImageCompleted = 0;
+      _deferredInlineImageActiveProgress = 0;
+    }
+
+    try {
+      for (final request in requests) {
+        ShareAttachmentSeed? seed;
+        try {
+          seed = await _shareInlineImageDownloadService
+              .downloadDeferredInlineImageAttachment(
+                request,
+                onProgress: (progress) {
+                  if (!mounted) return;
+                  setState(() {
+                    _deferredInlineImageActiveProgress = progress.clamp(0, 1);
+                  });
+                },
+              );
+          if (seed != null) {
+            await ref
+                .read(noteInputControllerProvider)
+                .appendDeferredThirdPartyShareInlineImage(
+                  memoUid: memoUid,
+                  sourceUrl: request.sourceUrl,
+                  attachment: NoteInputPendingAttachment(
+                    uid: seed.uid,
+                    filePath: seed.filePath,
+                    filename: seed.filename,
+                    mimeType: seed.mimeType,
+                    size: seed.size,
+                    shareInlineImage: true,
+                    fromThirdPartyShare: true,
+                    sourceUrl: request.sourceUrl,
+                  ),
+                );
+          }
+        } catch (_) {
+          if (seed != null) {
+            await _cleanupShareVideoFile(seed.filePath);
+          }
+        } finally {
+          if (mounted) {
+            setState(() {
+              _deferredInlineImageCompleted += 1;
+              _deferredInlineImageActiveProgress = 0;
+            });
+          } else {
+            _deferredInlineImageCompleted += 1;
+            _deferredInlineImageActiveProgress = 0;
+          }
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _submittingDeferredInlineImages = false;
+          _deferredInlineImageTotal = 0;
+          _deferredInlineImageCompleted = 0;
+          _deferredInlineImageActiveProgress = 0;
+        });
+      } else {
+        _submittingDeferredInlineImages = false;
+        _deferredInlineImageTotal = 0;
+        _deferredInlineImageCompleted = 0;
+        _deferredInlineImageActiveProgress = 0;
+      }
     }
   }
 
@@ -2213,395 +2665,442 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                     padding: EdgeInsets.only(
                       bottom: MediaQuery.viewInsetsOf(context).bottom,
                     ),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: sheetColor,
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(28),
-                        ),
-                        border: isDark
-                            ? Border(
-                                top: BorderSide(
-                                  color: Colors.white.withValues(alpha: 0.06),
-                                ),
-                              )
-                            : null,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: isDark ? 0.5 : 0.12,
-                            ),
-                            blurRadius: 40,
-                            offset: const Offset(0, -10),
-                          ),
-                        ],
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.sizeOf(context).height * 0.88,
                       ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(height: 10),
-                          Container(
-                            width: 40,
-                            height: 6,
-                            decoration: BoxDecoration(
-                              color: isDark
-                                  ? Colors.white.withValues(alpha: 0.1)
-                                  : Colors.black.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(3),
-                            ),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: sheetColor,
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(28),
                           ),
-                          const SizedBox(height: 10),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 20,
-                              vertical: 8,
-                            ),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(
-                                minHeight: 160,
-                                maxHeight: 340,
+                          border: isDark
+                              ? Border(
+                                  top: BorderSide(
+                                    color: Colors.white.withValues(alpha: 0.06),
+                                  ),
+                                )
+                              : null,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.5 : 0.12,
                               ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildAttachmentPreview(isDark),
-                                  Flexible(
-                                    fit: FlexFit.loose,
-                                    child: Stack(
-                                      clipBehavior: Clip.none,
-                                      children: [
-                                        KeyedSubtree(
-                                          key: _editorFieldKey,
-                                          child: Focus(
-                                            canRequestFocus: false,
-                                            onKeyEvent:
-                                                _handleTagAutocompleteKeyEvent,
-                                            child: TextField(
-                                              controller: _controller,
-                                              focusNode: _editorFocusNode,
-                                              autofocus: widget.autoFocus,
-                                              maxLines: null,
-                                              keyboardType:
-                                                  TextInputType.multiline,
-                                              style: editorTextStyle,
-                                              decoration: InputDecoration(
-                                                isDense: true,
-                                                border: InputBorder.none,
-                                                hintText: context
-                                                    .t
-                                                    .strings
-                                                    .legacy
-                                                    .msg_write_thoughts,
-                                                hintStyle: TextStyle(
-                                                  color: isDark
-                                                      ? const Color(0xFF666666)
-                                                      : Colors.grey.shade500,
+                              blurRadius: 40,
+                              offset: const Offset(0, -10),
+                            ),
+                          ],
+                        ),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(height: 10),
+                              Container(
+                                width: 40,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  color: isDark
+                                      ? Colors.white.withValues(alpha: 0.1)
+                                      : Colors.black.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 8,
+                                ),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    minHeight: 160,
+                                    maxHeight: 340,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      _buildAttachmentPreview(isDark),
+                                      Flexible(
+                                        fit: FlexFit.loose,
+                                        child: Stack(
+                                          clipBehavior: Clip.none,
+                                          children: [
+                                            KeyedSubtree(
+                                              key: _editorFieldKey,
+                                              child: Focus(
+                                                canRequestFocus: false,
+                                                onKeyEvent:
+                                                    _handleTagAutocompleteKeyEvent,
+                                                child: TextField(
+                                                  controller: _controller,
+                                                  focusNode: _editorFocusNode,
+                                                  autofocus: widget.autoFocus,
+                                                  maxLines: null,
+                                                  keyboardType:
+                                                      TextInputType.multiline,
+                                                  style: editorTextStyle,
+                                                  decoration: InputDecoration(
+                                                    isDense: true,
+                                                    border: InputBorder.none,
+                                                    hintText: context
+                                                        .t
+                                                        .strings
+                                                        .legacy
+                                                        .msg_write_thoughts,
+                                                    hintStyle: TextStyle(
+                                                      color: isDark
+                                                          ? const Color(
+                                                              0xFF666666,
+                                                            )
+                                                          : Colors
+                                                                .grey
+                                                                .shade500,
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ),
-                                          ),
-                                        ),
-                                        if (_editorFocusNode.hasFocus &&
-                                            activeTagQuery != null &&
-                                            tagSuggestions.isNotEmpty)
-                                          Positioned.fill(
-                                            child: IgnorePointer(
-                                              child: TagAutocompleteOverlay(
-                                                editorKey: _editorFieldKey,
-                                                value: _controller.value,
-                                                textStyle: editorTextStyle,
-                                                tags: tagSuggestions,
-                                                tagColors: tagColorLookup,
-                                                highlightedIndex:
-                                                    highlightedTagSuggestionIndex,
-                                                onHighlight: (index) {
-                                                  if (_tagAutocompleteIndex ==
-                                                      index) {
-                                                    return;
-                                                  }
-                                                  setState(() {
-                                                    _composer
-                                                        .setTagAutocompleteIndex(
-                                                          index,
-                                                        );
-                                                  });
-                                                },
-                                                onSelect: (tag) =>
-                                                    _applyTagSuggestion(
-                                                      activeTagQuery,
-                                                      tag,
-                                                    ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          if (_linkedMemos.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                children: _linkedMemos
-                                    .map(
-                                      (memo) => InputChip(
-                                        label: Text(
-                                          memo.label,
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            color: chipText,
-                                          ),
-                                        ),
-                                        backgroundColor: chipBg,
-                                        deleteIconColor: chipDelete,
-                                        onDeleted: _busy
-                                            ? null
-                                            : () =>
-                                                  _removeLinkedMemo(memo.name),
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                              ),
-                            ),
-                          if (_locating)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const SizedBox(
-                                    width: 12,
-                                    height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    context.t.strings.legacy.msg_locating,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: chipText,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (_location != null)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: InputChip(
-                                  avatar: Icon(
-                                    Icons.place_outlined,
-                                    size: 16,
-                                    color: chipText,
-                                  ),
-                                  label: Text(
-                                    _location!.displayText(fractionDigits: 6),
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: chipText,
-                                    ),
-                                  ),
-                                  backgroundColor: chipBg,
-                                  deleteIconColor: chipDelete,
-                                  onPressed: _busy
-                                      ? null
-                                      : () => unawaited(_requestLocation()),
-                                  onDeleted: _busy
-                                      ? null
-                                      : () => setState(() => _location = null),
-                                ),
-                              ),
-                            ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 10, 20, 18),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: _buildComposeToolbar(
-                                    context: context,
-                                    isDark: isDark,
-                                    preferences: toolbarPreferences,
-                                    availableTemplates: availableTemplates,
-                                    visibilityLabel: visibilityLabel,
-                                    visibilityIcon: visibilityIcon,
-                                    visibilityColor: visibilityColor,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Builder(
-                                  builder: (context) {
-                                    final hasPendingDeferred =
-                                        _hasPendingDeferredShareVideoTasks;
-                                    final deferredProgress =
-                                        _deferredShareVideoProgress;
-                                    final buttonEnabled =
-                                        !_busy && !hasPendingDeferred;
-                                    final buttonColor = buttonEnabled
-                                        ? MemoFlowPalette.primary
-                                        : Theme.of(
-                                            context,
-                                          ).colorScheme.surfaceContainerHighest;
-                                    final buttonShadowColor = buttonEnabled
-                                        ? MemoFlowPalette.primary.withValues(
-                                            alpha: isDark ? 0.3 : 0.4,
-                                          )
-                                        : Colors.black.withValues(
-                                            alpha: isDark ? 0.18 : 0.1,
-                                          );
-
-                                    return GestureDetector(
-                                      onTap: buttonEnabled
-                                          ? _submitOrVoice
-                                          : null,
-                                      child: AnimatedScale(
-                                        duration: const Duration(
-                                          milliseconds: 120,
-                                        ),
-                                        scale: _busy ? 0.98 : 1.0,
-                                        child: SizedBox(
-                                          width: 64,
-                                          height: 64,
-                                          child: Stack(
-                                            alignment: Alignment.center,
-                                            children: [
-                                              if (hasPendingDeferred &&
-                                                  deferredProgress != null)
-                                                SizedBox(
-                                                  width: 64,
-                                                  height: 64,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        value: deferredProgress,
-                                                        strokeWidth: 3,
-                                                        color: MemoFlowPalette
-                                                            .primary,
-                                                        backgroundColor:
-                                                            MemoFlowPalette
-                                                                .primary
-                                                                .withValues(
-                                                                  alpha: 0.18,
-                                                                ),
-                                                      ),
-                                                ),
-                                              Container(
-                                                width: 56,
-                                                height: 56,
-                                                decoration: BoxDecoration(
-                                                  color: buttonColor,
-                                                  shape: BoxShape.circle,
-                                                  boxShadow: [
-                                                    BoxShadow(
-                                                      color: buttonShadowColor,
-                                                      blurRadius: 16,
-                                                      offset: const Offset(
-                                                        0,
-                                                        8,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                child: Center(
-                                                  child: _busy
-                                                      ? const SizedBox.square(
-                                                          dimension: 22,
-                                                          child:
-                                                              CircularProgressIndicator(
-                                                                strokeWidth: 2,
-                                                                color: Colors
-                                                                    .white,
-                                                              ),
-                                                        )
-                                                      : ValueListenableBuilder<
-                                                          TextEditingValue
-                                                        >(
-                                                          valueListenable:
-                                                              _controller,
-                                                          builder: (context, value, _) {
-                                                            final hasText =
-                                                                value.text
-                                                                    .trim()
-                                                                    .isNotEmpty;
-                                                            final hasAttachments =
-                                                                _pendingAttachments
-                                                                    .isNotEmpty ||
-                                                                _visibleDeferredShareVideoTasks
-                                                                    .isNotEmpty;
-                                                            final showSend =
-                                                                hasText ||
-                                                                hasAttachments;
-                                                            return AnimatedSwitcher(
-                                                              duration:
-                                                                  const Duration(
-                                                                    milliseconds:
-                                                                        160,
-                                                                  ),
-                                                              transitionBuilder:
-                                                                  (
-                                                                    child,
-                                                                    animation,
-                                                                  ) {
-                                                                    return ScaleTransition(
-                                                                      scale:
-                                                                          animation,
-                                                                      child:
-                                                                          child,
-                                                                    );
-                                                                  },
-                                                              child: Icon(
-                                                                showSend
-                                                                    ? Icons
-                                                                          .send_rounded
-                                                                    : Icons
-                                                                          .graphic_eq,
-                                                                key:
-                                                                    ValueKey<
-                                                                      bool
-                                                                    >(showSend),
-                                                                color: Colors
-                                                                    .white,
-                                                                size: showSend
-                                                                    ? 24
-                                                                    : 28,
-                                                              ),
+                                            if (_editorFocusNode.hasFocus &&
+                                                activeTagQuery != null &&
+                                                tagSuggestions.isNotEmpty)
+                                              Positioned.fill(
+                                                child: IgnorePointer(
+                                                  child: TagAutocompleteOverlay(
+                                                    editorKey: _editorFieldKey,
+                                                    value: _controller.value,
+                                                    textStyle: editorTextStyle,
+                                                    tags: tagSuggestions,
+                                                    tagColors: tagColorLookup,
+                                                    highlightedIndex:
+                                                        highlightedTagSuggestionIndex,
+                                                    onHighlight: (index) {
+                                                      if (_tagAutocompleteIndex ==
+                                                          index) {
+                                                        return;
+                                                      }
+                                                      setState(() {
+                                                        _composer
+                                                            .setTagAutocompleteIndex(
+                                                              index,
                                                             );
-                                                          },
+                                                      });
+                                                    },
+                                                    onSelect: (tag) =>
+                                                        _applyTagSuggestion(
+                                                          activeTagQuery,
+                                                          tag,
                                                         ),
+                                                  ),
                                                 ),
                                               ),
-                                            ],
-                                          ),
+                                          ],
                                         ),
                                       ),
-                                    );
-                                  },
+                                    ],
+                                  ),
                                 ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: Container(
-                              width: 130,
-                              height: 6,
-                              decoration: BoxDecoration(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.1)
-                                    : Colors.black.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(3),
                               ),
-                            ),
+                              if (_linkedMemos.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    8,
+                                  ),
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    children: _linkedMemos
+                                        .map(
+                                          (memo) => InputChip(
+                                            label: Text(
+                                              memo.label,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: chipText,
+                                              ),
+                                            ),
+                                            backgroundColor: chipBg,
+                                            deleteIconColor: chipDelete,
+                                            onDeleted: _busy
+                                                ? null
+                                                : () => _removeLinkedMemo(
+                                                    memo.name,
+                                                  ),
+                                          ),
+                                        )
+                                        .toList(growable: false),
+                                  ),
+                                ),
+                              if (_locating)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    8,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        context.t.strings.legacy.msg_locating,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: chipText,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (_location != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    8,
+                                  ),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: InputChip(
+                                      avatar: Icon(
+                                        Icons.place_outlined,
+                                        size: 16,
+                                        color: chipText,
+                                      ),
+                                      label: Text(
+                                        _location!.displayText(
+                                          fractionDigits: 6,
+                                        ),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: chipText,
+                                        ),
+                                      ),
+                                      backgroundColor: chipBg,
+                                      deleteIconColor: chipDelete,
+                                      onPressed: _busy
+                                          ? null
+                                          : () => unawaited(_requestLocation()),
+                                      onDeleted: _busy
+                                          ? null
+                                          : () => setState(
+                                              () => _location = null,
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  10,
+                                  20,
+                                  18,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _buildComposeToolbar(
+                                        context: context,
+                                        isDark: isDark,
+                                        preferences: toolbarPreferences,
+                                        availableTemplates: availableTemplates,
+                                        visibilityLabel: visibilityLabel,
+                                        visibilityIcon: visibilityIcon,
+                                        visibilityColor: visibilityColor,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Builder(
+                                      builder: (context) {
+                                        final deferredProgress =
+                                            _deferredInlineImageProgress ??
+                                            _deferredShareVideoProgress;
+                                        final buttonEnabled =
+                                            !_busy &&
+                                            !_hasPendingDeferredShareVideoTasks;
+                                        final buttonColor = buttonEnabled
+                                            ? MemoFlowPalette.primary
+                                            : Theme.of(context)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest;
+                                        final buttonShadowColor = buttonEnabled
+                                            ? MemoFlowPalette.primary
+                                                  .withValues(
+                                                    alpha: isDark ? 0.3 : 0.4,
+                                                  )
+                                            : Colors.black.withValues(
+                                                alpha: isDark ? 0.18 : 0.1,
+                                              );
+
+                                        return GestureDetector(
+                                          onTap: buttonEnabled
+                                              ? _submitOrVoice
+                                              : null,
+                                          child: AnimatedScale(
+                                            duration: const Duration(
+                                              milliseconds: 120,
+                                            ),
+                                            scale: _busy ? 0.98 : 1.0,
+                                            child: SizedBox(
+                                              width: 64,
+                                              height: 64,
+                                              child: Stack(
+                                                alignment: Alignment.center,
+                                                children: [
+                                                  if (deferredProgress != null)
+                                                    SizedBox(
+                                                      width: 64,
+                                                      height: 64,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            value:
+                                                                deferredProgress,
+                                                            strokeWidth: 3,
+                                                            color:
+                                                                MemoFlowPalette
+                                                                    .primary,
+                                                            backgroundColor:
+                                                                MemoFlowPalette
+                                                                    .primary
+                                                                    .withValues(
+                                                                      alpha:
+                                                                          0.18,
+                                                                    ),
+                                                          ),
+                                                    ),
+                                                  Container(
+                                                    width: 56,
+                                                    height: 56,
+                                                    decoration: BoxDecoration(
+                                                      color: buttonColor,
+                                                      shape: BoxShape.circle,
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color:
+                                                              buttonShadowColor,
+                                                          blurRadius: 16,
+                                                          offset: const Offset(
+                                                            0,
+                                                            8,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    child: Center(
+                                                      child: _busy
+                                                          ? const SizedBox.square(
+                                                              dimension: 22,
+                                                              child:
+                                                                  CircularProgressIndicator(
+                                                                    strokeWidth:
+                                                                        2,
+                                                                    color: Colors
+                                                                        .white,
+                                                                  ),
+                                                            )
+                                                          : ValueListenableBuilder<
+                                                              TextEditingValue
+                                                            >(
+                                                              valueListenable:
+                                                                  _controller,
+                                                              builder: (context, value, _) {
+                                                                final hasText =
+                                                                    value.text
+                                                                        .trim()
+                                                                        .isNotEmpty;
+                                                                final hasAttachments =
+                                                                    _pendingAttachments
+                                                                        .isNotEmpty ||
+                                                                    _deferredInlineImageRequests
+                                                                        .isNotEmpty ||
+                                                                    _visibleDeferredShareVideoTasks
+                                                                        .isNotEmpty;
+                                                                final showSend =
+                                                                    hasText ||
+                                                                    hasAttachments;
+                                                                return AnimatedSwitcher(
+                                                                  duration:
+                                                                      const Duration(
+                                                                        milliseconds:
+                                                                            160,
+                                                                      ),
+                                                                  transitionBuilder:
+                                                                      (
+                                                                        child,
+                                                                        animation,
+                                                                      ) {
+                                                                        return ScaleTransition(
+                                                                          scale:
+                                                                              animation,
+                                                                          child:
+                                                                              child,
+                                                                        );
+                                                                      },
+                                                                  child: Icon(
+                                                                    showSend
+                                                                        ? Icons
+                                                                              .send_rounded
+                                                                        : Icons
+                                                                              .graphic_eq,
+                                                                    key:
+                                                                        ValueKey<
+                                                                          bool
+                                                                        >(
+                                                                          showSend,
+                                                                        ),
+                                                                    color: Colors
+                                                                        .white,
+                                                                    size:
+                                                                        showSend
+                                                                        ? 24
+                                                                        : 28,
+                                                                  ),
+                                                                );
+                                                              },
+                                                            ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: Container(
+                                  width: 130,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? Colors.white.withValues(alpha: 0.1)
+                                        : Colors.black.withValues(alpha: 0.08),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),

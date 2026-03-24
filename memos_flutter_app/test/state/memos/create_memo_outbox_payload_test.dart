@@ -86,6 +86,49 @@ void main() {
   });
 
   test(
+    'NoteInputController uses syncContent for create_memo payload',
+    () async {
+      final dbName = uniqueDbName('note_input_sync_content');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [databaseProvider.overrideWithValue(db)],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: 'local-content',
+        syncContent: 'remote-content',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: false,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [],
+      );
+
+      final row = await db.getMemoByUid('memo-1');
+      expect(row, isNotNull);
+      expect(row!['content'], 'local-content');
+
+      final outbox = await db.listOutboxPendingByType('create_memo');
+      final payload =
+          jsonDecode(outbox.single['payload'] as String)
+              as Map<String, dynamic>;
+      expect(payload['content'], 'remote-content');
+    },
+  );
+
+  test(
     'NoteInputController enqueues upload_attachment with skip_compression',
     () async {
       final dbName = uniqueDbName('note_input_skip_compression');
@@ -134,6 +177,161 @@ void main() {
       expect(payload['memo_uid'], 'memo-1');
       expect(payload['skip_compression'], isTrue);
       expect(payload['file_size'], 42);
+    },
+  );
+
+  test(
+    'NoteInputController marks share inline image attachment payload',
+    () async {
+      final dbName = uniqueDbName('note_input_share_inline_payload');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [databaseProvider.overrideWithValue(db)],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: 'offline memo',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: '/tmp/sample.png',
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: 42,
+            shareInlineImage: true,
+            fromThirdPartyShare: true,
+          ),
+        ],
+      );
+
+      final outbox = await db.listOutboxPendingByType('upload_attachment');
+      final payload =
+          jsonDecode(outbox.single['payload'] as String)
+              as Map<String, dynamic>;
+      expect(payload['share_inline_image'], isTrue);
+      expect(payload['from_third_party_share'], isTrue);
+      expect(
+        payload['share_inline_local_url'],
+        Uri.file('/tmp/sample.png').toString(),
+      );
+    },
+  );
+
+  test(
+    'NoteInputController stores third-party inline image source mapping',
+    () async {
+      final dbName = uniqueDbName('note_input_inline_image_source_mapping');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [databaseProvider.overrideWithValue(db)],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: '<img src="file:///tmp/sample.png">',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: '/tmp/sample.png',
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: 42,
+            shareInlineImage: true,
+            fromThirdPartyShare: true,
+            sourceUrl: 'https://example.com/sample.png',
+          ),
+        ],
+      );
+
+      expect(await db.listMemoInlineImageSources('memo-1'), {
+        Uri.file('/tmp/sample.png').toString():
+            'https://example.com/sample.png',
+      });
+    },
+  );
+
+  test(
+    'appendDeferredThirdPartyShareInlineImage stores source mapping',
+    () async {
+      final dbName = uniqueDbName('note_input_append_inline_image_source');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [databaseProvider.overrideWithValue(db)],
+      );
+      final controller = container.read(noteInputControllerProvider);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-1',
+        content: '<img src="https://example.com/sample.png">',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1,
+        updateTimeSec: 1,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+
+      await controller.appendDeferredThirdPartyShareInlineImage(
+        memoUid: 'memo-1',
+        sourceUrl: 'https://example.com/sample.png',
+        attachment: const NoteInputPendingAttachment(
+          uid: 'att-1',
+          filePath: '/tmp/sample.png',
+          filename: 'sample.png',
+          mimeType: 'image/png',
+          size: 42,
+          shareInlineImage: true,
+          fromThirdPartyShare: true,
+          sourceUrl: 'https://example.com/sample.png',
+        ),
+      );
+
+      expect(await db.listMemoInlineImageSources('memo-1'), {
+        Uri.file('/tmp/sample.png').toString():
+            'https://example.com/sample.png',
+      });
     },
   );
 }

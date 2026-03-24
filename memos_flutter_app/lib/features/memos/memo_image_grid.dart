@@ -57,20 +57,22 @@ List<MemoImageEntry> collectMemoImageEntries({
   final entries = <MemoImageEntry>[];
   final seen = <String>{};
 
-  final markdownUrls = extractMarkdownImageUrls(content);
-  for (var i = 0; i < markdownUrls.length; i++) {
-    final url = normalizeMarkdownImageSrc(markdownUrls[i]).trim();
-    if (url.isEmpty || !seen.add(url)) continue;
-    entries.add(
-      MemoImageEntry(
-        id: 'md_$i',
-        title: _titleFromUrl(url),
-        mimeType: 'image/*',
-        previewUrl: url,
-        fullUrl: url,
-        isAttachment: false,
-      ),
+  final contentImageUrls = extractMemoImageUrls(content);
+  for (var i = 0; i < contentImageUrls.length; i++) {
+    final entry = _entryFromContentUrl(
+      rawUrl: contentImageUrls[i],
+      index: i,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
     );
+    if (entry == null) continue;
+    final key =
+        (entry.localFile?.path ?? entry.fullUrl ?? entry.previewUrl ?? '')
+            .trim();
+    if (key.isEmpty || !seen.add(key)) continue;
+    entries.add(entry);
   }
 
   for (final attachment in attachments) {
@@ -92,6 +94,47 @@ List<MemoImageEntry> collectMemoImageEntries({
   }
 
   return entries;
+}
+
+MemoImageEntry? _entryFromContentUrl({
+  required String rawUrl,
+  required int index,
+  required Uri? baseUrl,
+  required String? authHeader,
+  bool rebaseAbsoluteFileUrlForV024 = false,
+  bool attachAuthForSameOriginAbsolute = false,
+}) {
+  final normalized = normalizeMarkdownImageSrc(rawUrl).trim();
+  if (normalized.isEmpty) return null;
+
+  final localFile = _resolveLocalFile(normalized);
+  if (localFile != null) {
+    return MemoImageEntry(
+      id: 'inline_$index',
+      title: _titleFromUrl(normalized),
+      mimeType: 'image/*',
+      localFile: localFile,
+      isAttachment: false,
+    );
+  }
+
+  final resolved = _resolveRemoteImageDisplay(
+    rawUrl: normalized,
+    baseUrl: baseUrl,
+    authHeader: authHeader,
+    rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+    attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+  );
+  if (resolved == null) return null;
+  return MemoImageEntry(
+    id: 'inline_$index',
+    title: _titleFromUrl(normalized),
+    mimeType: 'image/*',
+    previewUrl: resolved.previewUrl,
+    fullUrl: resolved.fullUrl,
+    headers: resolved.headers,
+    isAttachment: false,
+  );
 }
 
 MemoImageEntry? _entryFromAttachment(
@@ -124,31 +167,21 @@ MemoImageEntry? _entryFromAttachment(
   }
 
   if (external.isNotEmpty) {
-    var resolved = resolveMaybeRelativeUrl(baseUrl, external);
-    if (rebaseAbsoluteFileUrlForV024) {
-      final rebased = rebaseAbsoluteFileUrlToBase(baseUrl, resolved);
-      if (rebased != null && rebased.isNotEmpty) {
-        resolved = rebased;
-      }
-    }
-    final isAbsolute = isAbsoluteUrl(resolved);
-    final previewUrl = isAbsolute ? resolved : appendThumbnailParam(resolved);
-    final canAttachAuth = rebaseAbsoluteFileUrlForV024
-        ? (!isAbsolute || isSameOriginWithBase(baseUrl, resolved))
-        : (!isAbsolute ||
-              (attachAuthForSameOriginAbsolute &&
-                  isSameOriginWithBase(baseUrl, resolved)));
-    final headers =
-        (canAttachAuth && authHeader != null && authHeader.trim().isNotEmpty)
-        ? {'Authorization': authHeader.trim()}
-        : null;
+    final resolved = _resolveRemoteImageDisplay(
+      rawUrl: external,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    if (resolved == null) return null;
     return MemoImageEntry(
       id: attachment.name.isNotEmpty ? attachment.name : attachment.uid,
       title: title.isEmpty ? _titleFromUrl(external) : title,
       mimeType: mimeType,
-      previewUrl: previewUrl,
-      fullUrl: resolved,
-      headers: headers,
+      previewUrl: resolved.previewUrl,
+      fullUrl: resolved.fullUrl,
+      headers: resolved.headers,
       isAttachment: true,
     );
   }
@@ -171,6 +204,53 @@ MemoImageEntry? _entryFromAttachment(
     headers: headers,
     isAttachment: true,
   );
+}
+
+({String fullUrl, String previewUrl, Map<String, String>? headers})?
+_resolveRemoteImageDisplay({
+  required String rawUrl,
+  required Uri? baseUrl,
+  required String? authHeader,
+  bool rebaseAbsoluteFileUrlForV024 = false,
+  bool attachAuthForSameOriginAbsolute = false,
+}) {
+  final trimmed = rawUrl.trim();
+  if (trimmed.isEmpty) return null;
+
+  final rawWasRelative = !isAbsoluteUrl(trimmed);
+  var resolved = resolveMaybeRelativeUrl(baseUrl, trimmed);
+  if (rebaseAbsoluteFileUrlForV024) {
+    final rebased = rebaseAbsoluteFileUrlToBase(baseUrl, resolved);
+    if (rebased != null && rebased.isNotEmpty) {
+      resolved = rebased;
+    }
+  }
+
+  final sameOriginAbsolute = isSameOriginWithBase(baseUrl, resolved);
+  final shouldAttachAuth =
+      rawWasRelative ||
+      sameOriginAbsolute ||
+      (attachAuthForSameOriginAbsolute && sameOriginAbsolute);
+  final headers =
+      (shouldAttachAuth && authHeader != null && authHeader.trim().isNotEmpty)
+      ? {'Authorization': authHeader.trim()}
+      : null;
+
+  final previewUrl = _shouldUseThumbnailPreview(resolved)
+      ? appendThumbnailParam(resolved)
+      : resolved;
+
+  return (fullUrl: resolved, previewUrl: previewUrl, headers: headers);
+}
+
+bool _shouldUseThumbnailPreview(String url) {
+  final parsed = Uri.tryParse(url);
+  if (parsed == null) return false;
+  final path = parsed.path;
+  return path.startsWith('/file/') ||
+      path.startsWith('file/') ||
+      path.contains('/o/r/') ||
+      path.startsWith('o/r/');
 }
 
 File? _resolveLocalFile(String externalLink) {

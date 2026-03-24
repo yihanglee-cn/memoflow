@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -10,6 +10,7 @@ import 'share_capture_inappwebview_engine.dart';
 import 'share_clip_controller.dart';
 import 'share_clip_models.dart';
 import 'share_handler.dart';
+import 'share_inline_image_download_service.dart';
 import 'share_video_download_service.dart';
 
 class ShareClipScreen extends StatefulWidget {
@@ -18,11 +19,13 @@ class ShareClipScreen extends StatefulWidget {
     required this.payload,
     this.engine,
     this.downloadService,
+    this.inlineImageDownloadService,
   });
 
   final SharePayload payload;
   final ShareCaptureEngine? engine;
   final ShareVideoDownloadService? downloadService;
+  final ShareInlineImageDownloadService? inlineImageDownloadService;
 
   @override
   State<ShareClipScreen> createState() => _ShareClipScreenState();
@@ -41,6 +44,7 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
     _controller = ShareClipController(
       payload: widget.payload,
       engine: widget.engine ?? ShareCaptureInAppWebViewEngine(),
+      inlineImageDownloadService: widget.inlineImageDownloadService,
     );
     unawaited(_controller.start());
   }
@@ -64,16 +68,19 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
             if (!mounted) return;
             final request = _controller.takeAutoComposeRequest();
             if (request == null) return;
-            final resolvedRequest = result?.isVideoPage == true &&
+            final resolvedRequest =
+                result?.isVideoPage == true &&
                     !(result?.hasDirectVideoCandidates ?? false)
                 ? request.copyWith(
-                    userMessage: context.t.strings.shareClip.fallbackParseFailed,
+                    userMessage:
+                        context.t.strings.shareClip.fallbackParseFailed,
                   )
                 : request;
             Navigator.of(context).pop(resolvedRequest);
           });
         }
-        final domain = result?.finalUrl.host ??
+        final domain =
+            result?.finalUrl.host ??
             buildShareCaptureRequest(widget.payload)?.url.host ??
             '';
         final title = _resolveTitle(result);
@@ -111,23 +118,26 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
                     ShareClipPhase.processingVideo => _LoadingBody(
                       stage: state.stage,
                       message: state.processingMessage,
-                      progress: state.stage == ShareCaptureStage.downloadingVideo
+                      progress:
+                          state.stage == ShareCaptureStage.downloadingVideo
                           ? state.downloadProgress
                           : state.stage == ShareCaptureStage.compressingVideo
                           ? state.compressionProgress
                           : null,
                     ),
-                    ShareClipPhase.success => isVideoPage
-                        ? _VideoSuccessBody(
-                            result: result!,
-                            onDownload: _handleVideoDownload,
-                            onPreview: _openVideoPreview,
-                            probeCandidate: _probeCandidate,
-                          )
-                        : _SuccessBody(
-                            previewText:
-                                state.previewText ?? state.linkOnlyRequest.text,
-                          ),
+                    ShareClipPhase.success =>
+                      isVideoPage
+                          ? _VideoSuccessBody(
+                              result: result!,
+                              onDownload: _handleVideoDownload,
+                              onPreview: _openVideoPreview,
+                              probeCandidate: _probeCandidate,
+                            )
+                          : _SuccessBody(
+                              previewText:
+                                  state.previewText ??
+                                  state.linkOnlyRequest.text,
+                            ),
                     ShareClipPhase.failure => _FailureBody(
                       message: _buildFailureMessage(result, context),
                       excerpt: result?.excerpt,
@@ -137,19 +147,17 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
                 _ActionBar(
                   phase: state.phase,
                   isVideoPage: isVideoPage,
-                  onSaveMemo: state.phase == ShareClipPhase.success && !isVideoPage
-                      ? () {
-                          final request = _controller.saveArticle();
-                          if (request == null || !mounted) return;
-                          Navigator.of(context).pop(request);
-                        }
+                  onSaveMemo:
+                      state.phase == ShareClipPhase.success && !isVideoPage
+                      ? () => unawaited(_handleSaveMemo())
                       : null,
                   onUseLinkOnly: state.phase == ShareClipPhase.composing
                       ? null
                       : () => Navigator.of(
                           context,
                         ).pop(_controller.useLinkOnly()),
-                  onRetry: state.phase == ShareClipPhase.loading ||
+                  onRetry:
+                      state.phase == ShareClipPhase.loading ||
                           state.phase == ShareClipPhase.composing ||
                           state.phase == ShareClipPhase.processingVideo
                       ? null
@@ -167,6 +175,12 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
     final request = _controller.attachVideo(candidate);
     if (!mounted) return;
     if (request == null) return;
+    Navigator.of(context).pop(request);
+  }
+
+  Future<void> _handleSaveMemo() async {
+    final request = await _controller.saveArticle();
+    if (!mounted || request == null) return;
     Navigator.of(context).pop(request);
   }
 
@@ -222,7 +236,10 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
     };
   }
 
-  String _buildFailureMessage(ShareCaptureResult? result, BuildContext context) {
+  String _buildFailureMessage(
+    ShareCaptureResult? result,
+    BuildContext context,
+  ) {
     return switch (result?.failure) {
       ShareCaptureFailure.unsupportedUrl =>
         context.t.strings.shareClip.failureUnsupportedUrl,
@@ -234,14 +251,15 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
         context.t.strings.shareClip.failureDom,
       ShareCaptureFailure.parserEmpty =>
         context.t.strings.shareClip.failureParserEmpty,
-      ShareCaptureFailure.unknown || null =>
-        context.t.strings.shareClip.failureUnknown,
+      ShareCaptureFailure.unknown ||
+      null => context.t.strings.shareClip.failureUnknown,
     };
   }
 
   String _stageLabel(ShareCaptureStage stage, BuildContext context) {
     return switch (stage) {
-      ShareCaptureStage.loadingPage => context.t.strings.shareClip.stageLoadingPage,
+      ShareCaptureStage.loadingPage =>
+        context.t.strings.shareClip.stageLoadingPage,
       ShareCaptureStage.waitingForDynamicContent =>
         context.t.strings.shareClip.stageWaitingContent,
       ShareCaptureStage.detectingMedia =>
@@ -256,7 +274,6 @@ class _ShareClipScreenState extends State<ShareClipScreen> {
         context.t.strings.shareClip.stageCompressingVideo,
     };
   }
-
 }
 
 class _HeaderCard extends StatelessWidget {
@@ -283,7 +300,10 @@ class _HeaderCard extends StatelessWidget {
           children: [
             if (badge != null) ...[
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(999),
@@ -308,7 +328,9 @@ class _HeaderCard extends StatelessWidget {
               Text(
                 domain,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+                  color: theme.textTheme.bodySmall?.color?.withValues(
+                    alpha: 0.7,
+                  ),
                 ),
               ),
             ],
@@ -322,11 +344,7 @@ class _HeaderCard extends StatelessWidget {
 }
 
 class _LoadingBody extends StatelessWidget {
-  const _LoadingBody({
-    required this.stage,
-    this.message,
-    this.progress,
-  });
+  const _LoadingBody({required this.stage, this.message, this.progress});
 
   final ShareCaptureStage stage;
   final String? message;
@@ -362,7 +380,8 @@ class _LoadingBody extends StatelessWidget {
 
   String _defaultStageLabel(BuildContext context, ShareCaptureStage stage) {
     return switch (stage) {
-      ShareCaptureStage.loadingPage => context.t.strings.shareClip.stageLoadingPage,
+      ShareCaptureStage.loadingPage =>
+        context.t.strings.shareClip.stageLoadingPage,
       ShareCaptureStage.waitingForDynamicContent =>
         context.t.strings.shareClip.stageWaitingContent,
       ShareCaptureStage.detectingMedia =>
@@ -474,7 +493,10 @@ class _VideoSuccessBody extends StatelessWidget {
     );
   }
 
-  String _videoSourceLabel(BuildContext context, ShareVideoCandidate candidate) {
+  String _videoSourceLabel(
+    BuildContext context,
+    ShareVideoCandidate candidate,
+  ) {
     if (candidate.parserTag == 'bilibili') {
       return 'Bilibili';
     }
@@ -498,7 +520,8 @@ class _VideoSuccessBody extends StatelessWidget {
     return switch (reason) {
       'separate_dash_not_supported' =>
         context.t.strings.shareClip.unsupportedDash,
-      'stream_only_not_supported' => context.t.strings.shareClip.unsupportedStream,
+      'stream_only_not_supported' =>
+        context.t.strings.shareClip.unsupportedStream,
       _ => context.t.strings.shareClip.notSupportedLabel,
     };
   }
@@ -528,7 +551,8 @@ class _VideoCandidateTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final title = candidate.title ??
+    final title =
+        candidate.title ??
         result.articleTitle ??
         result.pageTitle ??
         result.finalUrl.host;
@@ -539,7 +563,8 @@ class _VideoCandidateTile extends StatelessWidget {
       builder: (context, snapshot) {
         final probe = snapshot.data;
         final headers = probe?.headers ?? const <String, String>{};
-        final sizeLabel = probe?.contentLength != null && probe!.contentLength! > 0
+        final sizeLabel =
+            probe?.contentLength != null && probe!.contentLength! > 0
             ? _formatBytes(probe.contentLength!)
             : null;
 
@@ -772,5 +797,3 @@ class _ActionBar extends StatelessWidget {
     );
   }
 }
-
-

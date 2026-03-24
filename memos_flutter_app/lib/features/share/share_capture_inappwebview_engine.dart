@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'parsers/bilibili_share_page_parser.dart';
 import 'parsers/generic_share_page_parser.dart';
 import 'parsers/share_page_parser.dart';
+import 'parsers/wechat_share_page_parser.dart';
 import 'parsers/xiaohongshu_share_page_parser.dart';
 import 'share_capture_engine.dart';
 import 'share_clip_models.dart';
@@ -101,8 +102,12 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
               kind: ShareNetworkRecordKind.ajax,
               url: ajaxRequest.url?.toString() ?? '',
               method: normalizeShareText(ajaxRequest.method),
-              referer: normalizeShareText(ajaxRequest.headers?.getHeaders()['Referer']?.toString()),
-              headers: ajaxRequest.headers?.getHeaders().map((key, value) => MapEntry(key, value.toString())),
+              referer: normalizeShareText(
+                ajaxRequest.headers?.getHeaders()['Referer']?.toString(),
+              ),
+              headers: ajaxRequest.headers?.getHeaders().map(
+                (key, value) => MapEntry(key, value.toString()),
+              ),
             ),
           );
           return ajaxRequest;
@@ -114,8 +119,12 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
                 kind: ShareNetworkRecordKind.ajax,
                 url: ajaxRequest.url?.toString() ?? '',
                 method: normalizeShareText(ajaxRequest.method),
-                referer: normalizeShareText(ajaxRequest.headers?.getHeaders()['Referer']?.toString()),
-                headers: ajaxRequest.headers?.getHeaders().map((key, value) => MapEntry(key, value.toString())),
+                referer: normalizeShareText(
+                  ajaxRequest.headers?.getHeaders()['Referer']?.toString(),
+                ),
+                headers: ajaxRequest.headers?.getHeaders().map(
+                  (key, value) => MapEntry(key, value.toString()),
+                ),
                 responseBody: _serializeResponseBody(ajaxRequest.response),
               ),
             );
@@ -206,7 +215,8 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
       await Future<void>.delayed(_dynamicPollInterval);
       final metrics = await _readDomMetrics(controller);
       if (metrics == null) continue;
-      if (previousMetrics != null && metrics.isStableComparedTo(previousMetrics)) {
+      if (previousMetrics != null &&
+          metrics.isStableComparedTo(previousMetrics)) {
         stableSamples += 1;
         if (stableSamples >= 2) return;
       } else {
@@ -216,7 +226,9 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
     }
   }
 
-  Future<_DomMetrics?> _readDomMetrics(InAppWebViewController controller) async {
+  Future<_DomMetrics?> _readDomMetrics(
+    InAppWebViewController controller,
+  ) async {
     final raw = await controller.evaluateJavascript(
       source: '''
 (() => {
@@ -271,6 +283,7 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
     final genericParser = GenericSharePageParser();
     final specializedParsers = <SharePageParser>[
       BilibiliSharePageParser(),
+      WechatSharePageParser(),
       XiaohongshuSharePageParser(),
     ];
     final snapshot = SharePageSnapshot(
@@ -290,12 +303,15 @@ class ShareCaptureInAppWebViewEngine implements ShareCaptureEngine {
     parserResults.add(genericParser.parse(snapshot));
     final merged = mergeSharePageParserResults(parserResults);
 
-    final contentHtml = normalizeShareText(merged.contentHtml) ??
+    final contentHtml =
+        normalizeShareText(merged.contentHtml) ??
         normalizeShareText(decoded['contentHtml']?.toString());
-    final textContent = normalizeShareText(merged.textContent) ??
+    final textContent =
+        normalizeShareText(merged.textContent) ??
         normalizeShareText(decoded['textContent']?.toString());
     final readabilitySucceeded = decoded['readabilitySucceeded'] == true;
-    final length = (decoded['length'] as num?)?.toInt() ?? textContent?.length ?? 0;
+    final length =
+        (decoded['length'] as num?)?.toInt() ?? textContent?.length ?? 0;
     final failureMessage = normalizeShareText(decoded['error']?.toString());
 
     final resolvedPageKind = merged.pageKind != SharePageKind.unknown
@@ -403,4 +419,3 @@ class _DomMetrics {
     return textDelta <= 40 && nodeDelta <= 4;
   }
 }
-

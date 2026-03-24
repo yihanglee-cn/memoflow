@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/image_formats.dart';
 import '../../core/image_error_logger.dart';
 import '../../core/log_sanitizer.dart';
 import '../../core/tags.dart';
@@ -422,9 +424,15 @@ class MemoMarkdown extends StatelessWidget {
 
         final uri = Uri.tryParse(src);
         final scheme = uri?.scheme.toLowerCase() ?? '';
-        if (scheme.isNotEmpty && scheme != 'http' && scheme != 'https') {
+        if (scheme.isNotEmpty &&
+            scheme != 'http' &&
+            scheme != 'https' &&
+            scheme != 'file') {
           return null;
         }
+        final localFile = scheme == 'file' && uri != null
+            ? File.fromUri(uri)
+            : null;
 
         final widthAttr = _parseHtmlLength(element.attributes['width']);
         final heightAttr = _parseHtmlLength(element.attributes['height']);
@@ -470,39 +478,59 @@ class MemoMarkdown extends StatelessWidget {
                 pixelRatio,
               );
 
-              final image = Image.network(
-                src,
-                width: targetWidth,
-                height: targetHeight,
-                fit: BoxFit.contain,
-                cacheWidth: cacheWidth,
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) return child;
-                  return imagePlaceholder();
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  logImageError(src, error, stackTrace);
-                  final lower = src.toLowerCase();
-                  final isSvg =
-                      lower.endsWith('.svg') ||
-                      lower.contains('format=svg') ||
-                      lower.contains('mime=image/svg+xml');
-                  if (!isSvg) {
-                    return imageError();
-                  }
-                  return SvgPicture.network(
-                    src,
+              final image = switch (localFile) {
+                final File file when shouldUseSvgRenderer(url: file.path) =>
+                  SvgPicture.file(
+                    file,
                     width: targetWidth,
                     height: targetHeight,
                     fit: BoxFit.contain,
                     placeholderBuilder: (_) => imagePlaceholder(),
                     errorBuilder: (_, svgError, svgStack) {
-                      logImageError(src, svgError, svgStack);
+                      logImageError(file.path, svgError, svgStack);
                       return imageError();
                     },
-                  );
-                },
-              );
+                  ),
+                final File file => Image.file(
+                  file,
+                  width: targetWidth,
+                  height: targetHeight,
+                  fit: BoxFit.contain,
+                  cacheWidth: cacheWidth,
+                  errorBuilder: (context, error, stackTrace) {
+                    logImageError(file.path, error, stackTrace);
+                    return imageError();
+                  },
+                ),
+                _ => Image.network(
+                  src,
+                  width: targetWidth,
+                  height: targetHeight,
+                  fit: BoxFit.contain,
+                  cacheWidth: cacheWidth,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return imagePlaceholder();
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    logImageError(src, error, stackTrace);
+                    if (!shouldUseSvgRenderer(url: src)) {
+                      return imageError();
+                    }
+                    return SvgPicture.network(
+                      src,
+                      width: targetWidth,
+                      height: targetHeight,
+                      fit: BoxFit.contain,
+                      placeholderBuilder: (_) => imagePlaceholder(),
+                      errorBuilder: (_, svgError, svgStack) {
+                        logImageError(src, svgError, svgStack);
+                        return imageError();
+                      },
+                    );
+                  },
+                ),
+              };
 
               return ConstrainedBox(
                 constraints: BoxConstraints(

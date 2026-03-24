@@ -262,16 +262,9 @@ class MemosListController {
     LocalMemo memo, {
     void Function()? onMovedToRecycleBin,
   }) async {
-    final db = _ref.read(databaseProvider);
-    final timelineService = _ref.read(memoTimelineServiceProvider);
-    await timelineService.moveMemoToRecycleBin(memo);
-    onMovedToRecycleBin?.call();
-    await db.deleteMemoByUid(memo.uid);
-    await db.enqueueOutbox(
-      type: 'delete_memo',
-      payload: {'uid': memo.uid, 'force': false},
-    );
-    await _ref.read(reminderSchedulerProvider).rescheduleAll();
+    await _ref
+        .read(memoDeleteServiceProvider)
+        .deleteMemo(memo, onMovedToRecycleBin: onMovedToRecycleBin);
   }
 
   Future<bool> hasAnyLocalMemos() async {
@@ -284,6 +277,9 @@ class MemosListController {
     required String uid,
   }) async {
     final db = _ref.read(databaseProvider);
+    if (await db.hasMemoDeleteMarker(uid)) {
+      return const MemosListMemoResolveResult.notFound();
+    }
     final row = await db.getMemoByUid(uid);
     LocalMemo? memo = row == null ? null : LocalMemo.fromDb(row);
 

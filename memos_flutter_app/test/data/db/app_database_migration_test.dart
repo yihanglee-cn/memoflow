@@ -19,7 +19,7 @@ void main() {
   });
 
   test(
-    'upgrade from v13 to v15 keeps memo data and avoids duplicate column migration',
+    'upgrade from v13 to v17 keeps memo data and creates new support tables',
     () async {
       final dbName = uniqueDbName('app_database_v13_to_v15');
 
@@ -95,6 +95,28 @@ CREATE TABLE IF NOT EXISTS memos (
           .toList();
 
       expect(includePublicColumns, hasLength(1));
+
+      final tombstoneColumns = await upgradedDb.rawQuery(
+        'PRAGMA table_info("memo_delete_tombstones");',
+      );
+      expect(tombstoneColumns.any((row) => row['name'] == 'memo_uid'), isTrue);
+      expect(tombstoneColumns.any((row) => row['name'] == 'state'), isTrue);
+
+      final inlineSourceColumns = await upgradedDb.rawQuery(
+        'PRAGMA table_info("memo_inline_image_sources");',
+      );
+      expect(
+        inlineSourceColumns.any((row) => row['name'] == 'memo_uid'),
+        isTrue,
+      );
+      expect(
+        inlineSourceColumns.any((row) => row['name'] == 'local_url'),
+        isTrue,
+      );
+      expect(
+        inlineSourceColumns.any((row) => row['name'] == 'source_url'),
+        isTrue,
+      );
     },
   );
 

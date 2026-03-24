@@ -8,6 +8,9 @@ class MemoComposerPendingAttachment {
     required this.mimeType,
     required this.size,
     this.skipCompression = false,
+    this.shareInlineImage = false,
+    this.fromThirdPartyShare = false,
+    this.sourceUrl,
   });
 
   final String uid;
@@ -16,6 +19,9 @@ class MemoComposerPendingAttachment {
   final String mimeType;
   final int size;
   final bool skipCompression;
+  final bool shareInlineImage;
+  final bool fromThirdPartyShare;
+  final String? sourceUrl;
 
   MemoComposerPendingAttachment copyWith({
     String? uid,
@@ -24,6 +30,9 @@ class MemoComposerPendingAttachment {
     String? mimeType,
     int? size,
     bool? skipCompression,
+    bool? shareInlineImage,
+    bool? fromThirdPartyShare,
+    Object? sourceUrl = memoComposerStateNoChange,
   }) {
     return MemoComposerPendingAttachment(
       uid: uid ?? this.uid,
@@ -32,6 +41,11 @@ class MemoComposerPendingAttachment {
       mimeType: mimeType ?? this.mimeType,
       size: size ?? this.size,
       skipCompression: skipCompression ?? this.skipCompression,
+      shareInlineImage: shareInlineImage ?? this.shareInlineImage,
+      fromThirdPartyShare: fromThirdPartyShare ?? this.fromThirdPartyShare,
+      sourceUrl: identical(sourceUrl, memoComposerStateNoChange)
+          ? this.sourceUrl
+          : sourceUrl as String?,
     );
   }
 }

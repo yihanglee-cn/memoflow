@@ -22,6 +22,13 @@ class SyncQueueController {
     final db = _ref.read(databaseProvider);
     final memoUid = item.memoUid?.trim();
     if (memoUid != null && memoUid.isNotEmpty) {
+      final tombstoneState = await db.getMemoDeleteTombstoneState(memoUid);
+      if (item.type == 'delete_memo' && tombstoneState != null) {
+        await db.upsertMemoDeleteTombstone(
+          memoUid: memoUid,
+          state: AppDatabase.memoDeleteTombstoneStateLocalOnly,
+        );
+      }
       await db.deleteOutbox(item.id);
       if (item.type == 'upload_attachment' && item.attachmentUid != null) {
         await _removePendingAttachmentFromMemo(
@@ -48,7 +55,9 @@ class SyncQueueController {
   }
 
   Future<SyncRunResult> requestSync() async {
-    return _ref.read(syncCoordinatorProvider.notifier).requestSync(
+    return _ref
+        .read(syncCoordinatorProvider.notifier)
+        .requestSync(
           const SyncRequest(
             kind: SyncRequestKind.memos,
             reason: SyncRequestReason.manual,
@@ -102,10 +111,7 @@ class SyncQueueController {
     );
   }
 
-  Future<void> _clearMemoSyncErrorIfIdle(
-    AppDatabase db,
-    String memoUid,
-  ) async {
+  Future<void> _clearMemoSyncErrorIfIdle(AppDatabase db, String memoUid) async {
     final trimmed = memoUid.trim();
     if (trimmed.isEmpty) return;
     final pending = await db.listPendingOutboxMemoUids();

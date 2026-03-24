@@ -4,14 +4,18 @@ import 'share_capture_engine.dart';
 import 'share_capture_formatter.dart';
 import 'share_clip_models.dart';
 import 'share_handler.dart';
+import 'share_inline_image_download_service.dart';
 
 class ShareClipController extends ChangeNotifier {
   ShareClipController({
     required SharePayload payload,
     required ShareCaptureEngine engine,
+    ShareInlineImageDownloadService? inlineImageDownloadService,
     ShareCaptureRequest? request,
   }) : _payload = payload,
        _engine = engine,
+       _inlineImageDownloadService =
+           inlineImageDownloadService ?? ShareInlineImageDownloadService(),
        _request = request ?? buildShareCaptureRequest(payload)!,
        _state = ShareClipViewState.loading(
          linkOnlyRequest: buildLinkOnlyComposeRequest(payload),
@@ -19,6 +23,7 @@ class ShareClipController extends ChangeNotifier {
 
   final SharePayload _payload;
   final ShareCaptureEngine _engine;
+  final ShareInlineImageDownloadService _inlineImageDownloadService;
   final ShareCaptureRequest _request;
 
   ShareClipViewState _state;
@@ -31,16 +36,24 @@ class ShareClipController extends ChangeNotifier {
 
   ShareComposeRequest useLinkOnly() => _state.linkOnlyRequest;
 
-  ShareComposeRequest? saveArticle() {
+  Future<ShareComposeRequest?> saveArticle() async {
     final result = _state.result;
     if (result == null || !result.isSuccess) return null;
-    final request = buildShareComposeRequestFromCapture(
-      result: result,
-      payload: _payload,
-    );
     _state = _state.copyWith(phase: ShareClipPhase.composing);
     notifyListeners();
-    return request;
+    try {
+      final inlineImages = await _inlineImageDownloadService
+          .discoverDeferredInlineImageAttachments(result);
+      return buildShareComposeRequestFromCapture(
+        result: result,
+        payload: _payload,
+      ).copyWith(deferredInlineImageAttachments: inlineImages);
+    } catch (_) {
+      return buildShareComposeRequestFromCapture(
+        result: result,
+        payload: _payload,
+      );
+    }
   }
 
   ShareComposeRequest? takeAutoComposeRequest() {
@@ -57,17 +70,18 @@ class ShareClipController extends ChangeNotifier {
       return null;
     }
 
-    final request = buildShareComposeRequestFromCapture(
-      result: result,
-      payload: _payload,
-    ).copyWith(
-      deferredVideoAttachments: [
-        ShareDeferredVideoAttachmentRequest(
-          captureResult: result,
-          candidate: candidate,
-        ),
-      ],
-    );
+    final request =
+        buildShareComposeRequestFromCapture(
+          result: result,
+          payload: _payload,
+        ).copyWith(
+          deferredVideoAttachments: [
+            ShareDeferredVideoAttachmentRequest(
+              captureResult: result,
+              candidate: candidate,
+            ),
+          ],
+        );
     _state = _state.copyWith(phase: ShareClipPhase.composing);
     notifyListeners();
     return request;

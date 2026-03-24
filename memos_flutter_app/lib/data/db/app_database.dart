@@ -13,12 +13,15 @@ class AppDatabase {
   AppDatabase({String dbName = 'memos_app.db'}) : _dbName = dbName;
 
   final String _dbName;
-  static const _dbVersion = 15;
+  static const _dbVersion = 17;
   static const int outboxStatePending = 0;
   static const int outboxStateRunning = 1;
   static const int outboxStateRetry = 2;
   static const int outboxStateError = 3;
   static const int outboxStateDone = 4;
+  static const String memoDeleteTombstoneStatePendingRemoteDelete =
+      'pending_remote_delete';
+  static const String memoDeleteTombstoneStateLocalOnly = 'local_only';
   static const int _maintenanceBatchSize = 300;
 
   Database? _db;
@@ -163,6 +166,30 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
           await db.execute(
             'CREATE INDEX IF NOT EXISTS idx_recycle_bin_items_expire_time ON recycle_bin_items(expire_time ASC);',
           );
+          await db.execute('''
+CREATE TABLE IF NOT EXISTS memo_delete_tombstones (
+  memo_uid TEXT NOT NULL PRIMARY KEY,
+  state TEXT NOT NULL,
+  deleted_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  last_error TEXT
+);
+''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_memo_delete_tombstones_state_updated ON memo_delete_tombstones(state, updated_time DESC);',
+          );
+          await db.execute('''
+CREATE TABLE IF NOT EXISTS memo_inline_image_sources (
+  memo_uid TEXT NOT NULL,
+  local_url TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  updated_time INTEGER NOT NULL,
+  PRIMARY KEY (memo_uid, local_url)
+);
+''');
+          await db.execute(
+            'CREATE INDEX IF NOT EXISTS idx_memo_inline_image_sources_memo ON memo_inline_image_sources(memo_uid, updated_time DESC);',
+          );
 
           await _ensureAiTables(db);
 
@@ -292,6 +319,34 @@ CREATE TABLE IF NOT EXISTS recycle_bin_items (
               table: 'ai_analysis_tasks',
               column: 'include_public',
               definition: 'include_public INTEGER NOT NULL DEFAULT 1',
+            );
+          }
+          if (oldVersion < 16) {
+            await db.execute('''
+CREATE TABLE IF NOT EXISTS memo_delete_tombstones (
+  memo_uid TEXT NOT NULL PRIMARY KEY,
+  state TEXT NOT NULL,
+  deleted_time INTEGER NOT NULL,
+  updated_time INTEGER NOT NULL,
+  last_error TEXT
+);
+''');
+            await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_memo_delete_tombstones_state_updated ON memo_delete_tombstones(state, updated_time DESC);',
+            );
+          }
+          if (oldVersion < 17) {
+            await db.execute('''
+CREATE TABLE IF NOT EXISTS memo_inline_image_sources (
+  memo_uid TEXT NOT NULL,
+  local_url TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  updated_time INTEGER NOT NULL,
+  PRIMARY KEY (memo_uid, local_url)
+);
+''');
+            await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_memo_inline_image_sources_memo ON memo_inline_image_sources(memo_uid, updated_time DESC);',
             );
           }
         },
@@ -1145,6 +1200,192 @@ WHERE id = 1;
     return id;
   }
 
+  Future<Set<String>> listRecycleBinMemoUids() async {
+    final db = await this.db;
+    final rows = await db.query(
+      'recycle_bin_items',
+      columns: const ['memo_uid'],
+      where: 'item_type = ? AND memo_uid <> ?',
+      whereArgs: const ['memo', ''],
+    );
+    final uids = <String>{};
+    for (final row in rows) {
+      final raw = row['memo_uid'];
+      final uid = raw is String ? raw.trim() : '';
+      if (uid.isNotEmpty) {
+        uids.add(uid);
+      }
+    }
+    return uids;
+  }
+
+  Future<bool> hasRecycleBinMemoItem(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return false;
+    final db = await this.db;
+    final rows = await db.query(
+      'recycle_bin_items',
+      columns: const ['id'],
+      where: 'item_type = ? AND memo_uid = ?',
+      whereArgs: ['memo', normalizedUid],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  Future<void> upsertMemoDeleteTombstone({
+    required String memoUid,
+    required String state,
+    String? lastError,
+    int? deletedTime,
+  }) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return;
+    final db = await this.db;
+    final existing = await db.query(
+      'memo_delete_tombstones',
+      columns: const ['deleted_time'],
+      where: 'memo_uid = ?',
+      whereArgs: [normalizedUid],
+      limit: 1,
+    );
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final deletedTimeValue = switch (existing.firstOrNull?['deleted_time']) {
+      int value when deletedTime == null => value,
+      num value when deletedTime == null => value.toInt(),
+      String value when deletedTime == null =>
+        int.tryParse(value.trim()) ?? now,
+      _ => deletedTime ?? now,
+    };
+    await db.insert('memo_delete_tombstones', {
+      'memo_uid': normalizedUid,
+      'state': state,
+      'deleted_time': deletedTimeValue,
+      'updated_time': now,
+      'last_error': lastError,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged();
+  }
+
+  Future<Map<String, dynamic>?> getMemoDeleteTombstone(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return null;
+    final db = await this.db;
+    final rows = await db.query(
+      'memo_delete_tombstones',
+      where: 'memo_uid = ?',
+      whereArgs: [normalizedUid],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  Future<String?> getMemoDeleteTombstoneState(String memoUid) async {
+    final row = await getMemoDeleteTombstone(memoUid);
+    final state = row?['state'];
+    return state is String && state.trim().isNotEmpty ? state.trim() : null;
+  }
+
+  Future<Set<String>> listMemoDeleteTombstoneUids() async {
+    final db = await this.db;
+    final rows = await db.query(
+      'memo_delete_tombstones',
+      columns: const ['memo_uid'],
+    );
+    final uids = <String>{};
+    for (final row in rows) {
+      final raw = row['memo_uid'];
+      final uid = raw is String ? raw.trim() : '';
+      if (uid.isNotEmpty) {
+        uids.add(uid);
+      }
+    }
+    return uids;
+  }
+
+  Future<bool> hasMemoDeleteMarker(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return false;
+    final tombstoneState = await getMemoDeleteTombstoneState(normalizedUid);
+    if (tombstoneState != null) return true;
+    return hasRecycleBinMemoItem(normalizedUid);
+  }
+
+  Future<Set<String>> listMemoDeleteMarkerUids() async {
+    final tombstones = await listMemoDeleteTombstoneUids();
+    final recycleBin = await listRecycleBinMemoUids();
+    return <String>{...tombstones, ...recycleBin};
+  }
+
+  Future<void> upsertMemoInlineImageSource({
+    required String memoUid,
+    required String localUrl,
+    required String sourceUrl,
+  }) async {
+    final normalizedUid = memoUid.trim();
+    final normalizedLocalUrl = localUrl.trim();
+    final normalizedSourceUrl = sourceUrl.trim();
+    if (normalizedUid.isEmpty ||
+        normalizedLocalUrl.isEmpty ||
+        normalizedSourceUrl.isEmpty) {
+      return;
+    }
+    final db = await this.db;
+    await db.insert('memo_inline_image_sources', {
+      'memo_uid': normalizedUid,
+      'local_url': normalizedLocalUrl,
+      'source_url': normalizedSourceUrl,
+      'updated_time': DateTime.now().toUtc().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    _notifyChanged();
+  }
+
+  Future<Map<String, String>> listMemoInlineImageSources(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return const <String, String>{};
+    final db = await this.db;
+    final rows = await db.query(
+      'memo_inline_image_sources',
+      columns: const ['local_url', 'source_url'],
+      where: 'memo_uid = ?',
+      whereArgs: [normalizedUid],
+      orderBy: 'updated_time DESC',
+    );
+    final mappings = <String, String>{};
+    for (final row in rows) {
+      final localUrl = (row['local_url'] as String? ?? '').trim();
+      final sourceUrl = (row['source_url'] as String? ?? '').trim();
+      if (localUrl.isEmpty || sourceUrl.isEmpty) continue;
+      mappings.putIfAbsent(localUrl, () => sourceUrl);
+    }
+    return mappings;
+  }
+
+  Future<void> deleteMemoInlineImageSources(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return;
+    final db = await this.db;
+    await db.delete(
+      'memo_inline_image_sources',
+      where: 'memo_uid = ?',
+      whereArgs: [normalizedUid],
+    );
+    _notifyChanged();
+  }
+
+  Future<void> deleteMemoDeleteTombstone(String memoUid) async {
+    final normalizedUid = memoUid.trim();
+    if (normalizedUid.isEmpty) return;
+    final db = await this.db;
+    await db.delete(
+      'memo_delete_tombstones',
+      where: 'memo_uid = ?',
+      whereArgs: [normalizedUid],
+    );
+    _notifyChanged();
+  }
+
   Future<List<Map<String, dynamic>>> listRecycleBinItems() async {
     final db = await this.db;
     return db.query('recycle_bin_items', orderBy: 'deleted_time DESC, id DESC');
@@ -1236,6 +1477,12 @@ WHERE id = 1;
       );
       await txn.update(
         'recycle_bin_items',
+        {'memo_uid': newUid},
+        where: 'memo_uid = ?',
+        whereArgs: [oldUid],
+      );
+      await txn.update(
+        'memo_inline_image_sources',
         {'memo_uid': newUid},
         where: 'memo_uid = ?',
         whereArgs: [oldUid],

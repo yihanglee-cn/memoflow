@@ -57,8 +57,8 @@ void main() {
     final memoB = _buildMemo(uid: 'memo-1', content: 'second body');
 
     expect(
-      memoDetailMarkdownCacheKey(memoA),
-      isNot(equals(memoDetailMarkdownCacheKey(memoB))),
+      memoDetailMarkdownCacheKey(memoA, renderImages: false),
+      isNot(equals(memoDetailMarkdownCacheKey(memoB, renderImages: false))),
     );
   });
 }

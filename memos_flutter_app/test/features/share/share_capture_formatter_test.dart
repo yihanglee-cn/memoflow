@@ -1,7 +1,8 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/features/share/share_capture_formatter.dart';
 import 'package:memos_flutter_app/features/share/share_clip_models.dart';
 import 'package:memos_flutter_app/features/share/share_handler.dart';
+import 'package:memos_flutter_app/features/share/share_inline_image_content.dart';
 
 void main() {
   group('buildShareCaptureMemoText', () {
@@ -17,7 +18,8 @@ void main() {
         articleTitle: 'Article Title',
         siteName: 'Example',
         excerpt: 'Short summary',
-        contentHtml: '<div><h2>Body</h2><a href="/about">About</a><img src="/cover.png"></div>',
+        contentHtml:
+            '<div><h2>Body</h2><a href="/about">About</a><img src="/cover.png"></div>',
         readabilitySucceeded: true,
       );
 
@@ -28,6 +30,7 @@ void main() {
       expect(text, contains('> Short summary'));
       expect(text, contains('href="https://example.com/about"'));
       expect(text, contains('src="https://example.com/cover.png"'));
+      expect(text, contains(buildThirdPartyShareMemoMarker()));
       expect(text.toLowerCase(), isNot(contains('<html')));
       expect(text.toLowerCase(), isNot(contains('<body')));
     });
@@ -47,7 +50,6 @@ void main() {
 
       expect(text, isNot(contains('> ')));
     });
-
 
     test('uses compact memo body for video pages', () {
       const payload = SharePayload(
@@ -77,7 +79,8 @@ void main() {
       );
       final result = ShareCaptureResult.success(
         finalUrl: Uri.parse('https://example.com/posts/42'),
-        textContent: 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.',
+        textContent:
+            'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.',
       );
 
       final text = buildShareCaptureMemoText(result: result, payload: payload);
@@ -86,6 +89,35 @@ void main() {
       expect(text, contains('<p>Second paragraph.</p>'));
       expect(text, contains('<p>Third paragraph.</p>'));
     });
+
+    test('keeps allowed local file image urls in sanitized fragment', () {
+      const payload = SharePayload(
+        type: SharePayloadType.text,
+        text: 'https://example.com/posts/42',
+      );
+      const seed = ShareAttachmentSeed(
+        uid: 'att-1',
+        filePath: '/tmp/article-image.jpg',
+        filename: 'article-image.jpg',
+        mimeType: 'image/jpeg',
+        size: 1,
+        shareInlineImage: true,
+      );
+      final localUrl = shareInlineLocalUrlFromPath(seed.filePath);
+      final result = ShareCaptureResult.success(
+        finalUrl: Uri.parse('https://example.com/posts/42'),
+        articleTitle: 'Article Title',
+        contentHtml: '<p>Hello</p>',
+      );
+
+      final request = buildShareComposeRequestFromCapture(
+        result: result,
+        payload: payload,
+        initialAttachmentSeeds: const [seed],
+        contentHtmlOverride: '<p>Hello</p><img src="$localUrl">',
+      );
+
+      expect(request.text, contains('src="$localUrl"'));
+    });
   });
 }
-

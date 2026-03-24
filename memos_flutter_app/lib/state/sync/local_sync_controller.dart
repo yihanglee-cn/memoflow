@@ -619,6 +619,32 @@ class LocalSyncController extends SyncControllerBase {
     final isUploadTask = type == 'upload_attachment';
     final taskStartAt = DateTime.now();
     syncQueueProgressTracker.markTaskStarted(id);
+    final suppressDeletedMemoTask =
+        memoUid != null &&
+        memoUid.isNotEmpty &&
+        type != 'delete_memo' &&
+        await db.hasMemoDeleteMarker(memoUid);
+    if (suppressDeletedMemoTask) {
+      await db.markOutboxDone(id);
+      await db.deleteOutbox(id);
+      counters.markSuccess();
+      if (isUploadTask) {
+        await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
+      }
+      syncQueueProgressTracker.clearCurrentTask(outboxId: id);
+      final elapsedMs = DateTime.now().difference(taskStartAt).inMilliseconds;
+      LogManager.instance.info(
+        'LocalSync outbox: discard_deleted_memo_task',
+        context: <String, Object?>{
+          'id': id,
+          'type': type,
+          'memoUid': memoUid,
+          'elapsedMs': elapsedMs,
+        },
+      );
+      _reportOutboxTaskProgress(counters: counters, currentType: type);
+      return _OutboxTaskRunResult.continueRun();
+    }
     try {
       switch (type) {
         case 'create_memo':

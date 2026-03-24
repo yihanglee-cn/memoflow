@@ -28,6 +28,7 @@ import '../../data/models/memo_relation.dart';
 import '../../data/repositories/image_bed_settings_repository.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
+import '../../features/share/share_inline_image_content.dart';
 import 'create_memo_outbox_payload.dart';
 import 'create_memo_time_policy.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
@@ -2337,6 +2338,7 @@ class RemoteSyncController extends SyncControllerBase {
     var duplicateConflictCount = 0;
     final duplicateConflictSampleUids = <String>[];
     final pendingOutboxMemoUids = await db.listPendingOutboxMemoUids();
+    final deletedMemoMarkerUids = await db.listMemoDeleteMarkerUids();
 
     LogManager.instance.info(
       'RemoteSync state: start',
@@ -2402,6 +2404,13 @@ class RemoteSyncController extends SyncControllerBase {
           final creator = memo.creator.trim();
           if (creator.isNotEmpty && !creatorMatchesCurrentUser(creator)) {
             creatorFilteredOutCount++;
+            continue;
+          }
+          final memoUid = memo.uid.trim();
+          if (memoUid.isNotEmpty) {
+            remoteUids.add(memoUid);
+          }
+          if (memoUid.isNotEmpty && deletedMemoMarkerUids.contains(memoUid)) {
             continue;
           }
 
@@ -2485,10 +2494,6 @@ class RemoteSyncController extends SyncControllerBase {
           final location = draftMemo != null
               ? draftMemo.location
               : memo.location;
-
-          if (memo.uid.isNotEmpty) {
-            remoteUids.add(memo.uid);
-          }
 
           await db.upsertMemo(
             uid: memo.uid,
@@ -2775,6 +2780,41 @@ class RemoteSyncController extends SyncControllerBase {
       final isUploadTask = type == 'upload_attachment';
       final taskStartAt = DateTime.now();
       syncQueueProgressTracker.markTaskStarted(id);
+      final suppressDeletedMemoTask =
+          memoUid != null &&
+          memoUid.isNotEmpty &&
+          type != 'delete_memo' &&
+          await db.hasMemoDeleteMarker(memoUid);
+      if (suppressDeletedMemoTask) {
+        await db.markOutboxDone(id);
+        await db.deleteOutbox(id);
+        successCount++;
+        if (isUploadTask) {
+          await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
+        }
+        syncQueueProgressTracker.clearCurrentTask(outboxId: id);
+        final elapsedMs = DateTime.now().difference(taskStartAt).inMilliseconds;
+        LogManager.instance.info(
+          'RemoteSync outbox: discard_deleted_memo_task',
+          context: <String, Object?>{
+            'id': id,
+            'type': type,
+            'memoUid': memoUid,
+            'elapsedMs': elapsedMs,
+          },
+        );
+        _maybeLogOutboxProgress(
+          processedCount: processedCount,
+          successCount: successCount,
+          failedCount: failedCount,
+          typeCounts: typeCounts,
+          currentType: type,
+        );
+        syncQueueProgressTracker.updateCompletedTasks(
+          successCount + failedCount,
+        );
+        continue;
+      }
       try {
         switch (type) {
           case 'create_memo':
@@ -2799,6 +2839,10 @@ class RemoteSyncController extends SyncControllerBase {
             break;
           case 'delete_memo':
             await _handleDeleteMemo(payload);
+            final uid = payload['uid'] as String?;
+            if (uid != null && uid.trim().isNotEmpty) {
+              await db.deleteMemoDeleteTombstone(uid);
+            }
             await db.markOutboxDone(id);
             await db.deleteOutbox(id);
             break;
@@ -2914,6 +2958,16 @@ class RemoteSyncController extends SyncControllerBase {
           }
           blockedReason = 'error';
         }
+        if (type == 'delete_memo' && memoUid != null && memoUid.isNotEmpty) {
+          final currentState = await db.getMemoDeleteTombstoneState(memoUid);
+          await db.upsertMemoDeleteTombstone(
+            memoUid: memoUid,
+            state:
+                currentState ??
+                AppDatabase.memoDeleteTombstoneStatePendingRemoteDelete,
+            lastError: outboxError,
+          );
+        }
         LogManager.instance.warn(
           'RemoteSync outbox: task_failed',
           error: e,
@@ -2966,7 +3020,7 @@ class RemoteSyncController extends SyncControllerBase {
 
   Future<String?> _handleCreateMemo(Map<String, dynamic> payload) async {
     final uid = payload['uid'] as String?;
-    final content = payload['content'] as String?;
+    final rawContent = payload['content'] as String?;
     final visibility = payload['visibility'] as String? ?? 'PRIVATE';
     final pinned = payload['pinned'] as bool? ?? false;
     final location = _parseLocationPayload(payload['location']);
@@ -2989,9 +3043,13 @@ class RemoteSyncController extends SyncControllerBase {
         }
       }
     }
-    if (uid == null || uid.isEmpty || content == null) {
+    if (uid == null || uid.isEmpty || rawContent == null) {
       throw const FormatException('create_memo missing fields');
     }
+    final content = await _rewriteThirdPartyShareInlineUrlsForRemote(
+      memoUid: uid,
+      content: rawContent,
+    );
     final normalizedRelations = normalizeReferenceRelationPayloads(
       memoUid: uid,
       relations: relations,
@@ -3117,7 +3175,13 @@ class RemoteSyncController extends SyncControllerBase {
     if (uid == null || uid.isEmpty) {
       throw const FormatException('update_memo missing uid');
     }
-    final content = payload['content'] as String?;
+    final rawContent = payload['content'] as String?;
+    final content = rawContent == null
+        ? null
+        : await _rewriteThirdPartyShareInlineUrlsForRemote(
+            memoUid: uid,
+            content: rawContent,
+          );
     final visibility = payload['visibility'] as String?;
     final pinned = payload['pinned'] as bool?;
     final state = payload['state'] as String?;
@@ -3160,6 +3224,27 @@ class RemoteSyncController extends SyncControllerBase {
     if (syncAttachments && !hasPendingAttachments) {
       await _syncMemoAttachments(uid);
     }
+  }
+
+  Future<String> _rewriteThirdPartyShareInlineUrlsForRemote({
+    required String memoUid,
+    required String content,
+  }) async {
+    if (content.trim().isEmpty) return content;
+    final settings = await imageBedRepository.read();
+    if (settings.enabled) return content;
+    final mappings = await db.listMemoInlineImageSources(memoUid);
+    if (mappings.isEmpty) return content;
+
+    var normalized = content;
+    for (final entry in mappings.entries) {
+      normalized = replaceShareInlineLocalUrlWithRemote(
+        normalized,
+        localUrl: entry.key,
+        remoteUrl: entry.value,
+      );
+    }
+    return normalized;
   }
 
   Future<void> _applyMemoRelations(
@@ -3319,6 +3404,20 @@ class RemoteSyncController extends SyncControllerBase {
       final String value => value.trim().toLowerCase() == 'true',
       _ => false,
     };
+    final shareInlineImage = switch (payload['share_inline_image']) {
+      final bool value => value,
+      final num value => value != 0,
+      final String value => value.trim().toLowerCase() == 'true',
+      _ => false,
+    };
+    final fromThirdPartyShare = switch (payload['from_third_party_share']) {
+      final bool value => value,
+      final num value => value != 0,
+      final String value => value.trim().toLowerCase() == 'true',
+      _ => false,
+    };
+    final shareInlineLocalUrl =
+        (payload['share_inline_local_url'] as String? ?? '').trim();
     if (uid == null ||
         uid.isEmpty ||
         memoUid == null ||
@@ -3365,14 +3464,29 @@ class RemoteSyncController extends SyncControllerBase {
           bytes: bytes,
           filename: processed.filename,
         );
-        await _appendImageBedLink(
-          memoUid: memoUid,
-          localAttachmentUid: uid,
-          imageUrl: url,
-        );
+        if (shareInlineImage && shareInlineLocalUrl.isNotEmpty) {
+          await _replaceShareInlineMemoContent(
+            memoUid: memoUid,
+            localUrl: shareInlineLocalUrl,
+            remoteUrl: url,
+            removeAttachmentUid: uid,
+            enqueueUpdate: true,
+          );
+        } else {
+          await _appendImageBedLink(
+            memoUid: memoUid,
+            localAttachmentUid: uid,
+            imageUrl: url,
+          );
+        }
         return false;
       }
     }
+
+    final preserveLocalInlineReference =
+        shareInlineImage &&
+        fromThirdPartyShare &&
+        shareInlineLocalUrl.isNotEmpty;
 
     if (api.usesLegacyMemos) {
       final created = await _createAttachmentWith409Recovery(
@@ -3394,8 +3508,21 @@ class RemoteSyncController extends SyncControllerBase {
         memoUid: memoUid,
         localAttachmentUid: uid,
         filename: processed.filename,
-        remote: created,
+        remote: _resolveAttachmentWithFallbackLink(created),
+        preserveExternalLink: preserveLocalInlineReference,
       );
+
+      final remoteUrl = _resolveAttachmentExternalLink(created);
+      if (shareInlineImage && !preserveLocalInlineReference) {
+        if (remoteUrl.isEmpty) {
+          throw StateError('Uploaded inline image missing externalLink');
+        }
+        await _replaceShareInlineMemoContent(
+          memoUid: memoUid,
+          localUrl: shareInlineLocalUrl,
+          remoteUrl: remoteUrl,
+        );
+      }
 
       final shouldFinalize = await _isLastPendingAttachmentUpload(memoUid);
       if (!shouldFinalize) {
@@ -3403,6 +3530,9 @@ class RemoteSyncController extends SyncControllerBase {
       }
 
       await _syncMemoAttachments(memoUid);
+      if (shareInlineImage && !preserveLocalInlineReference) {
+        await _syncCurrentLocalMemoContent(memoUid);
+      }
       return true;
     }
 
@@ -3437,20 +3567,67 @@ class RemoteSyncController extends SyncControllerBase {
       memoUid: memoUid,
       localAttachmentUid: uid,
       filename: filename,
-      remote: created,
+      remote: _resolveAttachmentWithFallbackLink(created),
+      preserveExternalLink: preserveLocalInlineReference,
     );
 
-    final shouldFinalize = await _isLastPendingAttachmentUpload(memoUid);
-    if (!supportsSetAttachments || !shouldFinalize) {
-      return shouldFinalize;
+    final remoteUrl = _resolveAttachmentExternalLink(created);
+    if (shareInlineImage && !preserveLocalInlineReference) {
+      if (remoteUrl.isEmpty) {
+        throw StateError('Uploaded inline image missing externalLink');
+      }
+      await _replaceShareInlineMemoContent(
+        memoUid: memoUid,
+        localUrl: shareInlineLocalUrl,
+        remoteUrl: remoteUrl,
+      );
     }
 
-    await _syncMemoAttachments(memoUid);
+    final shouldFinalize = await _isLastPendingAttachmentUpload(memoUid);
+    if (!shouldFinalize) {
+      return false;
+    }
+
+    if (supportsSetAttachments) {
+      await _syncMemoAttachments(memoUid);
+    }
+    if (shareInlineImage && !preserveLocalInlineReference) {
+      await _syncCurrentLocalMemoContent(memoUid);
+    }
     return true;
   }
 
   bool _isImageMimeType(String mimeType) {
     return mimeType.trim().toLowerCase().startsWith('image/');
+  }
+
+  Attachment _resolveAttachmentWithFallbackLink(Attachment attachment) {
+    final externalLink = _resolveAttachmentExternalLink(attachment);
+    if (externalLink == attachment.externalLink) {
+      return attachment;
+    }
+    return Attachment(
+      name: attachment.name,
+      filename: attachment.filename,
+      type: attachment.type,
+      size: attachment.size,
+      externalLink: externalLink,
+      width: attachment.width,
+      height: attachment.height,
+      hash: attachment.hash,
+    );
+  }
+
+  String _resolveAttachmentExternalLink(Attachment attachment) {
+    final external = attachment.externalLink.trim();
+    if (external.isNotEmpty) return external;
+    final name = attachment.name.trim();
+    if (name.isEmpty) return '';
+    final filename = attachment.filename.trim();
+    if (name.startsWith('resources/') || name.startsWith('attachments/')) {
+      return filename.isNotEmpty ? '/file/$name/$filename' : '/file/$name';
+    }
+    return '';
   }
 
   Uri _resolveImageBedBaseUrl(String raw) {
@@ -3573,6 +3750,92 @@ class RemoteSyncController extends SyncControllerBase {
 
       rethrow;
     }
+  }
+
+  Future<void> _replaceShareInlineMemoContent({
+    required String memoUid,
+    required String localUrl,
+    required String remoteUrl,
+    String? removeAttachmentUid,
+    bool enqueueUpdate = false,
+  }) async {
+    final trimmedLocalUrl = localUrl.trim();
+    final trimmedRemoteUrl = remoteUrl.trim();
+    if (trimmedLocalUrl.isEmpty || trimmedRemoteUrl.isEmpty) return;
+    final row = await db.getMemoByUid(memoUid);
+    if (row == null) {
+      throw StateError('Memo not found: $memoUid');
+    }
+    final memo = LocalMemo.fromDb(row);
+    final updatedContent = replaceShareInlineLocalUrlWithRemote(
+      memo.content,
+      localUrl: trimmedLocalUrl,
+      remoteUrl: trimmedRemoteUrl,
+    );
+    final attachments = removeAttachmentUid == null
+        ? memo.attachments.map((item) => item.toJson()).toList(growable: false)
+        : memo.attachments
+              .where(
+                (item) =>
+                    item.uid != removeAttachmentUid &&
+                    item.name != 'attachments/$removeAttachmentUid' &&
+                    item.name != 'resources/$removeAttachmentUid',
+              )
+              .map((item) => item.toJson())
+              .toList(growable: false);
+    await _rewriteLocalMemo(
+      memo,
+      content: updatedContent,
+      attachments: attachments,
+    );
+    if (enqueueUpdate) {
+      await db.enqueueOutbox(
+        type: 'update_memo',
+        payload: {
+          'uid': memo.uid,
+          'content': updatedContent,
+          'visibility': memo.visibility,
+          'pinned': memo.pinned,
+        },
+      );
+    }
+  }
+
+  Future<void> _syncCurrentLocalMemoContent(String memoUid) async {
+    final row = await db.getMemoByUid(memoUid);
+    if (row == null) {
+      throw StateError('Memo not found: $memoUid');
+    }
+    final memo = LocalMemo.fromDb(row);
+    await api.updateMemo(
+      memoUid: memo.uid,
+      content: memo.content,
+      visibility: memo.visibility,
+      pinned: memo.pinned,
+    );
+  }
+
+  Future<void> _rewriteLocalMemo(
+    LocalMemo memo, {
+    required String content,
+    required List<Map<String, dynamic>> attachments,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await db.upsertMemo(
+      uid: memo.uid,
+      content: content,
+      visibility: memo.visibility,
+      pinned: memo.pinned,
+      state: memo.state,
+      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+      updateTimeSec: now.millisecondsSinceEpoch ~/ 1000,
+      tags: extractTags(content),
+      attachments: attachments,
+      location: memo.location,
+      relationCount: memo.relationCount,
+      syncState: 1,
+      lastError: null,
+    );
   }
 
   Future<void> _appendImageBedLink({
@@ -3812,6 +4075,7 @@ class RemoteSyncController extends SyncControllerBase {
     required String localAttachmentUid,
     required String filename,
     required Attachment remote,
+    bool preserveExternalLink = false,
   }) async {
     final row = await db.getMemoByUid(memoUid);
     final raw = row?['attachments_json'];
@@ -3844,7 +4108,12 @@ class RemoteSyncController extends SyncControllerBase {
         next['filename'] = remote.filename;
         next['type'] = remote.type;
         next['size'] = remote.size;
-        next['externalLink'] = remote.externalLink;
+        final previousExternalLink = (m['externalLink'] as String? ?? '')
+            .trim();
+        next['externalLink'] =
+            preserveExternalLink && previousExternalLink.isNotEmpty
+            ? previousExternalLink
+            : remote.externalLink;
         if (remote.width != null) next['width'] = remote.width;
         if (remote.height != null) next['height'] = remote.height;
         if (remote.hash != null) next['hash'] = remote.hash;

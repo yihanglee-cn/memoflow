@@ -7,9 +7,10 @@ import '../../data/models/memo.dart';
 import '../../data/models/reaction.dart';
 import '../../data/models/user.dart';
 import '../system/database_provider.dart';
+import 'memo_delete_service.dart';
 import 'memo_timeline_provider.dart';
 import 'memos_providers.dart';
-import '../system/reminder_scheduler.dart';
+
 class MemoDetailController {
   MemoDetailController(this._ref);
 
@@ -58,15 +59,7 @@ class MemoDetailController {
   }
 
   Future<void> deleteMemo(LocalMemo memo) async {
-    final db = _ref.read(databaseProvider);
-    final timelineService = _ref.read(memoTimelineServiceProvider);
-    await timelineService.moveMemoToRecycleBin(memo);
-    await db.deleteMemoByUid(memo.uid);
-    await db.enqueueOutbox(
-      type: 'delete_memo',
-      payload: {'uid': memo.uid, 'force': false},
-    );
-    await _ref.read(reminderSchedulerProvider).rescheduleAll();
+    await _ref.read(memoDeleteServiceProvider).deleteMemo(memo);
   }
 
   Future<void> updateMemoContentForTaskToggle({
@@ -215,6 +208,9 @@ class MemoDetailController {
 
   Future<LocalMemo?> resolveMemoForOpen({required String uid}) async {
     final db = _ref.read(databaseProvider);
+    if (await db.hasMemoDeleteMarker(uid)) {
+      return null;
+    }
     final row = await db.getMemoByUid(uid);
     LocalMemo? memo = row == null ? null : LocalMemo.fromDb(row);
 
