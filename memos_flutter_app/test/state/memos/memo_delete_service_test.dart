@@ -109,6 +109,90 @@ void main() {
     },
   );
 
+  test(
+    'delete memo preserves attachment cleanup for pending create draft',
+    () async {
+      final dbName = uniqueDbName('memo_delete_service_delete_create_draft');
+      final db = AppDatabase(dbName: dbName);
+      late _TestReminderScheduler reminderScheduler;
+      final timelineService = MemoTimelineService(
+        db: db,
+        account: null,
+        triggerSync: () async {},
+      );
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memoTimelineServiceProvider.overrideWithValue(timelineService),
+          reminderSchedulerProvider.overrideWith((ref) {
+            reminderScheduler = _TestReminderScheduler(ref);
+            return reminderScheduler;
+          }),
+        ],
+      );
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-create-draft',
+        content: 'draft with uploaded attachment',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1735689600,
+        updateTimeSec: 1735689600,
+        tags: const ['draft'],
+        attachments: const [
+          {
+            'name': 'resources/att-1',
+            'filename': 'sample.png',
+            'type': 'image/png',
+            'size': 42,
+            'externalLink': '/file/resources/att-1/sample.png',
+          },
+        ],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+      await db.enqueueOutbox(
+        type: 'create_memo',
+        payload: {
+          'uid': 'memo-create-draft',
+          'content': 'draft with uploaded attachment',
+          'visibility': 'PRIVATE',
+          'pinned': false,
+          'has_attachments': true,
+          'create_time': 1735689600,
+          'display_time': 1735689600,
+        },
+      );
+
+      final memo = LocalMemo.fromDb(
+        (await db.getMemoByUid('memo-create-draft'))!,
+      );
+
+      await container.read(memoDeleteServiceProvider).deleteMemo(memo);
+
+      final pending = await db.listOutboxPending(limit: 20);
+      expect(pending.map((row) => row['type']).toList(growable: false), [
+        'delete_attachment',
+        'delete_memo',
+      ]);
+      final deleteAttachmentPayload =
+          jsonDecode(pending.first['payload'] as String)
+              as Map<String, dynamic>;
+      expect(deleteAttachmentPayload['attachment_name'], 'resources/att-1');
+      expect(deleteAttachmentPayload['memo_uid'], 'memo-create-draft');
+      expect(reminderScheduler.rescheduleCalls, 1);
+    },
+  );
+
   test('restore memo clears delete tombstone and stale delete task', () async {
     final dbName = uniqueDbName('memo_delete_service_restore');
     final db = AppDatabase(dbName: dbName);

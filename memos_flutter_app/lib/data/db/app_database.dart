@@ -1839,6 +1839,41 @@ WHERE id = ?
     _notifyChanged();
   }
 
+  Future<bool> hasPendingOutboxTaskForMemo(
+    String memoUid, {
+    Set<String>? types,
+  }) async {
+    final trimmed = memoUid.trim();
+    if (trimmed.isEmpty) return false;
+    final db = await this.db;
+    final rows = await db.query(
+      'outbox',
+      columns: const ['type', 'payload'],
+      where: 'state IN (?, ?, ?, ?)',
+      whereArgs: const [
+        outboxStatePending,
+        outboxStateRunning,
+        outboxStateRetry,
+        outboxStateError,
+      ],
+    );
+
+    for (final row in rows) {
+      final type = row['type'];
+      final payloadRaw = row['payload'];
+      if (type is! String || payloadRaw is! String) continue;
+      if (types != null && !types.contains(type)) continue;
+      final payload = _decodeOutboxPayload(payloadRaw);
+      if (payload == null) continue;
+      final targetUid = _extractOutboxMemoUid(type, payload);
+      if (targetUid is String && targetUid.trim() == trimmed) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   Future<void> deleteOutboxForMemo(String memoUid) async {
     final trimmed = memoUid.trim();
     if (trimmed.isEmpty) return;

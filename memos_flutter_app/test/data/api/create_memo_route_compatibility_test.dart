@@ -28,6 +28,7 @@ void main() {
             visibility: 'PRIVATE',
             createTime: DateTime.utc(2026, 3, 13, 18, 0),
             displayTime: DateTime.utc(2026, 3, 13, 18, 0),
+            attachmentNames: const <String>['resources/201'],
             relations: const <Map<String, dynamic>>[
               {
                 'relatedMemo': {'name': 'memos/102'},
@@ -47,10 +48,36 @@ void main() {
             expect(capturedRequest.queryParameters, isEmpty);
             expect(jsonBody.containsKey('createTime'), isFalse);
             expect(jsonBody.containsKey('displayTime'), isFalse);
+            expect(jsonBody.containsKey('resources'), isFalse);
+            expect(jsonBody.containsKey('attachments'), isFalse);
             expect(jsonBody.containsKey('relations'), isFalse);
           } else {
             expect(capturedRequest.path, '/api/v1/memos');
             expect(capturedRequest.queryParameters['memoId'], '101');
+
+            if (version == MemoApiVersion.v022) {
+              expect(jsonBody.containsKey('resources'), isFalse);
+              expect(jsonBody.containsKey('attachments'), isFalse);
+            }
+
+            if (version == MemoApiVersion.v023 ||
+                version == MemoApiVersion.v024) {
+              expect(jsonBody['resources'], [
+                {'name': 'resources/201'},
+              ]);
+              expect(jsonBody.containsKey('attachments'), isFalse);
+              expect(jsonBody.containsKey('createTime'), isFalse);
+              expect(jsonBody.containsKey('displayTime'), isFalse);
+              expect(jsonBody.containsKey('relations'), isFalse);
+            } else if (version == MemoApiVersion.v025 ||
+                version == MemoApiVersion.v026) {
+              expect(jsonBody['attachments'], [
+                {'name': 'resources/201'},
+              ]);
+              expect(jsonBody.containsKey('resources'), isFalse);
+              expect(jsonBody.containsKey('createTime'), isFalse);
+              expect(jsonBody.containsKey('displayTime'), isFalse);
+            }
 
             if (version == MemoApiVersion.v026) {
               expect(jsonBody.containsKey('createTime'), isFalse);
@@ -153,6 +180,7 @@ class _FakeCreateMemoServer {
     if (version != MemoApiVersion.v021 &&
         request.method == 'POST' &&
         request.uri.path == '/api/v1/memos') {
+      final body = jsonBody ?? const <String, Object?>{};
       await _writeJson(request.response, <String, Object?>{
         'name': 'memos/101',
         'creator': 'users/1',
@@ -163,7 +191,10 @@ class _FakeCreateMemoServer {
         'createTime': '2026-03-13T18:00:00Z',
         'updateTime': '2026-03-13T18:00:00Z',
         'tags': const <String>[],
-        'attachments': const <Object>[],
+        if (version == MemoApiVersion.v023 || version == MemoApiVersion.v024)
+          'resources': body['resources'] ?? const <Object>[],
+        if (version == MemoApiVersion.v025 || version == MemoApiVersion.v026)
+          'attachments': body['attachments'] ?? const <Object>[],
       });
       return;
     }

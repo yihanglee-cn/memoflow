@@ -5,8 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../sync/sync_request.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
-import '../../data/models/attachment.dart';
 import '../../data/models/memo_location.dart';
+import '../../state/memos/create_memo_outbox_enqueue.dart';
 import '../../state/memos/create_memo_outbox_payload.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 
@@ -78,7 +78,6 @@ class QuickInputService {
     final visibility = resolveVisibility(ref);
     final db = _bootstrapAdapter.readDatabase(ref);
     final tags = extractTags(content);
-    final attachments = <Map<String, dynamic>>[];
     final uploadPayloads = <Map<String, dynamic>>[];
     for (final payload in attachmentPayloads) {
       final rawUid = (payload['uid'] as String? ?? '').trim();
@@ -88,18 +87,6 @@ class QuickInputService {
       final fileSize = _readInt(payload['file_size']);
       if (filePath.isEmpty || filename.isEmpty) continue;
       final attachmentUid = rawUid.isEmpty ? generateUid() : rawUid;
-      final externalLink = filePath.startsWith('content://')
-          ? filePath
-          : Uri.file(filePath).toString();
-      attachments.add(
-        Attachment(
-          name: 'attachments/$attachmentUid',
-          filename: filename,
-          type: mimeType.isEmpty ? 'application/octet-stream' : mimeType,
-          size: fileSize,
-          externalLink: externalLink,
-        ).toJson(),
-      );
       uploadPayloads.add({
         'uid': attachmentUid,
         'memo_uid': uid,
@@ -109,6 +96,10 @@ class QuickInputService {
         'file_size': fileSize,
       });
     }
+    final attachments = mergePendingAttachmentPlaceholders(
+      attachments: const <Map<String, dynamic>>[],
+      pendingAttachments: uploadPayloads,
+    );
     final normalizedRelations = relations
         .where((relation) => relation.isNotEmpty)
         .toList(growable: false);
@@ -129,9 +120,10 @@ class QuickInputService {
       syncState: 1,
     );
 
-    await db.enqueueOutbox(
-      type: 'create_memo',
-      payload: buildCreateMemoOutboxPayload(
+    await enqueueCreateMemoWithAttachmentUploads(
+      read: ref.read,
+      db: db,
+      createPayload: buildCreateMemoOutboxPayload(
         uid: uid,
         content: content,
         visibility: visibility,
@@ -141,11 +133,8 @@ class QuickInputService {
         location: location,
         relations: normalizedRelations,
       ),
+      attachmentPayloads: uploadPayloads,
     );
-
-    for (final payload in uploadPayloads) {
-      await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-    }
 
     unawaited(
       _bootstrapAdapter.requestSync(

@@ -140,6 +140,23 @@ class MemosListController {
     required List<MemosListPendingAttachment> pendingAttachments,
   }) async {
     final db = _ref.read(databaseProvider);
+    final attachmentPayloads = pendingAttachments
+        .map(
+          (attachment) => <String, dynamic>{
+            'uid': attachment.uid,
+            'memo_uid': uid,
+            'file_path': attachment.filePath,
+            'filename': attachment.filename,
+            'mime_type': attachment.mimeType,
+            'file_size': attachment.size,
+          },
+        )
+        .toList(growable: false);
+    final localAttachments = mergePendingAttachmentPlaceholders(
+      attachments: attachments,
+      pendingAttachments: attachmentPayloads,
+    );
+
     await db.upsertMemo(
       uid: uid,
       content: content,
@@ -149,16 +166,17 @@ class MemosListController {
       createTimeSec: nowSec,
       updateTimeSec: nowSec,
       tags: tags,
-      attachments: attachments,
+      attachments: localAttachments,
       location: location,
       relationCount: 0,
       syncState: 1,
     );
 
     final hasAttachments = pendingAttachments.isNotEmpty;
-    await db.enqueueOutbox(
-      type: 'create_memo',
-      payload: buildCreateMemoOutboxPayload(
+    await enqueueCreateMemoWithAttachmentUploads(
+      read: _ref.read,
+      db: db,
+      createPayload: buildCreateMemoOutboxPayload(
         uid: uid,
         content: content,
         visibility: visibility,
@@ -168,21 +186,8 @@ class MemosListController {
         location: location,
         relations: relations,
       ),
+      attachmentPayloads: attachmentPayloads,
     );
-
-    for (final attachment in pendingAttachments) {
-      await db.enqueueOutbox(
-        type: 'upload_attachment',
-        payload: {
-          'uid': attachment.uid,
-          'memo_uid': uid,
-          'file_path': attachment.filePath,
-          'filename': attachment.filename,
-          'mime_type': attachment.mimeType,
-          'file_size': attachment.size,
-        },
-      );
-    }
   }
 
   Future<void> updateMemo(LocalMemo memo, {bool? pinned, String? state}) async {

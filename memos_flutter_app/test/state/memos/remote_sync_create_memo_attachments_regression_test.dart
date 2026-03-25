@@ -1,0 +1,754 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:memos_flutter_app/application/attachments/attachment_preprocessor.dart';
+import 'package:memos_flutter_app/application/sync/sync_types.dart';
+import 'package:memos_flutter_app/data/api/memo_api_facade.dart';
+import 'package:memos_flutter_app/data/api/memo_api_version.dart';
+import 'package:memos_flutter_app/data/db/app_database.dart';
+import 'package:memos_flutter_app/data/logs/sync_queue_progress_tracker.dart';
+import 'package:memos_flutter_app/data/logs/sync_status_tracker.dart';
+import 'package:memos_flutter_app/data/models/image_bed_settings.dart';
+import 'package:memos_flutter_app/data/repositories/image_bed_settings_repository.dart';
+import 'package:memos_flutter_app/state/memos/memos_providers.dart';
+import 'package:memos_flutter_app/state/memos/note_input_providers.dart';
+import 'package:memos_flutter_app/state/system/database_provider.dart';
+
+import '../../test_support.dart';
+
+void main() {
+  late TestSupport support;
+
+  setUpAll(() async {
+    support = await initializeTestSupport();
+  });
+
+  tearDownAll(() async {
+    await support.dispose();
+  });
+
+  test(
+    'RemoteSyncController keeps memo pending when later attachment tasks remain',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start();
+      final dbName = uniqueDbName(
+        'remote_sync_create_waits_for_attachment_tasks',
+      );
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+
+      addTearDown(() async {
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-1',
+        content: 'memo waiting for upload retry',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1773424800,
+        updateTimeSec: 1773424800,
+        tags: const <String>[],
+        attachments: const [
+          {
+            'name': 'attachments/att-1',
+            'filename': 'sample.png',
+            'type': 'image/png',
+            'size': 42,
+            'externalLink': 'file:///tmp/sample.png',
+          },
+        ],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+      await db.enqueueOutbox(
+        type: 'create_memo',
+        payload: {
+          'uid': 'memo-1',
+          'content': 'memo waiting for upload retry',
+          'visibility': 'PRIVATE',
+          'pinned': false,
+          'has_attachments': true,
+          'create_time': 1773424800,
+          'display_time': 1773424800,
+        },
+      );
+      final uploadOutboxId = await db.enqueueOutbox(
+        type: 'upload_attachment',
+        payload: {
+          'uid': 'att-1',
+          'memo_uid': 'memo-1',
+          'file_path': '/tmp/sample.png',
+          'filename': 'sample.png',
+          'mime_type': 'image/png',
+          'file_size': 42,
+        },
+      );
+      final sqlite = await db.db;
+      await sqlite.rawUpdate('UPDATE outbox SET state = ? WHERE id = ?', [
+        AppDatabase.outboxStateError,
+        uploadOutboxId,
+      ]);
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncFailure>());
+      final row = await db.getMemoByUid('memo-1');
+      expect(row?['sync_state'], 1);
+    },
+  );
+
+  test(
+    'RemoteSyncController keeps memo pending until queued create_memo runs',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start();
+      final dbName = uniqueDbName(
+        'remote_sync_create_stays_pending_until_create_task_runs',
+      );
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+      final tempDir = await support.createTempDir(
+        'remote_sync_pending_until_create_task_runs',
+      );
+      final attachmentFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.png',
+      );
+      await attachmentFile.writeAsBytes(const <int>[
+        137,
+        80,
+        78,
+        71,
+        1,
+        2,
+        3,
+        4,
+      ]);
+
+      addTearDown(() async {
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-1',
+        content: 'memo still waiting for create',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1773424800,
+        updateTimeSec: 1773424800,
+        tags: const <String>[],
+        attachments: [
+          {
+            'name': 'attachments/att-1',
+            'filename': 'sample.png',
+            'type': 'image/png',
+            'size': await attachmentFile.length(),
+            'externalLink': Uri.file(attachmentFile.path).toString(),
+          },
+        ],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+      await db.enqueueOutbox(
+        type: 'upload_attachment',
+        payload: {
+          'uid': 'att-1',
+          'memo_uid': 'memo-1',
+          'file_path': attachmentFile.path,
+          'filename': 'sample.png',
+          'mime_type': 'image/png',
+          'file_size': await attachmentFile.length(),
+        },
+      );
+      final createOutboxId = await db.enqueueOutbox(
+        type: 'create_memo',
+        payload: {
+          'uid': 'memo-1',
+          'content': 'memo still waiting for create',
+          'visibility': 'PRIVATE',
+          'pinned': false,
+          'has_attachments': true,
+          'create_time': 1773424800,
+          'display_time': 1773424800,
+        },
+      );
+      final sqlite = await db.db;
+      final retryAt = DateTime.now().toUtc().add(const Duration(hours: 1));
+      await sqlite
+          .rawUpdate('UPDATE outbox SET state = ?, retry_at = ? WHERE id = ?', [
+            AppDatabase.outboxStateRetry,
+            retryAt.millisecondsSinceEpoch,
+            createOutboxId,
+          ]);
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncFailure>());
+      final row = await db.getMemoByUid('memo-1');
+      expect(row?['sync_state'], 1);
+      expect(
+        server.requests.where(
+          (request) =>
+              request.method == 'POST' && request.path == '/api/v1/resources',
+        ),
+        hasLength(1),
+      );
+      expect(
+        server.requests.where(
+          (request) =>
+              request.method == 'POST' && request.path == '/api/v1/memos',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'RemoteSyncController uploads resources before create_memo and embeds them for 0.23',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start();
+      final dbName = uniqueDbName('remote_sync_create_with_resources_v023');
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memosApiProvider.overrideWithValue(api),
+        ],
+      );
+      final noteInputController = container.read(noteInputControllerProvider);
+      final tempDir = await support.createTempDir('remote_sync_create_v023');
+      final attachmentFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.png',
+      );
+      await attachmentFile.writeAsBytes(const <int>[
+        137,
+        80,
+        78,
+        71,
+        1,
+        2,
+        3,
+        4,
+      ]);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await noteInputController.createMemo(
+        uid: 'memo-1',
+        content: 'memo with image',
+        visibility: 'PRIVATE',
+        now: DateTime.utc(2026, 3, 13, 18, 0),
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: attachmentFile.path,
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: await attachmentFile.length(),
+          ),
+        ],
+      );
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncSuccess>());
+      expect(await db.countOutboxPending(), 0);
+      final row = await db.getMemoByUid('memo-1');
+      expect(row?['sync_state'], 0);
+
+      final uploadIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'POST' && request.path == '/api/v1/resources',
+      );
+      final createIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'POST' && request.path == '/api/v1/memos',
+      );
+      expect(uploadIndex, greaterThanOrEqualTo(0));
+      expect(createIndex, greaterThan(uploadIndex));
+
+      final uploadRequest = server.requests[uploadIndex];
+      final createRequest = server.requests[createIndex];
+      expect(uploadRequest.queryParameters['resourceId'], 'att-1');
+      expect(uploadRequest.jsonBody?['memo'], isNull);
+      expect(createRequest.queryParameters['memoId'], 'memo-1');
+      expect(createRequest.jsonBody?['resources'], [
+        {'name': 'resources/att-1'},
+      ]);
+    },
+  );
+
+  test(
+    'RemoteSyncController rebinds uploaded resources after create_memo 409 on 0.23',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start(
+        conflictOnCreate: true,
+      );
+      final dbName = uniqueDbName(
+        'remote_sync_rebind_resources_after_409_v023',
+      );
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memosApiProvider.overrideWithValue(api),
+        ],
+      );
+      final noteInputController = container.read(noteInputControllerProvider);
+      final tempDir = await support.createTempDir(
+        'remote_sync_create_409_v023',
+      );
+      final attachmentFile = File(
+        '${tempDir.path}${Platform.pathSeparator}sample.png',
+      );
+      await attachmentFile.writeAsBytes(const <int>[
+        137,
+        80,
+        78,
+        71,
+        1,
+        2,
+        3,
+        4,
+      ]);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await noteInputController.createMemo(
+        uid: 'memo-1',
+        content: 'memo with image',
+        visibility: 'PRIVATE',
+        now: DateTime.utc(2026, 3, 13, 18, 0),
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: attachmentFile.path,
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: await attachmentFile.length(),
+          ),
+        ],
+      );
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncSuccess>());
+      expect(await db.countOutboxPending(), 0);
+      final row = await db.getMemoByUid('memo-1');
+      expect(row?['sync_state'], 0);
+
+      final uploadIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'POST' && request.path == '/api/v1/resources',
+      );
+      final createIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'POST' && request.path == '/api/v1/memos',
+      );
+      final rebindIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'PATCH' &&
+            request.path == '/api/v1/memos/memo-1/resources',
+      );
+      expect(uploadIndex, greaterThanOrEqualTo(0));
+      expect(createIndex, greaterThan(uploadIndex));
+      expect(rebindIndex, greaterThan(createIndex));
+      expect(server.createdMemo?['resources'], [
+        {'name': 'resources/att-1'},
+      ]);
+    },
+  );
+
+  test(
+    'RemoteSyncController still runs delete_attachment with memo tombstone',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start();
+      final dbName = uniqueDbName(
+        'remote_sync_delete_attachment_with_tombstone',
+      );
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+
+      addTearDown(() async {
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemoDeleteTombstone(
+        memoUid: 'memo-1',
+        state: AppDatabase.memoDeleteTombstoneStatePendingRemoteDelete,
+      );
+      await db.enqueueOutbox(
+        type: 'delete_attachment',
+        payload: {'attachment_name': 'resources/att-1', 'memo_uid': 'memo-1'},
+      );
+      await db.enqueueOutbox(
+        type: 'delete_memo',
+        payload: {'uid': 'memo-1', 'force': false},
+      );
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncSuccess>());
+      final deleteAttachmentIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'DELETE' &&
+            request.path == '/api/v1/resources/att-1',
+      );
+      final deleteMemoIndex = server.requests.indexWhere(
+        (request) =>
+            request.method == 'DELETE' &&
+            request.path == '/api/v1/memos/memo-1',
+      );
+      expect(deleteAttachmentIndex, greaterThanOrEqualTo(0));
+      expect(deleteMemoIndex, greaterThan(deleteAttachmentIndex));
+    },
+  );
+}
+
+class _PassthroughHttpOverrides extends HttpOverrides {}
+
+class _PassThroughAttachmentPreprocessor implements AttachmentPreprocessor {
+  @override
+  Future<AttachmentPreprocessResult> preprocess(
+    AttachmentPreprocessRequest request,
+  ) async {
+    final file = File(request.filePath);
+    return AttachmentPreprocessResult(
+      filePath: request.filePath,
+      filename: request.filename,
+      mimeType: request.mimeType,
+      size: await file.length(),
+    );
+  }
+}
+
+class _FakeImageBedSettingsRepository extends ImageBedSettingsRepository {
+  _FakeImageBedSettingsRepository()
+    : super(const FlutterSecureStorage(), accountKey: 'test-account');
+
+  @override
+  Future<ImageBedSettings> read() async => ImageBedSettings.defaults;
+}
+
+class _CapturedRegressionRequest {
+  const _CapturedRegressionRequest({
+    required this.method,
+    required this.path,
+    required this.queryParameters,
+    required this.jsonBody,
+  });
+
+  final String method;
+  final String path;
+  final Map<String, String> queryParameters;
+  final Map<String, dynamic>? jsonBody;
+}
+
+class _RemoteSyncAttachmentRegressionServer {
+  _RemoteSyncAttachmentRegressionServer._(
+    this._server, {
+    required this.conflictOnCreate,
+  });
+
+  final HttpServer _server;
+  final bool conflictOnCreate;
+  final List<_CapturedRegressionRequest> requests =
+      <_CapturedRegressionRequest>[];
+  Map<String, dynamic>? _createdMemo;
+
+  Uri get baseUrl => Uri.parse('http://127.0.0.1:${_server.port}');
+  Map<String, dynamic>? get createdMemo =>
+      _createdMemo == null ? null : Map<String, dynamic>.from(_createdMemo!);
+
+  static Future<_RemoteSyncAttachmentRegressionServer> start({
+    bool conflictOnCreate = false,
+  }) async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final harness = _RemoteSyncAttachmentRegressionServer._(
+      server,
+      conflictOnCreate: conflictOnCreate,
+    );
+    server.listen(harness._handleRequest);
+    return harness;
+  }
+
+  Future<void> close() async {
+    await _server.close(force: true);
+  }
+
+  Future<void> _handleRequest(HttpRequest request) async {
+    final bodyText = await utf8.decoder.bind(request).join();
+    Map<String, dynamic>? jsonBody;
+    if (bodyText.trim().isNotEmpty) {
+      final decoded = jsonDecode(bodyText);
+      if (decoded is Map) {
+        jsonBody = decoded.cast<String, dynamic>();
+      }
+    }
+
+    requests.add(
+      _CapturedRegressionRequest(
+        method: request.method,
+        path: request.uri.path,
+        queryParameters: request.uri.queryParameters,
+        jsonBody: jsonBody,
+      ),
+    );
+
+    if (request.method == 'POST' && request.uri.path == '/api/v1/resources') {
+      final resourceId =
+          request.uri.queryParameters['resourceId'] ?? 'generated';
+      final filename = (jsonBody?['filename'] as String?) ?? 'sample.png';
+      final type = (jsonBody?['type'] as String?) ?? 'application/octet-stream';
+      await _writeJson(request.response, <String, Object?>{
+        'name': 'resources/$resourceId',
+        'filename': filename,
+        'type': type,
+        'size': 8,
+        'externalLink':
+            'http://127.0.0.1:${_server.port}/file/resources/$resourceId/$filename',
+      });
+      return;
+    }
+
+    if (request.method == 'POST' && request.uri.path == '/api/v1/memos') {
+      final memoId = request.uri.queryParameters['memoId'] ?? 'generated-memo';
+      if (conflictOnCreate) {
+        _createdMemo ??= _buildMemo(
+          memoId: memoId,
+          content: 'existing memo content',
+          resources: const <Object>[],
+        );
+        await _writeJson(request.response, <String, Object?>{
+          'message': 'memo already exists',
+        }, statusCode: HttpStatus.conflict);
+        return;
+      }
+
+      _createdMemo = _buildMemo(
+        memoId: memoId,
+        content: (jsonBody?['content'] as String?) ?? '',
+        resources: jsonBody?['resources'] ?? const <Object>[],
+        visibility: (jsonBody?['visibility'] as String?) ?? 'PRIVATE',
+        pinned: (jsonBody?['pinned'] as bool?) ?? false,
+      );
+      await _writeJson(request.response, _createdMemo!);
+      return;
+    }
+
+    if (request.method == 'PATCH' &&
+        RegExp(r'^/api/v1/memos/[^/]+/resources$').hasMatch(request.uri.path)) {
+      final memoId = request.uri.pathSegments[3];
+      _createdMemo ??= _buildMemo(memoId: memoId);
+      _createdMemo!['resources'] =
+          jsonBody?['resources'] as List<dynamic>? ?? const <Object>[];
+      await _writeJson(request.response, _createdMemo!);
+      return;
+    }
+
+    if (request.method == 'PATCH' &&
+        RegExp(r'^/api/v1/memos/[^/]+$').hasMatch(request.uri.path)) {
+      final memoId = request.uri.pathSegments[3];
+      _createdMemo ??= _buildMemo(memoId: memoId);
+      if (jsonBody != null) {
+        for (final entry in jsonBody.entries) {
+          _createdMemo![entry.key] = entry.value;
+        }
+      }
+      await _writeJson(request.response, _createdMemo!);
+      return;
+    }
+
+    if (request.method == 'DELETE' &&
+        RegExp(r'^/api/v1/resources/[^/]+$').hasMatch(request.uri.path)) {
+      await _writeJson(request.response, <String, Object?>{'ok': true});
+      return;
+    }
+
+    if (request.method == 'DELETE' &&
+        RegExp(r'^/api/v1/memos/[^/]+$').hasMatch(request.uri.path)) {
+      await _writeJson(request.response, <String, Object?>{'ok': true});
+      return;
+    }
+
+    if (request.method == 'GET' && request.uri.path == '/api/v1/memos') {
+      final state = (request.uri.queryParameters['state'] ?? '')
+          .trim()
+          .toUpperCase();
+      final filter = (request.uri.queryParameters['filter'] ?? '').trim();
+      final wantsArchived = state == 'ARCHIVED' || filter.contains('ARCHIVED');
+      await _writeJson(request.response, <String, Object?>{
+        'memos': wantsArchived || _createdMemo == null
+            ? const <Object>[]
+            : <Object>[_createdMemo!],
+        'nextPageToken': '',
+      });
+      return;
+    }
+
+    await _writeJson(request.response, <String, Object?>{
+      'error': 'Unhandled test route',
+      'method': request.method,
+      'path': request.uri.path,
+    }, statusCode: HttpStatus.notFound);
+  }
+
+  Map<String, dynamic> _buildMemo({
+    required String memoId,
+    String content = '',
+    Object resources = const <Object>[],
+    String visibility = 'PRIVATE',
+    bool pinned = false,
+  }) {
+    return <String, dynamic>{
+      'name': 'memos/$memoId',
+      'creator': 'users/1',
+      'content': content,
+      'visibility': visibility,
+      'pinned': pinned,
+      'state': 'NORMAL',
+      'createTime': '2026-03-13T18:00:00Z',
+      'updateTime': '2026-03-13T18:00:00Z',
+      'tags': const <String>[],
+      'resources': resources,
+    };
+  }
+}
+
+Future<void> _writeJson(
+  HttpResponse response,
+  Object payload, {
+  int statusCode = HttpStatus.ok,
+}) async {
+  response.statusCode = statusCode;
+  response.headers.contentType = ContentType.json;
+  response.write(jsonEncode(payload));
+  await response.close();
+}

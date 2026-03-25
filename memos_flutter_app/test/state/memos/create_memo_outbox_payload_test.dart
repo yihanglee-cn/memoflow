@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memos_flutter_app/data/api/memo_api_facade.dart';
+import 'package:memos_flutter_app/data/api/memo_api_version.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
 import 'package:memos_flutter_app/data/models/memo_location.dart';
 import 'package:memos_flutter_app/state/memos/create_memo_outbox_payload.dart';
+import 'package:memos_flutter_app/state/memos/memos_providers.dart';
 import 'package:memos_flutter_app/state/memos/note_input_providers.dart';
 import 'package:memos_flutter_app/state/system/database_provider.dart';
 
@@ -177,6 +180,114 @@ void main() {
       expect(payload['memo_uid'], 'memo-1');
       expect(payload['skip_compression'], isTrue);
       expect(payload['file_size'], 42);
+    },
+  );
+
+  test(
+    'NoteInputController enqueues attachments before create_memo on 0.23+',
+    () async {
+      final dbName = uniqueDbName('note_input_uploads_before_create_v023');
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: Uri.parse('https://example.com'),
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memosApiProvider.overrideWithValue(api),
+        ],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: 'offline memo',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: '/tmp/sample.png',
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: 42,
+          ),
+        ],
+      );
+
+      final outbox = await db.listOutboxPending(limit: 10);
+      expect(outbox.map((row) => row['type']).toList(growable: false), [
+        'upload_attachment',
+        'create_memo',
+      ]);
+    },
+  );
+
+  test(
+    'NoteInputController keeps create_memo before attachments on 0.22',
+    () async {
+      final dbName = uniqueDbName('note_input_create_before_upload_v022');
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: Uri.parse('https://example.com'),
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v022,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memosApiProvider.overrideWithValue(api),
+        ],
+      );
+      final controller = container.read(noteInputControllerProvider);
+      final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await controller.createMemo(
+        uid: 'memo-1',
+        content: 'offline memo',
+        visibility: 'PRIVATE',
+        now: now,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        hasAttachments: true,
+        relations: const <Map<String, dynamic>>[],
+        pendingAttachments: const [
+          NoteInputPendingAttachment(
+            uid: 'att-1',
+            filePath: '/tmp/sample.png',
+            filename: 'sample.png',
+            mimeType: 'image/png',
+            size: 42,
+          ),
+        ],
+      );
+
+      final outbox = await db.listOutboxPending(limit: 10);
+      expect(outbox.map((row) => row['type']).toList(growable: false), [
+        'create_memo',
+        'upload_attachment',
+      ]);
     },
   );
 

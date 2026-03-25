@@ -15,6 +15,7 @@ import '../../core/hash.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../core/url.dart';
+import '../../data/api/memo_api_version.dart';
 import '../../data/models/account.dart';
 import '../../data/models/app_preferences.dart';
 import '../../data/models/attachment.dart';
@@ -63,6 +64,22 @@ class _FlomoImportEngine {
   final AppLanguage language;
 
   static const _source = 'flomo';
+
+  bool _shouldEnqueueAttachmentUploadsBeforeCreate() {
+    final rawVersion =
+        (account?.serverVersionOverride ??
+                account?.instanceProfile.version ??
+                '')
+            .trim();
+    final version = parseMemoApiVersion(rawVersion);
+    return switch (version) {
+      MemoApiVersion.v023 ||
+      MemoApiVersion.v024 ||
+      MemoApiVersion.v025 ||
+      MemoApiVersion.v026 => true,
+      _ => false,
+    };
+  }
 
   Future<ImportResult> importFile({
     required String filePath,
@@ -436,6 +453,25 @@ class _FlomoImportEngine {
         syncState: 1,
       );
 
+      final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate();
+      final attachmentPayloads = attachmentQueue
+          .map(
+            (attachment) => <String, dynamic>{
+              'uid': attachment.uid,
+              'memo_uid': attachment.memoUid,
+              'file_path': attachment.filePath,
+              'filename': attachment.filename,
+              'mime_type': attachment.mimeType,
+              'file_size': attachment.size,
+            },
+          )
+          .toList(growable: false);
+      if (uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          counters.setAttachmentCount(counters.attachmentCount() + 1);
+        }
+      }
       await db.enqueueOutbox(
         type: 'create_memo',
         payload: buildCreateMemoOutboxPayload(
@@ -457,19 +493,11 @@ class _FlomoImportEngine {
         );
       }
 
-      for (final attachment in attachmentQueue) {
-        await db.enqueueOutbox(
-          type: 'upload_attachment',
-          payload: {
-            'uid': attachment.uid,
-            'memo_uid': attachment.memoUid,
-            'file_path': attachment.filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.mimeType,
-            'file_size': attachment.size,
-          },
-        );
-        counters.setAttachmentCount(counters.attachmentCount() + 1);
+      if (!uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          counters.setAttachmentCount(counters.attachmentCount() + 1);
+        }
       }
 
       counters.setMemoCount(counters.memoCount() + 1);
@@ -601,6 +629,25 @@ class _FlomoImportEngine {
         syncState: 1,
       );
 
+      final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate();
+      final attachmentPayloads = attachmentQueue
+          .map(
+            (attachment) => <String, dynamic>{
+              'uid': attachment.uid,
+              'memo_uid': attachment.memoUid,
+              'file_path': attachment.filePath,
+              'filename': attachment.filename,
+              'mime_type': attachment.mimeType,
+              'file_size': attachment.size,
+            },
+          )
+          .toList(growable: false);
+      if (uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          counters.setAttachmentCount(counters.attachmentCount() + 1);
+        }
+      }
       await db.enqueueOutbox(
         type: 'create_memo',
         payload: buildCreateMemoOutboxPayload(
@@ -613,19 +660,11 @@ class _FlomoImportEngine {
         ),
       );
 
-      for (final attachment in attachmentQueue) {
-        await db.enqueueOutbox(
-          type: 'upload_attachment',
-          payload: {
-            'uid': attachment.uid,
-            'memo_uid': attachment.memoUid,
-            'file_path': attachment.filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.mimeType,
-            'file_size': attachment.size,
-          },
-        );
-        counters.setAttachmentCount(counters.attachmentCount() + 1);
+      if (!uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          counters.setAttachmentCount(counters.attachmentCount() + 1);
+        }
       }
 
       counters.setMemoCount(counters.memoCount() + 1);

@@ -284,6 +284,7 @@ mixin _MemosApiMemos on _MemosApiBase {
     MemoLocation? location,
     DateTime? createTime,
     DateTime? displayTime,
+    List<String> attachmentNames = const <String>[],
     List<Map<String, dynamic>> relations = const <Map<String, dynamic>>[],
   }) async {
     await _ensureServerHints();
@@ -311,6 +312,7 @@ mixin _MemosApiMemos on _MemosApiBase {
       location: location,
       createTime: createTime,
       displayTime: displayTime,
+      attachmentNames: attachmentNames,
       relations: relations,
     );
   }
@@ -320,6 +322,16 @@ mixin _MemosApiMemos on _MemosApiBase {
 
   bool get supportsCreateMemoRelationsInCreateBody =>
       _supportsCreateMemoRelationsInModernBody();
+
+  bool get supportsCreateMemoAttachmentsInCreateBody {
+    if (_useLegacyMemos) return false;
+    return switch (_serverFlavor) {
+      _ServerApiFlavor.v0_23 ||
+      _ServerApiFlavor.v0_24 ||
+      _ServerApiFlavor.v0_25Plus => true,
+      _ => false,
+    };
+  }
 
   bool get supportsMemoCreateTimeUpdate => _supportsMemoCreateTimeUpdate();
 
@@ -331,6 +343,7 @@ mixin _MemosApiMemos on _MemosApiBase {
     MemoLocation? location,
     DateTime? createTime,
     DateTime? displayTime,
+    required List<String> attachmentNames,
     required List<Map<String, dynamic>> relations,
   }) async {
     final supportsLocation = _supportsMemoLocationField();
@@ -338,7 +351,13 @@ mixin _MemosApiMemos on _MemosApiBase {
     final supportsCreateTimestamps =
         _supportsCreateMemoTimestampFieldsInModernBody();
     final supportsCreateRelations = _supportsCreateMemoRelationsInModernBody();
+    final supportsCreateAttachments = supportsCreateMemoAttachmentsInCreateBody;
+    final attachmentField = _createMemoAttachmentFieldName();
     final resolvedDisplayTime = displayTime ?? createTime;
+    final normalizedAttachmentNames = attachmentNames
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
     final response = await _dio.post(
       'api/v1/memos',
       queryParameters: <String, Object?>{'memoId': memoId},
@@ -351,6 +370,12 @@ mixin _MemosApiMemos on _MemosApiBase {
           'createTime': createTime.toUtc().toIso8601String(),
         if (supportsCreateTimestamps && resolvedDisplayTime != null)
           'displayTime': resolvedDisplayTime.toUtc().toIso8601String(),
+        if (supportsCreateAttachments &&
+            attachmentField != null &&
+            normalizedAttachmentNames.isNotEmpty)
+          attachmentField: normalizedAttachmentNames
+              .map((name) => <String, Object?>{'name': name})
+              .toList(growable: false),
         if (supportsCreateRelations && relations.isNotEmpty)
           'relations': relations,
       },
@@ -585,6 +610,14 @@ mixin _MemosApiMemos on _MemosApiBase {
     return _supportsModernCreateMemoBodyFields(
       minimum: const _ServerVersion(0, 26, 0),
     );
+  }
+
+  String? _createMemoAttachmentFieldName() {
+    return switch (_serverFlavor) {
+      _ServerApiFlavor.v0_23 || _ServerApiFlavor.v0_24 => 'resources',
+      _ServerApiFlavor.v0_25Plus => 'attachments',
+      _ => null,
+    };
   }
 
   bool _supportsModernCreateMemoBodyFields({required _ServerVersion minimum}) {

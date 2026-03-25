@@ -5,6 +5,7 @@ import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_location.dart';
 import '../../features/share/share_inline_image_content.dart';
+import 'create_memo_outbox_enqueue.dart';
 import 'create_memo_outbox_payload.dart';
 import '../system/database_provider.dart';
 
@@ -52,6 +53,30 @@ class NoteInputController {
   }) async {
     final db = _ref.read(databaseProvider);
 
+    final attachmentPayloads = pendingAttachments
+        .map(
+          (attachment) => <String, dynamic>{
+            'uid': attachment.uid,
+            'memo_uid': uid,
+            'file_path': attachment.filePath,
+            'filename': attachment.filename,
+            'mime_type': attachment.mimeType,
+            'file_size': attachment.size,
+            'skip_compression': attachment.skipCompression,
+            'share_inline_image': attachment.shareInlineImage,
+            'from_third_party_share': attachment.fromThirdPartyShare,
+            if (attachment.shareInlineImage)
+              'share_inline_local_url': Uri.file(
+                attachment.filePath,
+              ).toString(),
+          },
+        )
+        .toList(growable: false);
+    final localAttachments = mergePendingAttachmentPlaceholders(
+      attachments: attachments,
+      pendingAttachments: attachmentPayloads,
+    );
+
     await db.upsertMemo(
       uid: uid,
       content: content,
@@ -61,7 +86,7 @@ class NoteInputController {
       createTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
       updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: tags,
-      attachments: attachments,
+      attachments: localAttachments,
       location: location,
       relationCount: 0,
       syncState: 1,
@@ -81,9 +106,10 @@ class NoteInputController {
       }
     }
 
-    await db.enqueueOutbox(
-      type: 'create_memo',
-      payload: buildCreateMemoOutboxPayload(
+    await enqueueCreateMemoWithAttachmentUploads(
+      read: _ref.read,
+      db: db,
+      createPayload: buildCreateMemoOutboxPayload(
         uid: uid,
         content: syncContent ?? content,
         visibility: visibility,
@@ -93,26 +119,8 @@ class NoteInputController {
         location: location,
         relations: relations,
       ),
+      attachmentPayloads: attachmentPayloads,
     );
-
-    for (final attachment in pendingAttachments) {
-      await db.enqueueOutbox(
-        type: 'upload_attachment',
-        payload: {
-          'uid': attachment.uid,
-          'memo_uid': uid,
-          'file_path': attachment.filePath,
-          'filename': attachment.filename,
-          'mime_type': attachment.mimeType,
-          'file_size': attachment.size,
-          'skip_compression': attachment.skipCompression,
-          'share_inline_image': attachment.shareInlineImage,
-          'from_third_party_share': attachment.fromThirdPartyShare,
-          if (attachment.shareInlineImage)
-            'share_inline_local_url': Uri.file(attachment.filePath).toString(),
-        },
-      );
-    }
   }
 
   Future<void> appendDeferredThirdPartyShareInlineImage({

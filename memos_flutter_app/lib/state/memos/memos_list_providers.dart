@@ -11,6 +11,7 @@ import '../../data/models/memo_location.dart';
 import '../../data/models/shortcut.dart';
 import '../system/database_provider.dart';
 import '../system/logging_provider.dart';
+import 'create_memo_outbox_enqueue.dart';
 import 'create_memo_outbox_payload.dart';
 import 'memo_delete_service.dart';
 import 'memo_timeline_provider.dart';

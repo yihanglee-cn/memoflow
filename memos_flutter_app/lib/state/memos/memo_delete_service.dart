@@ -27,11 +27,26 @@ class MemoDeleteService {
     await timelineService.moveMemoToRecycleBin(memo);
     onMovedToRecycleBin?.call();
 
+    final shouldCleanupCreateDraftAttachments = await db
+        .hasPendingOutboxTaskForMemo(memoUid, types: const {'create_memo'});
+    final draftAttachmentNames = shouldCleanupCreateDraftAttachments
+        ? memo.attachments
+              .map((attachment) => attachment.name.trim())
+              .where((name) => name.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+
     await db.upsertMemoDeleteTombstone(
       memoUid: memoUid,
       state: AppDatabase.memoDeleteTombstoneStatePendingRemoteDelete,
     );
     await db.deleteOutboxForMemo(memoUid);
+    for (final attachmentName in draftAttachmentNames) {
+      await db.enqueueOutbox(
+        type: 'delete_attachment',
+        payload: {'attachment_name': attachmentName, 'memo_uid': memoUid},
+      );
+    }
     await db.deleteMemoByUid(memoUid);
     await db.enqueueOutbox(
       type: 'delete_memo',

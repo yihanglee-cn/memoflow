@@ -4,6 +4,7 @@ import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_relation.dart';
 import '../../data/models/memo_location.dart';
+import 'create_memo_outbox_enqueue.dart';
 import 'create_memo_outbox_payload.dart';
 import '../system/database_provider.dart';
 import 'memo_timeline_provider.dart';
@@ -92,6 +93,28 @@ class MemoEditorController {
         );
       }
     }
+    final attachmentPayloads = existing == null
+        ? pendingAttachments
+              .map(
+                (attachment) => <String, dynamic>{
+                  'uid': attachment.uid,
+                  'memo_uid': uid,
+                  'file_path': attachment.filePath,
+                  'filename': attachment.filename,
+                  'mime_type': attachment.mimeType,
+                  'file_size': attachment.size,
+                  'skip_compression': attachment.skipCompression,
+                },
+              )
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final localAttachments = existing == null
+        ? mergePendingAttachmentPlaceholders(
+            attachments: attachments,
+            pendingAttachments: attachmentPayloads,
+          )
+        : attachments;
+
     await db.upsertMemo(
       uid: uid,
       content: content,
@@ -101,7 +124,7 @@ class MemoEditorController {
       createTimeSec: createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: tags,
-      attachments: attachments,
+      attachments: localAttachments,
       location: location,
       relationCount: relationCount,
       syncState: 1,
@@ -109,18 +132,20 @@ class MemoEditorController {
     );
 
     if (existing == null) {
-      await db.enqueueOutbox(
-        type: 'create_memo',
-        payload: buildCreateMemoOutboxPayload(
+      await enqueueCreateMemoWithAttachmentUploads(
+        read: _ref.read,
+        db: db,
+        createPayload: buildCreateMemoOutboxPayload(
           uid: uid,
           content: content,
           visibility: visibility,
           pinned: pinned,
           createTimeSec: createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-          hasAttachments: attachments.isNotEmpty,
+          hasAttachments: localAttachments.isNotEmpty,
           location: location,
           relations: includeRelations ? relations : const [],
         ),
+        attachmentPayloads: attachmentPayloads,
       );
     } else {
       await db.enqueueOutbox(
@@ -138,18 +163,20 @@ class MemoEditorController {
       );
     }
 
-    for (final attachment in pendingAttachments) {
-      await db.enqueueOutbox(
-        type: 'upload_attachment',
-        payload: {
-          'uid': attachment.uid,
-          'memo_uid': uid,
-          'file_path': attachment.filePath,
-          'filename': attachment.filename,
-          'mime_type': attachment.mimeType,
-          'skip_compression': attachment.skipCompression,
-        },
-      );
+    if (existing != null) {
+      for (final attachment in pendingAttachments) {
+        await db.enqueueOutbox(
+          type: 'upload_attachment',
+          payload: {
+            'uid': attachment.uid,
+            'memo_uid': uid,
+            'file_path': attachment.filePath,
+            'filename': attachment.filename,
+            'mime_type': attachment.mimeType,
+            'skip_compression': attachment.skipCompression,
+          },
+        );
+      }
     }
     if (hasPendingAttachments) {
       for (final attachment in attachmentsToDelete) {

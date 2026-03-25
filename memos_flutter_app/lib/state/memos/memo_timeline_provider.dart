@@ -13,6 +13,7 @@ import '../../core/debug_ephemeral_storage.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../core/url.dart';
+import '../../data/api/memo_api_version.dart';
 import '../../data/db/app_database.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_naming.dart';
@@ -110,6 +111,22 @@ class MemoTimelineService {
   static const String _storageRootName = 'memo_timeline_storage';
   static const String _versionsRootName = 'versions';
   static const String _recycleRootName = 'recycle_bin';
+
+  bool get _shouldEnqueueAttachmentUploadsBeforeCreate {
+    final rawVersion =
+        (account?.serverVersionOverride ??
+                account?.instanceProfile.version ??
+                '')
+            .trim();
+    final version = parseMemoApiVersion(rawVersion);
+    return switch (version) {
+      MemoApiVersion.v023 ||
+      MemoApiVersion.v024 ||
+      MemoApiVersion.v025 ||
+      MemoApiVersion.v026 => true,
+      _ => false,
+    };
+  }
 
   Future<void> captureMemoVersion(LocalMemo memo) async {
     final memoUid = memo.uid.trim();
@@ -380,6 +397,24 @@ class MemoTimelineService {
 
     final hasPendingAttachments = restoredAttachments.isNotEmpty;
     if (existing == null) {
+      final attachmentPayloads = restoredAttachments
+          .map(
+            (attachment) => <String, dynamic>{
+              'uid': attachment.uid,
+              'memo_uid': memoUid,
+              'file_path': _readLocalFilePathFromAttachment(attachment),
+              'filename': attachment.filename,
+              'mime_type': attachment.type,
+              'file_size': attachment.size,
+            },
+          )
+          .toList(growable: false);
+      final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate;
+      if (uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+        }
+      }
       await db.enqueueOutbox(
         type: 'create_memo',
         payload: buildCreateMemoOutboxPayload(
@@ -392,6 +427,11 @@ class MemoTimelineService {
           location: location,
         ),
       );
+      if (!uploadBeforeCreate) {
+        for (final payload in attachmentPayloads) {
+          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+        }
+      }
       if (state == 'ARCHIVED') {
         await db.enqueueOutbox(
           type: 'update_memo',
@@ -423,19 +463,21 @@ class MemoTimelineService {
       );
     }
 
-    for (final attachment in restoredAttachments) {
-      final filePath = _readLocalFilePathFromAttachment(attachment);
-      await db.enqueueOutbox(
-        type: 'upload_attachment',
-        payload: {
-          'uid': attachment.uid,
-          'memo_uid': memoUid,
-          'file_path': filePath,
-          'filename': attachment.filename,
-          'mime_type': attachment.type,
-          'file_size': attachment.size,
-        },
-      );
+    if (existing != null) {
+      for (final attachment in restoredAttachments) {
+        final filePath = _readLocalFilePathFromAttachment(attachment);
+        await db.enqueueOutbox(
+          type: 'upload_attachment',
+          payload: {
+            'uid': attachment.uid,
+            'memo_uid': memoUid,
+            'file_path': filePath,
+            'filename': attachment.filename,
+            'mime_type': attachment.type,
+            'file_size': attachment.size,
+          },
+        );
+      }
     }
   }
 
