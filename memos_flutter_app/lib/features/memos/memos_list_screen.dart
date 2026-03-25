@@ -6236,6 +6236,25 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         !_searching &&
         shouldUseInlineComposeLayout(screenWidth);
     final useWindowsDesktopHeader = Platform.isWindows;
+    final headerToolbarHeight = useWindowsDesktopHeader && !_searching
+        ? 0.0
+        : kToolbarHeight;
+    final headerBottomHeight = useWindowsDesktopHeader && !_searching
+        ? 0.0
+        : _searching
+        ? (useShortcutFilter ? 0.0 : 46.0)
+        : (showHeaderPillActions
+              ? 46.0
+              : (widget.showFilterTagChip &&
+                        (resolvedTag?.trim().isNotEmpty ?? false)
+                    ? 48.0
+                    : 0.0));
+    final floatingCollapseTopPadding =
+        headerToolbarHeight +
+        headerBottomHeight +
+        listTopPadding +
+        listVisualOffset +
+        10;
     final drawerPanel = widget.showDrawer
         ? AppDrawer(
             selected: widget.state == 'ARCHIVED'
@@ -6779,6 +6798,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                   scrolling: _floatingCollapseScrolling,
                   label: context.t.strings.legacy.msg_collapse,
                   onPressed: _collapseActiveMemoFromFloatingButton,
+                  padding: EdgeInsets.only(
+                    top: floatingCollapseTopPadding,
+                    right: 16,
+                  ),
                 ),
               ),
               Positioned(
