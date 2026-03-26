@@ -29,6 +29,7 @@ import '../../data/models/memo_location.dart';
 import '../../data/models/memo_template_settings.dart';
 import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../state/settings/location_settings_provider.dart';
+import '../../state/attachments/queued_attachment_stager_provider.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_editor_draft_provider.dart';
 import '../../state/memos/memo_composer_state.dart';
@@ -266,6 +267,47 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     return 0;
   }
 
+  Future<_PendingAttachment> _stagePendingAttachment(
+    _PendingAttachment attachment,
+  ) async {
+    final staged = await ref
+        .read(queuedAttachmentStagerProvider)
+        .stageDraftAttachment(
+          uid: attachment.uid,
+          filePath: attachment.filePath,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          scopeKey: _draftMemoUid ?? 'memo_editor_draft',
+        );
+    return attachment.copyWith(
+      filePath: staged.filePath,
+      filename: staged.filename,
+      mimeType: staged.mimeType,
+      size: staged.size,
+    );
+  }
+
+  Future<List<_PendingAttachment>> _stagePendingAttachments(
+    Iterable<_PendingAttachment> attachments,
+  ) async {
+    final staged = <_PendingAttachment>[];
+    for (final attachment in attachments) {
+      staged.add(await _stagePendingAttachment(attachment));
+    }
+    return staged;
+  }
+
+  Future<void> _addPendingAttachmentsStaged(
+    Iterable<_PendingAttachment> attachments,
+  ) async {
+    final staged = await _stagePendingAttachments(attachments);
+    if (!mounted || staged.isEmpty) return;
+    setState(() {
+      _composer.addPendingAttachments(staged);
+    });
+  }
+
   Map<String, dynamic>? _decodeEditorDraftPayload(String raw) {
     final trimmed = raw.trim();
     if (trimmed.isEmpty) return null;
@@ -382,8 +424,8 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
         payload['existing_attachments'],
         fallback: existing.attachments,
       );
-      final restoredPendingAttachments = _decodeDraftPendingAttachments(
-        payload['pending_attachments'],
+      final restoredPendingAttachments = await _stagePendingAttachments(
+        _decodeDraftPendingAttachments(payload['pending_attachments']),
       );
 
       final hasDiff =
@@ -1203,22 +1245,18 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
         return;
       }
 
-      setState(() {
-        _composer.addPendingAttachments(
-          result.attachments
-              .map(
-                (attachment) => _PendingAttachment(
-                  uid: generateUid(),
-                  filePath: attachment.filePath,
-                  filename: attachment.filename,
-                  mimeType: attachment.mimeType,
-                  size: attachment.size,
-                  skipCompression: attachment.skipCompression,
-                ),
-              )
-              .toList(growable: false),
-        );
-      });
+      await _addPendingAttachmentsStaged(
+        result.attachments.map(
+          (attachment) => _PendingAttachment(
+            uid: generateUid(),
+            filePath: attachment.filePath,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            skipCompression: attachment.skipCompression,
+          ),
+        ),
+      );
       final skipped = [
         if (result.skippedCount > 0)
           context.t.strings.legacy.msg_unavailable_file_count(
@@ -1323,9 +1361,7 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
         return;
       }
 
-      setState(() {
-        _composer.addPendingAttachments(added);
-      });
+      await _addPendingAttachmentsStaged(added);
       _scheduleDraftSave();
       final skipped = [
         if (missingPathCount > 0)
@@ -1387,18 +1423,19 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
 
       final filename = path.split(Platform.pathSeparator).last;
       final mimeType = _guessMimeType(filename);
-      if (!mounted) return;
+      final stagedAttachments = await _stagePendingAttachments([
+        _PendingAttachment(
+          uid: generateUid(),
+          filePath: path,
+          filename: filename,
+          mimeType: mimeType,
+          size: size,
+        ),
+      ]);
+      if (!mounted || stagedAttachments.isEmpty) return;
       setState(() {
-        _composer.addPendingAttachments([
-          _PendingAttachment(
-            uid: generateUid(),
-            filePath: path,
-            filename: filename,
-            mimeType: mimeType,
-            size: size,
-          ),
-        ]);
-        _pickedImages.add(photo);
+        _composer.addPendingAttachments(stagedAttachments);
+        _pickedImages.add(XFile(stagedAttachments.first.filePath));
       });
       _scheduleDraftSave();
       showTopToast(
@@ -1447,6 +1484,11 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
       _composer.removePendingAttachment(uid);
       _pickedImages.removeWhere((x) => x.path == removed.filePath);
     });
+    unawaited(
+      ref
+          .read(queuedAttachmentStagerProvider)
+          .deleteManagedFile(removed.filePath),
+    );
     _scheduleDraftSave();
   }
 
@@ -1606,19 +1648,26 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
       final index = _pendingAttachments.indexWhere((a) => a.uid == uid);
       if (index < 0) return;
       final existing = _pendingAttachments[index];
+      final stagedReplacement = await _stagePendingAttachment(
+        _PendingAttachment(
+          uid: uid,
+          filePath: result.filePath,
+          filename: result.filename,
+          mimeType: result.mimeType,
+          size: result.size,
+          skipCompression: existing.skipCompression,
+        ),
+      );
       setState(() {
-        _composer.replacePendingAttachment(
-          uid,
-          _PendingAttachment(
-            uid: uid,
-            filePath: result.filePath,
-            filename: result.filename,
-            mimeType: result.mimeType,
-            size: result.size,
-            skipCompression: existing.skipCompression,
-          ),
-        );
+        _composer.replacePendingAttachment(uid, stagedReplacement);
       });
+      if (existing.filePath != stagedReplacement.filePath) {
+        unawaited(
+          ref
+              .read(queuedAttachmentStagerProvider)
+              .deleteManagedFile(existing.filePath),
+        );
+      }
       _scheduleDraftSave();
       return;
     }
@@ -1631,19 +1680,20 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     if (index < 0) return;
     final removed = _existingAttachments[index];
     final newUid = generateUid();
+    final stagedReplacement = await _stagePendingAttachment(
+      _PendingAttachment(
+        uid: newUid,
+        filePath: result.filePath,
+        filename: result.filename,
+        mimeType: result.mimeType,
+        size: result.size,
+        skipCompression: false,
+      ),
+    );
     setState(() {
       _existingAttachments.removeAt(index);
       _queueDeletedAttachment(removed);
-      _composer.addPendingAttachments([
-        _PendingAttachment(
-          uid: newUid,
-          filePath: result.filePath,
-          filename: result.filename,
-          mimeType: result.mimeType,
-          size: result.size,
-          skipCompression: false,
-        ),
-      ]);
+      _composer.addPendingAttachments([stagedReplacement]);
     });
     _scheduleDraftSave();
   }

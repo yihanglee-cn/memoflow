@@ -1027,6 +1027,49 @@ WHERE id = 1;
     _notifyChanged();
   }
 
+  Future<void> removePendingAttachmentPlaceholder({
+    required String memoUid,
+    required String attachmentUid,
+  }) async {
+    final trimmedMemoUid = memoUid.trim();
+    final trimmedAttachmentUid = attachmentUid.trim();
+    if (trimmedMemoUid.isEmpty || trimmedAttachmentUid.isEmpty) return;
+
+    final row = await getMemoByUid(trimmedMemoUid);
+    final raw = row?['attachments_json'];
+    if (raw is! String || raw.trim().isEmpty) return;
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } catch (_) {
+      return;
+    }
+    if (decoded is! List) return;
+
+    final expectedNames = <String>{
+      'attachments/$trimmedAttachmentUid',
+      'resources/$trimmedAttachmentUid',
+    };
+    var changed = false;
+    final next = <Map<String, dynamic>>[];
+    for (final item in decoded) {
+      if (item is! Map) continue;
+      final map = item.cast<String, dynamic>();
+      final name = (map['name'] as String?)?.trim() ?? '';
+      if (expectedNames.contains(name)) {
+        changed = true;
+        continue;
+      }
+      next.add(map);
+    }
+    if (!changed) return;
+    await updateMemoAttachmentsJson(
+      trimmedMemoUid,
+      attachmentsJson: jsonEncode(next),
+    );
+  }
+
   Future<String?> getMemoRelationsCacheJson(String memoUid) async {
     final normalized = memoUid.trim();
     if (normalized.isEmpty) return null;

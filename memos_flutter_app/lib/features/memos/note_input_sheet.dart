@@ -28,6 +28,7 @@ import '../../state/settings/location_settings_provider.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/memos/memos_providers.dart';
+import '../../state/attachments/queued_attachment_stager_provider.dart';
 import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
@@ -396,9 +397,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     }
 
     if (!mounted || added.isEmpty) return;
-    setState(() {
-      _composer.addPendingAttachments(added);
-    });
+    await _addPendingAttachmentsStaged(added);
   }
 
   Future<void> _seedInitialDeferredShareVideos() async {
@@ -482,7 +481,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                 },
               );
           if (seed != null) {
-            final applied = _applyPrefetchedDeferredInlineImage(
+            final applied = await _applyPrefetchedDeferredInlineImage(
               request: request,
               seed: seed,
             );
@@ -524,10 +523,10 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     }
   }
 
-  bool _applyPrefetchedDeferredInlineImage({
+  Future<bool> _applyPrefetchedDeferredInlineImage({
     required ShareDeferredInlineImageAttachmentRequest request,
     required ShareAttachmentSeed seed,
-  }) {
+  }) async {
     if (!mounted) return false;
     if (!contentContainsShareInlineImageUrl(
       _controller.text,
@@ -539,7 +538,20 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       return false;
     }
 
-    final localUrl = shareInlineLocalUrlFromPath(seed.filePath);
+    final stagedAttachment = await _stagePendingAttachment(
+      _PendingAttachment(
+        uid: seed.uid,
+        filePath: seed.filePath,
+        filename: seed.filename,
+        mimeType: seed.mimeType,
+        size: seed.size,
+        skipCompression: seed.skipCompression,
+        shareInlineImage: true,
+        fromThirdPartyShare: true,
+        sourceUrl: request.sourceUrl,
+      ),
+    );
+    final localUrl = shareInlineLocalUrlFromPath(stagedAttachment.filePath);
     if (localUrl.isEmpty) {
       setState(() {
         _removeDeferredInlineImageRequest(request);
@@ -561,19 +573,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
 
     setState(() {
       _thirdPartyShareInlineSourceByLocalUrl[localUrl] = request.sourceUrl;
-      _composer.addPendingAttachments([
-        _PendingAttachment(
-          uid: seed.uid,
-          filePath: seed.filePath,
-          filename: seed.filename,
-          mimeType: seed.mimeType,
-          size: seed.size,
-          skipCompression: seed.skipCompression,
-          shareInlineImage: true,
-          fromThirdPartyShare: true,
-          sourceUrl: request.sourceUrl,
-        ),
-      ]);
+      _composer.addPendingAttachments([stagedAttachment]);
       final caret = _controller.selection.extentOffset
           .clamp(0, nextText.length)
           .toInt();
@@ -713,18 +713,19 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
 
       final filename = resolvedPath.split(Platform.pathSeparator).last;
       final mimeType = _guessMimeType(filename);
+      final stagedAttachment = await _stagePendingAttachment(
+        _PendingAttachment(
+          uid: generateUid(),
+          filePath: resolvedPath,
+          filename: filename,
+          mimeType: mimeType,
+          size: resolvedSize,
+        ),
+      );
       setState(() {
         completionTask.phase = _DeferredShareVideoPhase.completed;
         completionTask.progress = 1;
-        _composer.addPendingAttachments([
-          _PendingAttachment(
-            uid: generateUid(),
-            filePath: resolvedPath,
-            filename: filename,
-            mimeType: mimeType,
-            size: resolvedSize,
-          ),
-        ]);
+        _composer.addPendingAttachments([stagedAttachment]);
         completionTask.phase = _DeferredShareVideoPhase.removed;
       });
     } catch (_) {
@@ -823,6 +824,47 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   String _formatFileSize(int bytes) {
     final mb = bytes / (1024 * 1024);
     return '${mb.toStringAsFixed(1)} MB';
+  }
+
+  Future<_PendingAttachment> _stagePendingAttachment(
+    _PendingAttachment attachment,
+  ) async {
+    final staged = await ref
+        .read(queuedAttachmentStagerProvider)
+        .stageDraftAttachment(
+          uid: attachment.uid,
+          filePath: attachment.filePath,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          scopeKey: 'note_input_draft',
+        );
+    return attachment.copyWith(
+      filePath: staged.filePath,
+      filename: staged.filename,
+      mimeType: staged.mimeType,
+      size: staged.size,
+    );
+  }
+
+  Future<List<_PendingAttachment>> _stagePendingAttachments(
+    Iterable<_PendingAttachment> attachments,
+  ) async {
+    final staged = <_PendingAttachment>[];
+    for (final attachment in attachments) {
+      staged.add(await _stagePendingAttachment(attachment));
+    }
+    return staged;
+  }
+
+  Future<void> _addPendingAttachmentsStaged(
+    Iterable<_PendingAttachment> attachments,
+  ) async {
+    final staged = await _stagePendingAttachments(attachments);
+    if (!mounted || staged.isEmpty) return;
+    setState(() {
+      _composer.addPendingAttachments(staged);
+    });
   }
 
   void _scheduleDraftSave() {
@@ -1550,22 +1592,20 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         return;
       }
 
-      setState(() {
-        _composer.addPendingAttachments(
-          result.attachments
-              .map(
-                (attachment) => _PendingAttachment(
-                  uid: generateUid(),
-                  filePath: attachment.filePath,
-                  filename: attachment.filename,
-                  mimeType: attachment.mimeType,
-                  size: attachment.size,
-                  skipCompression: attachment.skipCompression,
-                ),
-              )
-              .toList(growable: false),
-        );
-      });
+      await _addPendingAttachmentsStaged(
+        result.attachments
+            .map(
+              (attachment) => _PendingAttachment(
+                uid: generateUid(),
+                filePath: attachment.filePath,
+                filename: attachment.filename,
+                mimeType: attachment.mimeType,
+                size: attachment.size,
+                skipCompression: attachment.skipCompression,
+              ),
+            )
+            .toList(growable: false),
+      );
       final skipped = [
         if (result.skippedCount > 0)
           context.t.strings.legacy.msg_unavailable_file_count(
@@ -1669,9 +1709,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         return;
       }
 
-      setState(() {
-        _composer.addPendingAttachments(added);
-      });
+      await _addPendingAttachmentsStaged(added);
       final skipped = [
         if (missingPathCount > 0)
           context.t.strings.legacy.msg_unavailable_file_count(
@@ -1697,7 +1735,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     }
   }
 
-  void _addVoiceAttachment(VoiceRecordResult result) {
+  Future<void> _addVoiceAttachment(VoiceRecordResult result) async {
     final messenger = ScaffoldMessenger.of(context);
     final path = result.filePath.trim();
     if (path.isEmpty) {
@@ -1728,17 +1766,15 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         : path.split(Platform.pathSeparator).last;
     final mimeType = _guessMimeType(filename);
     if (!mounted) return;
-    setState(() {
-      _composer.addPendingAttachments([
-        _PendingAttachment(
-          uid: generateUid(),
-          filePath: path,
-          filename: filename,
-          mimeType: mimeType,
-          size: size,
-        ),
-      ]);
-    });
+    await _addPendingAttachmentsStaged([
+      _PendingAttachment(
+        uid: generateUid(),
+        filePath: path,
+        filename: filename,
+        mimeType: mimeType,
+        size: size,
+      ),
+    ]);
     showTopToast(context, context.t.strings.legacy.msg_added_voice_attachment);
   }
 
@@ -1778,17 +1814,19 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       final filename = path.split(Platform.pathSeparator).last;
       final mimeType = _guessMimeType(filename);
       if (!mounted) return;
+      final stagedAttachments = await _stagePendingAttachments([
+        _PendingAttachment(
+          uid: generateUid(),
+          filePath: path,
+          filename: filename,
+          mimeType: mimeType,
+          size: size,
+        ),
+      ]);
+      if (!mounted || stagedAttachments.isEmpty) return;
       setState(() {
-        _composer.addPendingAttachments([
-          _PendingAttachment(
-            uid: generateUid(),
-            filePath: path,
-            filename: filename,
-            mimeType: mimeType,
-            size: size,
-          ),
-        ]);
-        _pickedImages.add(photo);
+        _composer.addPendingAttachments(stagedAttachments);
+        _pickedImages.add(XFile(stagedAttachments.first.filePath));
       });
       showTopToast(
         context,
@@ -1856,6 +1894,11 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       _composer.removePendingAttachment(uid);
       _pickedImages.removeWhere((x) => x.path == removed.filePath);
     });
+    unawaited(
+      ref
+          .read(queuedAttachmentStagerProvider)
+          .deleteManagedFile(removed.filePath),
+    );
   }
 
   bool _isImageMimeType(String mimeType) {
@@ -1933,10 +1976,25 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     final index = _pendingAttachments.indexWhere((a) => a.uid == uid);
     if (index < 0) return;
     final existing = _pendingAttachments[index];
+    final stagedReplacement = await _stagePendingAttachment(
+      _PendingAttachment(
+        uid: uid,
+        filePath: result.filePath,
+        filename: result.filename,
+        mimeType: result.mimeType,
+        size: result.size,
+        skipCompression: existing.skipCompression,
+        shareInlineImage: existing.shareInlineImage,
+        fromThirdPartyShare: existing.fromThirdPartyShare,
+        sourceUrl: existing.sourceUrl,
+      ),
+    );
     setState(() {
       if (existing.shareInlineImage) {
         final oldLocalUrl = shareInlineLocalUrlFromPath(existing.filePath);
-        final newLocalUrl = shareInlineLocalUrlFromPath(result.filePath);
+        final newLocalUrl = shareInlineLocalUrlFromPath(
+          stagedReplacement.filePath,
+        );
         final sourceUrl = _thirdPartyShareInlineSourceByLocalUrl.remove(
           oldLocalUrl,
         );
@@ -1959,21 +2017,15 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
           );
         }
       }
-      _composer.replacePendingAttachment(
-        uid,
-        _PendingAttachment(
-          uid: uid,
-          filePath: result.filePath,
-          filename: result.filename,
-          mimeType: result.mimeType,
-          size: result.size,
-          skipCompression: existing.skipCompression,
-          shareInlineImage: existing.shareInlineImage,
-          fromThirdPartyShare: existing.fromThirdPartyShare,
-          sourceUrl: existing.sourceUrl,
-        ),
-      );
+      _composer.replacePendingAttachment(uid, stagedReplacement);
     });
+    if (existing.filePath != stagedReplacement.filePath) {
+      unawaited(
+        ref
+            .read(queuedAttachmentStagerProvider)
+            .deleteManagedFile(existing.filePath),
+      );
+    }
   }
 
   Widget _buildAttachmentPreview(bool isDark) {
@@ -2374,7 +2426,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
         MaterialPageRoute(builder: (_) => const VoiceRecordScreen()),
       );
       if (!mounted || result == null) return;
-      _addVoiceAttachment(result);
+      await _addVoiceAttachment(result);
       return;
     }
 

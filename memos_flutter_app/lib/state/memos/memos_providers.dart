@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/attachments/attachment_preprocessor.dart';
+import '../../application/attachments/queued_attachment_stager.dart';
 import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
 import '../../core/image_bed_url.dart';

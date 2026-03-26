@@ -4,6 +4,7 @@ import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_relation.dart';
 import '../../data/models/memo_location.dart';
+import '../attachments/queued_attachment_stager_provider.dart';
 import 'create_memo_outbox_enqueue.dart';
 import 'create_memo_outbox_payload.dart';
 import '../system/database_provider.dart';
@@ -75,6 +76,7 @@ class MemoEditorController {
   }) async {
     final db = _ref.read(databaseProvider);
     final timelineService = _ref.read(memoTimelineServiceProvider);
+    final queuedAttachmentStager = _ref.read(queuedAttachmentStagerProvider);
 
     if (existing != null && hasPrimaryChanges) {
       await timelineService.captureMemoVersion(existing);
@@ -94,19 +96,22 @@ class MemoEditorController {
       }
     }
     final attachmentPayloads = existing == null
-        ? pendingAttachments
-              .map(
-                (attachment) => <String, dynamic>{
-                  'uid': attachment.uid,
-                  'memo_uid': uid,
-                  'file_path': attachment.filePath,
-                  'filename': attachment.filename,
-                  'mime_type': attachment.mimeType,
-                  'file_size': attachment.size,
-                  'skip_compression': attachment.skipCompression,
-                },
-              )
-              .toList(growable: false)
+        ? await queuedAttachmentStager.stageUploadPayloads(
+            pendingAttachments
+                .map(
+                  (attachment) => <String, dynamic>{
+                    'uid': attachment.uid,
+                    'memo_uid': uid,
+                    'file_path': attachment.filePath,
+                    'filename': attachment.filename,
+                    'mime_type': attachment.mimeType,
+                    'file_size': attachment.size,
+                    'skip_compression': attachment.skipCompression,
+                  },
+                )
+                .toList(growable: false),
+            scopeKey: uid,
+          )
         : const <Map<String, dynamic>>[];
     final localAttachments = existing == null
         ? mergePendingAttachmentPlaceholders(
@@ -165,16 +170,18 @@ class MemoEditorController {
 
     if (existing != null) {
       for (final attachment in pendingAttachments) {
+        final stagedPayload = await queuedAttachmentStager.stageUploadPayload({
+          'uid': attachment.uid,
+          'memo_uid': uid,
+          'file_path': attachment.filePath,
+          'filename': attachment.filename,
+          'mime_type': attachment.mimeType,
+          'file_size': attachment.size,
+          'skip_compression': attachment.skipCompression,
+        }, scopeKey: uid);
         await db.enqueueOutbox(
           type: 'upload_attachment',
-          payload: {
-            'uid': attachment.uid,
-            'memo_uid': uid,
-            'file_path': attachment.filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.mimeType,
-            'skip_compression': attachment.skipCompression,
-          },
+          payload: stagedPayload,
         );
       }
     }

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:saf_stream/saf_stream.dart';
 
+import '../../application/attachments/queued_attachment_stager.dart';
 import '../sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
 import '../../core/debug_ephemeral_storage.dart';
@@ -24,6 +25,7 @@ import '../../data/models/memo_location.dart';
 import '../../data/models/memo_version.dart';
 import '../../data/models/recycle_bin_item.dart';
 import 'create_memo_outbox_payload.dart';
+import '../attachments/queued_attachment_stager_provider.dart';
 import '../system/database_provider.dart';
 import '../system/session_provider.dart';
 
@@ -42,6 +44,7 @@ final memoTimelineServiceProvider = Provider<MemoTimelineService>((ref) {
             ),
           );
     },
+    queuedAttachmentStager: ref.watch(queuedAttachmentStagerProvider),
   );
 });
 
@@ -90,11 +93,14 @@ class MemoTimelineService {
     required this.db,
     required this.account,
     required this.triggerSync,
-  });
+    QueuedAttachmentStager? queuedAttachmentStager,
+  }) : _queuedAttachmentStager =
+           queuedAttachmentStager ?? QueuedAttachmentStager();
 
   final AppDatabase db;
   final Account? account;
   final Future<void> Function() triggerSync;
+  final QueuedAttachmentStager _queuedAttachmentStager;
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -224,18 +230,15 @@ class MemoTimelineService {
     }
 
     for (final attachment in restoredAttachments) {
-      final filePath = _readLocalFilePathFromAttachment(attachment);
-      await db.enqueueOutbox(
-        type: 'upload_attachment',
-        payload: {
-          'uid': attachment.uid,
-          'memo_uid': current.uid,
-          'file_path': filePath,
-          'filename': attachment.filename,
-          'mime_type': attachment.type,
-          'file_size': attachment.size,
-        },
-      );
+      final stagedPayload = await _queuedAttachmentStager.stageUploadPayload({
+        'uid': attachment.uid,
+        'memo_uid': current.uid,
+        'file_path': _readLocalFilePathFromAttachment(attachment),
+        'filename': attachment.filename,
+        'mime_type': attachment.type,
+        'file_size': attachment.size,
+      }, scopeKey: current.uid);
+      await db.enqueueOutbox(type: 'upload_attachment', payload: stagedPayload);
     }
 
     unawaited(triggerSync());
@@ -397,18 +400,22 @@ class MemoTimelineService {
 
     final hasPendingAttachments = restoredAttachments.isNotEmpty;
     if (existing == null) {
-      final attachmentPayloads = restoredAttachments
-          .map(
-            (attachment) => <String, dynamic>{
-              'uid': attachment.uid,
-              'memo_uid': memoUid,
-              'file_path': _readLocalFilePathFromAttachment(attachment),
-              'filename': attachment.filename,
-              'mime_type': attachment.type,
-              'file_size': attachment.size,
-            },
-          )
-          .toList(growable: false);
+      final attachmentPayloads = await _queuedAttachmentStager
+          .stageUploadPayloads(
+            restoredAttachments
+                .map(
+                  (attachment) => <String, dynamic>{
+                    'uid': attachment.uid,
+                    'memo_uid': memoUid,
+                    'file_path': _readLocalFilePathFromAttachment(attachment),
+                    'filename': attachment.filename,
+                    'mime_type': attachment.type,
+                    'file_size': attachment.size,
+                  },
+                )
+                .toList(growable: false),
+            scopeKey: memoUid,
+          );
       final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate;
       if (uploadBeforeCreate) {
         for (final payload in attachmentPayloads) {
@@ -465,17 +472,17 @@ class MemoTimelineService {
 
     if (existing != null) {
       for (final attachment in restoredAttachments) {
-        final filePath = _readLocalFilePathFromAttachment(attachment);
+        final stagedPayload = await _queuedAttachmentStager.stageUploadPayload({
+          'uid': attachment.uid,
+          'memo_uid': memoUid,
+          'file_path': _readLocalFilePathFromAttachment(attachment),
+          'filename': attachment.filename,
+          'mime_type': attachment.type,
+          'file_size': attachment.size,
+        }, scopeKey: memoUid);
         await db.enqueueOutbox(
           type: 'upload_attachment',
-          payload: {
-            'uid': attachment.uid,
-            'memo_uid': memoUid,
-            'file_path': filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.type,
-            'file_size': attachment.size,
-          },
+          payload: stagedPayload,
         );
       }
     }
@@ -544,18 +551,15 @@ class MemoTimelineService {
       },
     );
 
-    final filePath = _readLocalFilePathFromAttachment(restoredAttachment);
-    await db.enqueueOutbox(
-      type: 'upload_attachment',
-      payload: {
-        'uid': restoredAttachment.uid,
-        'memo_uid': memo.uid,
-        'file_path': filePath,
-        'filename': restoredAttachment.filename,
-        'mime_type': restoredAttachment.type,
-        'file_size': restoredAttachment.size,
-      },
-    );
+    final stagedPayload = await _queuedAttachmentStager.stageUploadPayload({
+      'uid': restoredAttachment.uid,
+      'memo_uid': memo.uid,
+      'file_path': _readLocalFilePathFromAttachment(restoredAttachment),
+      'filename': restoredAttachment.filename,
+      'mime_type': restoredAttachment.type,
+      'file_size': restoredAttachment.size,
+    }, scopeKey: memo.uid);
+    await db.enqueueOutbox(type: 'upload_attachment', payload: stagedPayload);
   }
 
   Future<void> _pruneMemoVersions(String memoUid) async {

@@ -9,6 +9,7 @@ import 'package:html/parser.dart' as html_parser;
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 
+import '../../application/attachments/queued_attachment_stager.dart';
 import '../../core/app_localization.dart';
 import '../../core/debug_ephemeral_storage.dart';
 import '../../core/hash.dart';
@@ -19,6 +20,7 @@ import '../../data/api/memo_api_version.dart';
 import '../../data/models/account.dart';
 import '../../data/models/app_preferences.dart';
 import '../../data/models/attachment.dart';
+import 'create_memo_outbox_enqueue.dart';
 import 'create_memo_outbox_payload.dart';
 import 'flomo_import_models.dart';
 
@@ -62,6 +64,8 @@ class _FlomoImportEngine {
   final Account? account;
   final String? importScopeKey;
   final AppLanguage language;
+  final QueuedAttachmentStager _queuedAttachmentStager =
+      QueuedAttachmentStager();
 
   static const _source = 'flomo';
 
@@ -438,6 +442,31 @@ class _FlomoImportEngine {
         );
       }
 
+      final attachmentPayloads = await _queuedAttachmentStager
+          .stageUploadPayloads(
+            attachmentQueue
+                .map(
+                  (attachment) => <String, dynamic>{
+                    'uid': attachment.uid,
+                    'memo_uid': attachment.memoUid,
+                    'file_path': attachment.filePath,
+                    'filename': attachment.filename,
+                    'mime_type': attachment.mimeType,
+                    'file_size': attachment.size,
+                  },
+                )
+                .toList(growable: false),
+            scopeKey: memoUid,
+          );
+      attachments
+        ..clear()
+        ..addAll(
+          mergePendingAttachmentPlaceholders(
+            attachments: const <Map<String, dynamic>>[],
+            pendingAttachments: attachmentPayloads,
+          ),
+        );
+
       await db.upsertMemo(
         uid: memoUid,
         content: content,
@@ -454,18 +483,6 @@ class _FlomoImportEngine {
       );
 
       final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate();
-      final attachmentPayloads = attachmentQueue
-          .map(
-            (attachment) => <String, dynamic>{
-              'uid': attachment.uid,
-              'memo_uid': attachment.memoUid,
-              'file_path': attachment.filePath,
-              'filename': attachment.filename,
-              'mime_type': attachment.mimeType,
-              'file_size': attachment.size,
-            },
-          )
-          .toList(growable: false);
       if (uploadBeforeCreate) {
         for (final payload in attachmentPayloads) {
           await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
@@ -614,6 +631,31 @@ class _FlomoImportEngine {
         );
       }
 
+      final attachmentPayloads = await _queuedAttachmentStager
+          .stageUploadPayloads(
+            attachmentQueue
+                .map(
+                  (attachment) => <String, dynamic>{
+                    'uid': attachment.uid,
+                    'memo_uid': attachment.memoUid,
+                    'file_path': attachment.filePath,
+                    'filename': attachment.filename,
+                    'mime_type': attachment.mimeType,
+                    'file_size': attachment.size,
+                  },
+                )
+                .toList(growable: false),
+            scopeKey: memoUid,
+          );
+      attachments
+        ..clear()
+        ..addAll(
+          mergePendingAttachmentPlaceholders(
+            attachments: const <Map<String, dynamic>>[],
+            pendingAttachments: attachmentPayloads,
+          ),
+        );
+
       await db.upsertMemo(
         uid: memoUid,
         content: content,
@@ -630,18 +672,6 @@ class _FlomoImportEngine {
       );
 
       final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate();
-      final attachmentPayloads = attachmentQueue
-          .map(
-            (attachment) => <String, dynamic>{
-              'uid': attachment.uid,
-              'memo_uid': attachment.memoUid,
-              'file_path': attachment.filePath,
-              'filename': attachment.filename,
-              'mime_type': attachment.mimeType,
-              'file_size': attachment.size,
-            },
-          )
-          .toList(growable: false);
       if (uploadBeforeCreate) {
         for (final payload in attachmentPayloads) {
           await db.enqueueOutbox(type: 'upload_attachment', payload: payload);

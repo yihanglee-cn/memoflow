@@ -114,6 +114,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
             imageUrl: url,
           );
         }
+        await _deleteManagedUploadSourceIfUnused(filePath);
         return false;
       }
     }
@@ -169,6 +170,9 @@ extension _RemoteSyncAttachments on RemoteSyncController {
       await _syncMemoAttachments(memoUid);
       if (shareInlineImage && !preserveLocalInlineReference) {
         await _syncCurrentLocalMemoContent(memoUid);
+      }
+      if (!preserveLocalInlineReference) {
+        await _deleteManagedUploadSourceIfUnused(filePath);
       }
       return true;
     }
@@ -237,6 +241,9 @@ extension _RemoteSyncAttachments on RemoteSyncController {
     }
     if (shareInlineImage && !preserveLocalInlineReference) {
       await _syncCurrentLocalMemoContent(memoUid);
+    }
+    if (!preserveLocalInlineReference) {
+      await _deleteManagedUploadSourceIfUnused(filePath);
     }
     return true;
   }
@@ -605,6 +612,16 @@ extension _RemoteSyncAttachments on RemoteSyncController {
   Future<bool> _isLastPendingAttachmentUpload(String memoUid) async {
     final pending = await _countPendingAttachmentUploads(memoUid);
     return pending <= 1;
+  }
+
+  Future<void> _deleteManagedUploadSourceIfUnused(String filePath) async {
+    final trimmed = filePath.trim();
+    if (trimmed.isEmpty) return;
+    final stager = QueuedAttachmentStager();
+    if (!stager.isManagedPath(trimmed)) return;
+    try {
+      await stager.deleteManagedFile(trimmed);
+    } catch (_) {}
   }
 
   Future<List<String>> _listLocalAttachmentNames(String memoUid) async {

@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memos_flutter_app/application/attachments/queued_attachment_stager.dart';
 import 'package:memos_flutter_app/data/api/memo_api_facade.dart';
 import 'package:memos_flutter_app/data/api/memo_api_version.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
@@ -24,6 +26,17 @@ void main() {
   tearDownAll(() async {
     await support.dispose();
   });
+
+  Future<File> createAttachmentFile(String prefix) async {
+    final dir = await support.createTempDir(prefix);
+    final file = File('${dir.path}${Platform.pathSeparator}sample.png');
+    await file.writeAsBytes(const <int>[137, 80, 78, 71, 1, 2, 3, 4]);
+    return file;
+  }
+
+  bool isManagedPath(String path) {
+    return path.contains(QueuedAttachmentStager.managedRootDirName);
+  }
 
   test('buildCreateMemoOutboxPayload preserves local create time', () {
     final payload = buildCreateMemoOutboxPayload(
@@ -104,7 +117,6 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
-
       await controller.createMemo(
         uid: 'memo-1',
         content: 'local-content',
@@ -147,6 +159,9 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_skip_compression',
+      );
 
       await controller.createMemo(
         uid: 'memo-1',
@@ -158,13 +173,13 @@ void main() {
         location: null,
         hasAttachments: true,
         relations: const <Map<String, dynamic>>[],
-        pendingAttachments: const [
+        pendingAttachments: [
           NoteInputPendingAttachment(
             uid: 'att-1',
-            filePath: '/tmp/sample.png',
+            filePath: attachmentFile.path,
             filename: 'sample.png',
             mimeType: 'image/png',
-            size: 42,
+            size: await attachmentFile.length(),
             skipCompression: true,
           ),
         ],
@@ -179,7 +194,9 @@ void main() {
       expect(payload['uid'], 'att-1');
       expect(payload['memo_uid'], 'memo-1');
       expect(payload['skip_compression'], isTrue);
-      expect(payload['file_size'], 42);
+      expect(payload['file_path'], isA<String>());
+      expect(isManagedPath(payload['file_path'] as String), isTrue);
+      expect(payload['file_size'], await attachmentFile.length());
     },
   );
 
@@ -207,6 +224,9 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_uploads_before_create_v023',
+      );
 
       await controller.createMemo(
         uid: 'memo-1',
@@ -218,13 +238,13 @@ void main() {
         location: null,
         hasAttachments: true,
         relations: const <Map<String, dynamic>>[],
-        pendingAttachments: const [
+        pendingAttachments: [
           NoteInputPendingAttachment(
             uid: 'att-1',
-            filePath: '/tmp/sample.png',
+            filePath: attachmentFile.path,
             filename: 'sample.png',
             mimeType: 'image/png',
-            size: 42,
+            size: await attachmentFile.length(),
           ),
         ],
       );
@@ -261,6 +281,9 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_create_before_upload_v022',
+      );
 
       await controller.createMemo(
         uid: 'memo-1',
@@ -272,13 +295,13 @@ void main() {
         location: null,
         hasAttachments: true,
         relations: const <Map<String, dynamic>>[],
-        pendingAttachments: const [
+        pendingAttachments: [
           NoteInputPendingAttachment(
             uid: 'att-1',
-            filePath: '/tmp/sample.png',
+            filePath: attachmentFile.path,
             filename: 'sample.png',
             mimeType: 'image/png',
-            size: 42,
+            size: await attachmentFile.length(),
           ),
         ],
       );
@@ -307,6 +330,9 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_share_inline_payload',
+      );
 
       await controller.createMemo(
         uid: 'memo-1',
@@ -318,13 +344,13 @@ void main() {
         location: null,
         hasAttachments: true,
         relations: const <Map<String, dynamic>>[],
-        pendingAttachments: const [
+        pendingAttachments: [
           NoteInputPendingAttachment(
             uid: 'att-1',
-            filePath: '/tmp/sample.png',
+            filePath: attachmentFile.path,
             filename: 'sample.png',
             mimeType: 'image/png',
-            size: 42,
+            size: await attachmentFile.length(),
             shareInlineImage: true,
             fromThirdPartyShare: true,
           ),
@@ -337,9 +363,10 @@ void main() {
               as Map<String, dynamic>;
       expect(payload['share_inline_image'], isTrue);
       expect(payload['from_third_party_share'], isTrue);
+      expect(isManagedPath(payload['file_path'] as String), isTrue);
       expect(
         payload['share_inline_local_url'],
-        Uri.file('/tmp/sample.png').toString(),
+        Uri.file(payload['file_path'] as String).toString(),
       );
     },
   );
@@ -360,10 +387,14 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_inline_image_source_mapping',
+      );
+      final localUrl = Uri.file(attachmentFile.path).toString();
 
       await controller.createMemo(
         uid: 'memo-1',
-        content: '<img src="file:///tmp/sample.png">',
+        content: "<img src=\"$localUrl\">",
         visibility: 'PRIVATE',
         now: now,
         tags: const <String>[],
@@ -371,13 +402,13 @@ void main() {
         location: null,
         hasAttachments: true,
         relations: const <Map<String, dynamic>>[],
-        pendingAttachments: const [
+        pendingAttachments: [
           NoteInputPendingAttachment(
             uid: 'att-1',
-            filePath: '/tmp/sample.png',
+            filePath: attachmentFile.path,
             filename: 'sample.png',
             mimeType: 'image/png',
-            size: 42,
+            size: await attachmentFile.length(),
             shareInlineImage: true,
             fromThirdPartyShare: true,
             sourceUrl: 'https://example.com/sample.png',
@@ -385,10 +416,13 @@ void main() {
         ],
       );
 
-      expect(await db.listMemoInlineImageSources('memo-1'), {
-        Uri.file('/tmp/sample.png').toString():
-            'https://example.com/sample.png',
-      });
+      final sources = await db.listMemoInlineImageSources('memo-1');
+      expect(sources, hasLength(1));
+      expect(sources.values.single, 'https://example.com/sample.png');
+      expect(
+        isManagedPath(Uri.parse(sources.keys.single).toFilePath()),
+        isTrue,
+      );
     },
   );
 
@@ -407,6 +441,9 @@ void main() {
         await db.close();
         await deleteTestDatabase(dbName);
       });
+      final attachmentFile = await createAttachmentFile(
+        'note_input_append_inline_image_source',
+      );
 
       await db.upsertMemo(
         uid: 'memo-1',
@@ -427,22 +464,25 @@ void main() {
       await controller.appendDeferredThirdPartyShareInlineImage(
         memoUid: 'memo-1',
         sourceUrl: 'https://example.com/sample.png',
-        attachment: const NoteInputPendingAttachment(
+        attachment: NoteInputPendingAttachment(
           uid: 'att-1',
-          filePath: '/tmp/sample.png',
+          filePath: attachmentFile.path,
           filename: 'sample.png',
           mimeType: 'image/png',
-          size: 42,
+          size: await attachmentFile.length(),
           shareInlineImage: true,
           fromThirdPartyShare: true,
           sourceUrl: 'https://example.com/sample.png',
         ),
       );
 
-      expect(await db.listMemoInlineImageSources('memo-1'), {
-        Uri.file('/tmp/sample.png').toString():
-            'https://example.com/sample.png',
-      });
+      final sources = await db.listMemoInlineImageSources('memo-1');
+      expect(sources, hasLength(1));
+      expect(sources.values.single, 'https://example.com/sample.png');
+      expect(
+        isManagedPath(Uri.parse(sources.keys.single).toFilePath()),
+        isTrue,
+      );
     },
   );
 }

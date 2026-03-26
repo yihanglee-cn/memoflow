@@ -6,6 +6,7 @@ import '../../data/models/local_memo.dart';
 import '../../data/models/memo.dart';
 import '../../data/models/reaction.dart';
 import '../../data/models/user.dart';
+import '../attachments/queued_attachment_stager_provider.dart';
 import '../system/database_provider.dart';
 import 'memo_delete_service.dart';
 import 'memo_timeline_provider.dart';
@@ -115,6 +116,34 @@ class MemoDetailController {
   }) async {
     final db = _ref.read(databaseProvider);
     final timelineService = _ref.read(memoTimelineServiceProvider);
+    final queuedAttachmentStager = _ref.read(queuedAttachmentStagerProvider);
+    final stagedPayload = await queuedAttachmentStager.stageUploadPayload({
+      'uid': newUid,
+      'memo_uid': memo.uid,
+      'file_path': filePath,
+      'filename': filename,
+      'mime_type': mimeType,
+      'file_size': size,
+    }, scopeKey: memo.uid);
+    final stagedFilePath = (stagedPayload['file_path'] as String? ?? '').trim();
+    final stagedFilename = (stagedPayload['filename'] as String? ?? '').trim();
+    final stagedMimeType =
+        (stagedPayload['mime_type'] as String? ?? 'application/octet-stream')
+            .trim();
+    final stagedSize = switch (stagedPayload['file_size']) {
+      int value => value,
+      num value => value.toInt(),
+      String value => int.tryParse(value.trim()) ?? size,
+      _ => size,
+    };
+    final stagedAttachments = <Attachment>[...updatedAttachments];
+    stagedAttachments[index] = Attachment(
+      name: 'attachments/$newUid',
+      filename: stagedFilename.isEmpty ? filename : stagedFilename,
+      type: stagedMimeType,
+      size: stagedSize,
+      externalLink: Uri.file(stagedFilePath).toString(),
+    );
 
     await timelineService.captureMemoVersion(memo);
     await timelineService.moveAttachmentToRecycleBin(
@@ -131,7 +160,7 @@ class MemoDetailController {
       createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: memo.tags,
-      attachments: updatedAttachments
+      attachments: stagedAttachments
           .map((a) => a.toJson())
           .toList(growable: false),
       location: memo.location,
@@ -151,17 +180,7 @@ class MemoDetailController {
         'has_pending_attachments': true,
       },
     );
-    await db.enqueueOutbox(
-      type: 'upload_attachment',
-      payload: {
-        'uid': newUid,
-        'memo_uid': memo.uid,
-        'file_path': filePath,
-        'filename': filename,
-        'mime_type': mimeType,
-        'file_size': size,
-      },
-    );
+    await db.enqueueOutbox(type: 'upload_attachment', payload: stagedPayload);
     final oldName = oldAttachment.name.isNotEmpty
         ? oldAttachment.name
         : oldAttachment.uid;

@@ -6,15 +6,21 @@ import '../sync/sync_request.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../data/models/memo_location.dart';
+import '../attachments/queued_attachment_stager.dart';
 import '../../state/memos/create_memo_outbox_enqueue.dart';
 import '../../state/memos/create_memo_outbox_payload.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 
 class QuickInputService {
-  QuickInputService({required AppBootstrapAdapter bootstrapAdapter})
-    : _bootstrapAdapter = bootstrapAdapter;
+  QuickInputService({
+    required AppBootstrapAdapter bootstrapAdapter,
+    QueuedAttachmentStager? queuedAttachmentStager,
+  }) : _bootstrapAdapter = bootstrapAdapter,
+       _queuedAttachmentStager =
+           queuedAttachmentStager ?? QueuedAttachmentStager();
 
   final AppBootstrapAdapter _bootstrapAdapter;
+  final QueuedAttachmentStager _queuedAttachmentStager;
 
   List<Map<String, dynamic>> parsePayloadMapList(dynamic raw) {
     if (raw is! List) return const <Map<String, dynamic>>[];
@@ -96,9 +102,11 @@ class QuickInputService {
         'file_size': fileSize,
       });
     }
+    final stagedUploadPayloads = await _queuedAttachmentStager
+        .stageUploadPayloads(uploadPayloads, scopeKey: uid);
     final attachments = mergePendingAttachmentPlaceholders(
       attachments: const <Map<String, dynamic>>[],
-      pendingAttachments: uploadPayloads,
+      pendingAttachments: stagedUploadPayloads,
     );
     final normalizedRelations = relations
         .where((relation) => relation.isNotEmpty)
@@ -133,7 +141,7 @@ class QuickInputService {
         location: location,
         relations: normalizedRelations,
       ),
-      attachmentPayloads: uploadPayloads,
+      attachmentPayloads: stagedUploadPayloads,
     );
 
     unawaited(

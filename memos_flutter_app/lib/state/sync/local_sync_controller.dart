@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saf_stream/saf_stream.dart';
 
 import '../../application/attachments/attachment_preprocessor.dart';
+import '../../application/attachments/queued_attachment_stager.dart';
 import '../../application/sync/local_library_scan_service.dart';
 import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
@@ -731,8 +732,18 @@ class LocalSyncController extends SyncControllerBase {
         'delete_attachment' => payload['memo_uid'] as String?,
         _ => null,
       };
+      final discardedMissingSourceUpload =
+          type == 'upload_attachment' &&
+          await _discardMissingSourceUploadTaskIfNeeded(
+            outboxId: id,
+            payload: payload,
+            error: error,
+            elapsedMs: elapsedMs,
+          );
       final transient = _isTransientOutboxError(error);
-      if (transient) {
+      if (discardedMissingSourceUpload) {
+        blockedReason = null;
+      } else if (transient) {
         final delay = _retryDelayForAttempt(attemptsSoFar);
         final retryAt =
             DateTime.now().toUtc().millisecondsSinceEpoch +
@@ -770,19 +781,21 @@ class LocalSyncController extends SyncControllerBase {
         await db.markOutboxError(id, error: memoError);
         blockedReason = 'error';
       }
-      LogManager.instance.warn(
-        'LocalSync outbox: task_failed',
-        error: error,
-        context: <String, Object?>{
-          'id': id,
-          'type': type,
-          if (failedMemoUid != null && failedMemoUid.isNotEmpty)
-            'memoUid': failedMemoUid,
-          'transient': transient,
-          'elapsedMs': elapsedMs,
-        },
-      );
-      shouldStop = true;
+      if (!discardedMissingSourceUpload) {
+        LogManager.instance.warn(
+          'LocalSync outbox: task_failed',
+          error: error,
+          context: <String, Object?>{
+            'id': id,
+            'type': type,
+            if (failedMemoUid != null && failedMemoUid.isNotEmpty)
+              'memoUid': failedMemoUid,
+            'transient': transient,
+            'elapsedMs': elapsedMs,
+          },
+        );
+      }
+      shouldStop = !discardedMissingSourceUpload;
     } finally {
       if (!shouldStop && isUploadTask) {
         await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
@@ -812,6 +825,68 @@ class LocalSyncController extends SyncControllerBase {
       currentType: currentType,
     );
     syncQueueProgressTracker.updateCompletedTasks(counters.completedCount);
+  }
+
+  Future<bool> _discardMissingSourceUploadTaskIfNeeded({
+    required int outboxId,
+    required Map<String, dynamic> payload,
+    required Object error,
+    required int elapsedMs,
+  }) async {
+    if (!_isMissingSourceUploadError(error)) {
+      return false;
+    }
+
+    final memoUid = (payload['memo_uid'] as String? ?? '').trim();
+    final attachmentUid = (payload['uid'] as String? ?? '').trim();
+    final filePath = (payload['file_path'] as String? ?? '').trim();
+
+    await db.deleteOutbox(outboxId);
+    if (memoUid.isNotEmpty && attachmentUid.isNotEmpty) {
+      await db.removePendingAttachmentPlaceholder(
+        memoUid: memoUid,
+        attachmentUid: attachmentUid,
+      );
+    }
+    await _deleteManagedUploadSourceIfUnused(filePath);
+    if (memoUid.isNotEmpty) {
+      final hasMorePending = await db.hasPendingOutboxTaskForMemo(memoUid);
+      await db.updateMemoSyncState(
+        memoUid,
+        syncState: hasMorePending ? 1 : 0,
+        lastError: null,
+      );
+    }
+    LogManager.instance.warn(
+      'LocalSync outbox: discard_missing_source_upload',
+      error: error,
+      context: <String, Object?>{
+        'id': outboxId,
+        if (memoUid.isNotEmpty) 'memoUid': memoUid,
+        if (attachmentUid.isNotEmpty) 'attachmentUid': attachmentUid,
+        if (filePath.isNotEmpty) 'filePath': filePath,
+        'elapsedMs': elapsedMs,
+      },
+    );
+    return true;
+  }
+
+  bool _isMissingSourceUploadError(Object error) {
+    if (error is FileSystemException) {
+      return true;
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('file not found');
+  }
+
+  Future<void> _deleteManagedUploadSourceIfUnused(String filePath) async {
+    final trimmed = filePath.trim();
+    if (trimmed.isEmpty) return;
+    final stager = QueuedAttachmentStager();
+    if (!stager.isManagedPath(trimmed)) return;
+    try {
+      await stager.deleteManagedFile(trimmed);
+    } catch (_) {}
   }
 
   bool _isAttachmentOutboxType(String type) {
@@ -1033,6 +1108,7 @@ class LocalSyncController extends SyncControllerBase {
       hash: processed.hash,
     );
     await _upsertAttachment(memoUid, attachment);
+    await _deleteManagedUploadSourceIfUnused(filePath);
 
     return await _isLastPendingAttachmentUpload(memoUid, currentOutboxId);
   }

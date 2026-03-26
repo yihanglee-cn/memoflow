@@ -253,6 +253,144 @@ void main() {
   );
 
   test(
+    'RemoteSyncController discards missing upload_attachment and continues later queue items',
+    () async {
+      final server = await _RemoteSyncAttachmentRegressionServer.start();
+      final dbName = uniqueDbName('remote_sync_discards_missing_upload');
+      final db = AppDatabase(dbName: dbName);
+      final api = MemoApiFacade.authenticated(
+        baseUrl: server.baseUrl,
+        personalAccessToken: 'test-pat',
+        version: MemoApiVersion.v023,
+      );
+      final missingDir = await support.createTempDir(
+        'remote_sync_missing_source',
+      );
+      final missingPath =
+          '${missingDir.path}${Platform.pathSeparator}missing.png';
+
+      addTearDown(() async {
+        await db.close();
+        await server.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-bad',
+        content: 'memo with missing upload',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1773424800,
+        updateTimeSec: 1773424800,
+        tags: const <String>[],
+        attachments: const [
+          {
+            'name': 'attachments/att-missing',
+            'filename': 'missing.png',
+            'type': 'image/png',
+            'size': 42,
+            'externalLink': 'file:///missing.png',
+          },
+        ],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+      await db.enqueueOutbox(
+        type: 'upload_attachment',
+        payload: {
+          'uid': 'att-missing',
+          'memo_uid': 'memo-bad',
+          'file_path': missingPath,
+          'filename': 'missing.png',
+          'mime_type': 'image/png',
+          'file_size': 42,
+        },
+      );
+
+      await db.upsertMemo(
+        uid: 'memo-plain',
+        content: 'plain memo',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: 1773424800,
+        updateTimeSec: 1773424800,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        relationCount: 0,
+        syncState: 1,
+        lastError: null,
+      );
+      await db.enqueueOutbox(
+        type: 'create_memo',
+        payload: {
+          'uid': 'memo-plain',
+          'content': 'plain memo',
+          'visibility': 'PRIVATE',
+          'pinned': false,
+          'has_attachments': false,
+          'create_time': 1773424800,
+          'display_time': 1773424800,
+        },
+      );
+
+      final controller = RemoteSyncController(
+        db: db,
+        api: api,
+        currentUserName: 'users/1',
+        syncStatusTracker: SyncStatusTracker(),
+        syncQueueProgressTracker: SyncQueueProgressTracker(),
+        imageBedRepository: _FakeImageBedSettingsRepository(),
+        attachmentPreprocessor: _PassThroughAttachmentPreprocessor(),
+      );
+      addTearDown(controller.dispose);
+
+      final result = await HttpOverrides.runWithHttpOverrides(
+        () => controller.syncNow(),
+        _PassthroughHttpOverrides(),
+      );
+
+      expect(result, isA<MemoSyncSuccess>());
+      expect(await db.countOutboxPending(), 0);
+
+      final badRow = await db.getMemoByUid('memo-bad');
+      final plainRow = await db.getMemoByUid('memo-plain');
+      expect(badRow?['sync_state'], 0);
+      expect(plainRow?['sync_state'], 0);
+      expect(jsonDecode(badRow?['attachments_json'] as String), isEmpty);
+
+      expect(
+        server.requests.where(
+          (request) =>
+              request.method == 'POST' && request.path == '/api/v1/resources',
+        ),
+        isEmpty,
+      );
+      expect(
+        server.requests.where(
+          (request) =>
+              request.method == 'POST' && request.path == '/api/v1/memos',
+        ),
+        hasLength(1),
+      );
+      expect(
+        server.requests
+            .where(
+              (request) =>
+                  request.method == 'POST' && request.path == '/api/v1/memos',
+            )
+            .single
+            .queryParameters['memoId'],
+        'memo-plain',
+      );
+    },
+  );
+
+  test(
     'RemoteSyncController uploads resources before create_memo and embeds them for 0.23',
     () async {
       final server = await _RemoteSyncAttachmentRegressionServer.start();

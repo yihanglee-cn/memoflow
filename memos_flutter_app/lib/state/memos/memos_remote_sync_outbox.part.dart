@@ -248,84 +248,94 @@ extension _RemoteSyncOutbox on RemoteSyncController {
       } catch (e) {
         failedCount++;
         final elapsedMs = DateTime.now().difference(taskStartAt).inMilliseconds;
-        final transientNetworkError =
-            e is DioException && _isTransientOutboxNetworkError(e);
-        final memoError = e is DioException
-            ? _summarizeHttpError(e)
-            : SyncError(
+        final discardedMissingSourceUpload =
+            type == 'upload_attachment' &&
+            await _discardMissingSourceUploadTaskIfNeeded(
+              outboxId: id,
+              payload: payload,
+              error: e,
+              elapsedMs: elapsedMs,
+            );
+        if (!discardedMissingSourceUpload) {
+          final transientNetworkError =
+              e is DioException && _isTransientOutboxNetworkError(e);
+          final memoError = e is DioException
+              ? _summarizeHttpError(e)
+              : SyncError(
+                  code: SyncErrorCode.unknown,
+                  retryable: false,
+                  message: e.toString(),
+                );
+          final outboxError = e is DioException
+              ? _detailHttpError(e)
+              : e.toString();
+          if (transientNetworkError) {
+            final delay = _retryDelayForOutboxAttempt(attemptsSoFar);
+            final retryAt =
+                DateTime.now().toUtc().millisecondsSinceEpoch +
+                delay.inMilliseconds;
+            await db.markOutboxRetryScheduled(
+              id,
+              error: outboxError,
+              retryAtMs: retryAt,
+            );
+            blockedReason = 'retry_scheduled';
+            if (memoUid != null && memoUid.isNotEmpty) {
+              await db.updateMemoSyncState(memoUid, syncState: 1);
+            }
+          } else {
+            await db.markOutboxError(id, error: outboxError);
+            final failedMemoUid = switch (type) {
+              'create_memo' => payload['uid'] as String?,
+              'upload_attachment' => payload['memo_uid'] as String?,
+              'delete_attachment' => payload['memo_uid'] as String?,
+              _ => null,
+            };
+            if (failedMemoUid != null && failedMemoUid.isNotEmpty) {
+              final memoErrorMessage = memoError.message?.trim();
+              final syncError = SyncError(
                 code: SyncErrorCode.unknown,
                 retryable: false,
-                message: e.toString(),
+                message: memoErrorMessage != null && memoErrorMessage.isNotEmpty
+                    ? memoErrorMessage
+                    : memoError.toString(),
+                presentationKey: 'legacy.msg_sync_failed',
+                presentationParams: {'type': type},
+                cause: memoError,
               );
-        final outboxError = e is DioException
-            ? _detailHttpError(e)
-            : e.toString();
-        if (transientNetworkError) {
-          final delay = _retryDelayForOutboxAttempt(attemptsSoFar);
-          final retryAt =
-              DateTime.now().toUtc().millisecondsSinceEpoch +
-              delay.inMilliseconds;
-          await db.markOutboxRetryScheduled(
-            id,
-            error: outboxError,
-            retryAtMs: retryAt,
-          );
-          blockedReason = 'retry_scheduled';
-          if (memoUid != null && memoUid.isNotEmpty) {
-            await db.updateMemoSyncState(memoUid, syncState: 1);
+              await db.updateMemoSyncState(
+                failedMemoUid,
+                syncState: 2,
+                lastError: encodeSyncError(syncError),
+              );
+            }
+            blockedReason = 'error';
           }
-        } else {
-          await db.markOutboxError(id, error: outboxError);
-          final failedMemoUid = switch (type) {
-            'create_memo' => payload['uid'] as String?,
-            'upload_attachment' => payload['memo_uid'] as String?,
-            'delete_attachment' => payload['memo_uid'] as String?,
-            _ => null,
-          };
-          if (failedMemoUid != null && failedMemoUid.isNotEmpty) {
-            final memoErrorMessage = memoError.message?.trim();
-            final syncError = SyncError(
-              code: SyncErrorCode.unknown,
-              retryable: false,
-              message: memoErrorMessage != null && memoErrorMessage.isNotEmpty
-                  ? memoErrorMessage
-                  : memoError.toString(),
-              presentationKey: 'legacy.msg_sync_failed',
-              presentationParams: {'type': type},
-              cause: memoError,
-            );
-            await db.updateMemoSyncState(
-              failedMemoUid,
-              syncState: 2,
-              lastError: encodeSyncError(syncError),
+          if (type == 'delete_memo' && memoUid != null && memoUid.isNotEmpty) {
+            final currentState = await db.getMemoDeleteTombstoneState(memoUid);
+            await db.upsertMemoDeleteTombstone(
+              memoUid: memoUid,
+              state:
+                  currentState ??
+                  AppDatabase.memoDeleteTombstoneStatePendingRemoteDelete,
+              lastError: outboxError,
             );
           }
-          blockedReason = 'error';
-        }
-        if (type == 'delete_memo' && memoUid != null && memoUid.isNotEmpty) {
-          final currentState = await db.getMemoDeleteTombstoneState(memoUid);
-          await db.upsertMemoDeleteTombstone(
-            memoUid: memoUid,
-            state:
-                currentState ??
-                AppDatabase.memoDeleteTombstoneStatePendingRemoteDelete,
-            lastError: outboxError,
+          LogManager.instance.warn(
+            'RemoteSync outbox: task_failed',
+            error: e,
+            context: <String, Object?>{
+              'id': id,
+              'type': type,
+              if (memoUid != null && memoUid.isNotEmpty) 'memoUid': memoUid,
+              'transientNetworkError': transientNetworkError,
+              'elapsedMs': elapsedMs,
+            },
           );
+          // Keep ordering: stop processing further ops until this one succeeds.
+          blockedType = type;
+          shouldStop = true;
         }
-        LogManager.instance.warn(
-          'RemoteSync outbox: task_failed',
-          error: e,
-          context: <String, Object?>{
-            'id': id,
-            'type': type,
-            if (memoUid != null && memoUid.isNotEmpty) 'memoUid': memoUid,
-            'transientNetworkError': transientNetworkError,
-            'elapsedMs': elapsedMs,
-          },
-        );
-        // Keep ordering: stop processing further ops until this one succeeds.
-        blockedType = type;
-        shouldStop = true;
       } finally {
         if (!shouldStop && isUploadTask) {
           await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
@@ -360,6 +370,65 @@ extension _RemoteSyncOutbox on RemoteSyncController {
       },
     );
     return true;
+  }
+
+  Future<bool> _discardMissingSourceUploadTaskIfNeeded({
+    required int outboxId,
+    required Map<String, dynamic> payload,
+    required Object error,
+    required int elapsedMs,
+  }) async {
+    if (!_isMissingSourceUploadError(error)) {
+      return false;
+    }
+
+    final memoUid = (payload['memo_uid'] as String? ?? '').trim();
+    final attachmentUid = (payload['uid'] as String? ?? '').trim();
+    final filePath = (payload['file_path'] as String? ?? '').trim();
+
+    await db.deleteOutbox(outboxId);
+    if (memoUid.isNotEmpty && attachmentUid.isNotEmpty) {
+      await db.removePendingAttachmentPlaceholder(
+        memoUid: memoUid,
+        attachmentUid: attachmentUid,
+      );
+    }
+    if (filePath.isNotEmpty) {
+      final stager = QueuedAttachmentStager();
+      if (stager.isManagedPath(filePath)) {
+        try {
+          await stager.deleteManagedFile(filePath);
+        } catch (_) {}
+      }
+    }
+    if (memoUid.isNotEmpty) {
+      final hasMorePending = await db.hasPendingOutboxTaskForMemo(memoUid);
+      await db.updateMemoSyncState(
+        memoUid,
+        syncState: hasMorePending ? 1 : 0,
+        lastError: null,
+      );
+    }
+    LogManager.instance.warn(
+      'RemoteSync outbox: discard_missing_source_upload',
+      error: error,
+      context: <String, Object?>{
+        'id': outboxId,
+        if (memoUid.isNotEmpty) 'memoUid': memoUid,
+        if (attachmentUid.isNotEmpty) 'attachmentUid': attachmentUid,
+        if (filePath.isNotEmpty) 'filePath': filePath,
+        'elapsedMs': elapsedMs,
+      },
+    );
+    return true;
+  }
+
+  bool _isMissingSourceUploadError(Object error) {
+    if (error is FileSystemException) {
+      return true;
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('file not found');
   }
 
   Future<List<String>> _listCreateMemoAttachmentNames(String memoUid) async {
