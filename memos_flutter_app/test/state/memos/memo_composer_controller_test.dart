@@ -395,6 +395,30 @@ void main() {
       expect(controller.text, '11111\n- [ ] 2222');
     });
 
+    test('heading wrapper applies to the current line', () {
+      final controller = MemoComposerController(initialText: '11111\n2222');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 10,
+      );
+      controller.toggleHeading2();
+
+      expect(controller.text, '11111\n## 2222');
+    });
+
+    test('quote wrapper applies to the current line', () {
+      final controller = MemoComposerController(initialText: '11111\n2222');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 10,
+      );
+      controller.toggleQuote();
+
+      expect(controller.text, '11111\n> 2222');
+    });
+
     test('inserts markdown snippets with expected cursor placement', () {
       final controller = MemoComposerController();
       addTearDown(controller.dispose);
@@ -469,6 +493,46 @@ void main() {
       expect(
         controller.textController.selection,
         const TextSelection.collapsed(offset: 0),
+      );
+    });
+
+    test('cuts the current line only after clipboard succeeds', () async {
+      final binding = TestDefaultBinaryMessengerBinding.instance;
+      addTearDown(
+        () => binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      String? copiedText;
+      binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText = (call.arguments as Map)['text'] as String;
+          }
+          return null;
+        },
+      );
+
+      final controller = MemoComposerController(
+        initialText: '11111\n2222\n\n3333',
+      );
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 8,
+      );
+
+      final result = await controller.cutCurrentParagraphs();
+
+      expect(result, isTrue);
+      expect(copiedText, '2222');
+      expect(controller.text, '11111\n\n3333');
+      expect(
+        controller.textController.selection,
+        const TextSelection.collapsed(offset: 6),
       );
     });
 

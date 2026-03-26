@@ -351,11 +351,57 @@ void main() {
       expect(plain.text, 'Title');
     });
 
-    test('quotes and unquotes every line in a logical paragraph', () {
+    test('toggles headings on the current line for a collapsed cursor', () {
+      const text = '11111\n2222';
+      final cases = <MarkdownBlockStyle, String>{
+        MarkdownBlockStyle.heading1: '# ',
+        MarkdownBlockStyle.heading2: '## ',
+        MarkdownBlockStyle.heading3: '### ',
+      };
+
+      for (final entry in cases.entries) {
+        final styled = toggleBlockStyle(
+          _value(
+            text,
+            selection: const TextSelection.collapsed(offset: text.length),
+          ),
+          entry.key,
+        );
+        expect(
+          styled.text,
+          '11111\n${entry.value}2222',
+          reason: 'expected ${entry.key} to affect only the current line',
+        );
+
+        final plain = toggleBlockStyle(styled, entry.key);
+        expect(plain.text, text, reason: 'expected ${entry.key} to toggle off');
+      }
+    });
+
+    test('toggles quotes on the current line for a collapsed cursor', () {
+      const text = '11111\n2222';
+
+      final quoted = toggleBlockStyle(
+        _value(
+          text,
+          selection: const TextSelection.collapsed(offset: text.length),
+        ),
+        MarkdownBlockStyle.quote,
+      );
+      expect(quoted.text, '11111\n> 2222');
+
+      final plain = toggleBlockStyle(quoted, MarkdownBlockStyle.quote);
+      expect(plain.text, text);
+    });
+
+    test('quotes and unquotes every line in selected logical paragraphs', () {
       const text = 'line 1\nline 2\n\nnext';
 
       final quoted = toggleBlockStyle(
-        _value(text, selection: const TextSelection.collapsed(offset: 2)),
+        _value(
+          text,
+          selection: const TextSelection(baseOffset: 0, extentOffset: 10),
+        ),
         MarkdownBlockStyle.quote,
       );
       expect(quoted.text, '> line 1\n> line 2\n\nnext');
@@ -397,13 +443,29 @@ void main() {
   );
 
   group('cutParagraphs', () {
+    test('cuts the current line when cursor is on a later line', () {
+      const text = '11111\n2222\n\n3333';
+
+      final result = cutParagraphs(
+        _value(text, selection: const TextSelection.collapsed(offset: 8)),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.copiedText, '2222');
+      expect(result.value.text, '11111\n\n3333');
+      expect(result.value.selection, const TextSelection.collapsed(offset: 6));
+    });
+
     test(
       'cuts a middle paragraph and leaves one blank line between neighbors',
       () {
         const text = 'first\n\nsecond line\nsecond 2\n\nthird';
 
         final result = cutParagraphs(
-          _value(text, selection: const TextSelection.collapsed(offset: 10)),
+          _value(
+            text,
+            selection: const TextSelection(baseOffset: 8, extentOffset: 28),
+          ),
         );
 
         expect(result, isNotNull);

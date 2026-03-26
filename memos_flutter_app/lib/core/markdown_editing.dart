@@ -860,11 +860,11 @@ bool _usesLineScopedToggle(MarkdownBlockStyle style) {
   return switch (style) {
     MarkdownBlockStyle.unorderedList ||
     MarkdownBlockStyle.orderedList ||
-    MarkdownBlockStyle.taskList => true,
+    MarkdownBlockStyle.taskList ||
     MarkdownBlockStyle.heading1 ||
     MarkdownBlockStyle.heading2 ||
     MarkdownBlockStyle.heading3 ||
-    MarkdownBlockStyle.quote => false,
+    MarkdownBlockStyle.quote => true,
   };
 }
 
@@ -881,7 +881,33 @@ MarkdownParagraphRange? _selectedLine(String text, TextSelection selection) {
 }
 
 MarkdownCutResult? cutParagraphs(TextEditingValue value) {
-  final paragraphs = selectedLogicalParagraphs(value.text, value.selection);
+  final normalizedSelection = normalizeMarkdownSelection(
+    value.selection,
+    value.text.length,
+  );
+
+  if (normalizedSelection.isCollapsed) {
+    final line = _selectedLine(value.text, normalizedSelection);
+    if (line != null) {
+      final paragraphs = selectedLogicalParagraphs(
+        value.text,
+        normalizedSelection,
+      );
+      if (paragraphs.length == 1) {
+        final paragraph = paragraphs.single;
+        final isWholeParagraph =
+            line.start == paragraph.start && line.end == paragraph.end;
+        if (!isWholeParagraph) {
+          return _cutCurrentLine(
+            value.copyWith(selection: normalizedSelection),
+            line,
+          );
+        }
+      }
+    }
+  }
+
+  final paragraphs = selectedLogicalParagraphs(value.text, normalizedSelection);
   if (paragraphs.isEmpty) return null;
 
   final allParagraphs = collectLogicalParagraphs(value.text);
@@ -929,6 +955,32 @@ MarkdownCutResult? cutParagraphs(TextEditingValue value) {
       composing: TextRange.empty,
     ),
     copiedText: copiedText,
+  );
+}
+
+MarkdownCutResult _cutCurrentLine(
+  TextEditingValue value,
+  MarkdownParagraphRange line,
+) {
+  var removalStart = line.start;
+  var removalEnd = line.end;
+
+  if (removalEnd < value.text.length && value.text[removalEnd] == '\n') {
+    removalEnd += 1;
+  } else if (removalStart > 0 && value.text[removalStart - 1] == '\n') {
+    removalStart -= 1;
+  }
+
+  final nextText = value.text.replaceRange(removalStart, removalEnd, '');
+  final caretOffset = removalStart.clamp(0, nextText.length).toInt();
+
+  return MarkdownCutResult(
+    value: value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: caretOffset),
+      composing: TextRange.empty,
+    ),
+    copiedText: value.text.substring(line.start, line.end),
   );
 }
 
