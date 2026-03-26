@@ -65,6 +65,102 @@ add_subdirectory(${FLUTTER_MANAGED_DIR})
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+function(SEED_MEDIA_KIT_ANGLE_FALLBACK)
+  set(ANGLE_ARCHIVE_DST "${CMAKE_BINARY_DIR}/ANGLE.7z")
+  set(ANGLE_DIR_DST "${CMAKE_BINARY_DIR}/ANGLE")
+  set(ANGLE_INCLUDE_MARKER "${ANGLE_DIR_DST}/include/EGL/egl.h")
+  set(ANGLE_EGL_LIB_MARKER "${ANGLE_DIR_DST}/lib/libEGL.dll.lib")
+  set(ANGLE_GLES_LIB_MARKER "${ANGLE_DIR_DST}/lib/libGLESv2.dll.lib")
+  set(ANGLE_REQUIRED_FILES
+    "d3dcompiler_47.dll"
+    "libEGL.dll"
+    "libGLESv2.dll"
+    "vk_swiftshader.dll"
+    "vulkan-1.dll"
+    "zlib.dll"
+  )
+
+  if(NOT EXISTS "${ANGLE_ARCHIVE_DST}")
+    file(GLOB ANGLE_ARCHIVE_CANDIDATES
+      "${CMAKE_CURRENT_SOURCE_DIR}/../tool/*/ANGLE.7z"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../tool/*/*/ANGLE.7z"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../dist/*/ANGLE.7z"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../dist/*/*/ANGLE.7z"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../*/ANGLE.7z"
+    )
+    list(LENGTH ANGLE_ARCHIVE_CANDIDATES ANGLE_ARCHIVE_CANDIDATE_COUNT)
+    if(ANGLE_ARCHIVE_CANDIDATE_COUNT GREATER 0)
+      list(GET ANGLE_ARCHIVE_CANDIDATES 0 ANGLE_ARCHIVE_SRC)
+      configure_file("${ANGLE_ARCHIVE_SRC}" "${ANGLE_ARCHIVE_DST}" COPYONLY)
+    endif()
+  endif()
+
+  if(
+    EXISTS "${ANGLE_ARCHIVE_DST}"
+    AND (
+      NOT EXISTS "${ANGLE_INCLUDE_MARKER}"
+      OR NOT EXISTS "${ANGLE_EGL_LIB_MARKER}"
+      OR NOT EXISTS "${ANGLE_GLES_LIB_MARKER}"
+    )
+  )
+    find_program(ANGLE_ARCHIVER
+      NAMES 7z 7z.exe 7za 7za.exe 7zr 7zr.exe
+      HINTS
+        "$ENV{ProgramFiles}/7-Zip"
+        "C:/Program Files (x86)/7-Zip"
+        "$ENV{ProgramFiles}/NVIDIA Corporation/NVIDIA app"
+        "$ENV{ProgramFiles}/VMware"
+    )
+
+    if(ANGLE_ARCHIVER)
+      file(MAKE_DIRECTORY "${ANGLE_DIR_DST}")
+      execute_process(
+        COMMAND "${ANGLE_ARCHIVER}" x "-o${ANGLE_DIR_DST}" -y "${ANGLE_ARCHIVE_DST}"
+        RESULT_VARIABLE ANGLE_EXTRACT_RESULT
+      )
+      if(NOT ANGLE_EXTRACT_RESULT EQUAL 0)
+        message(WARNING "Failed to extract ${ANGLE_ARCHIVE_DST} with ${ANGLE_ARCHIVER}.")
+      endif()
+    endif()
+  endif()
+
+  set(ANGLE_DIR_COMPLETE TRUE)
+  foreach(ANGLE_REQUIRED_FILE IN LISTS ANGLE_REQUIRED_FILES)
+    if(NOT EXISTS "${ANGLE_DIR_DST}/${ANGLE_REQUIRED_FILE}")
+      set(ANGLE_DIR_COMPLETE FALSE)
+    endif()
+  endforeach()
+
+  if(NOT ANGLE_DIR_COMPLETE)
+    file(GLOB ANGLE_MARKER_CANDIDATES
+      "${CMAKE_CURRENT_SOURCE_DIR}/../tool/*/libEGL.dll"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../tool/*/*/libEGL.dll"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../dist/*/libEGL.dll"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../dist/*/*/libEGL.dll"
+    )
+
+    foreach(ANGLE_MARKER_FILE IN LISTS ANGLE_MARKER_CANDIDATES)
+      get_filename_component(ANGLE_MARKER_DIR "${ANGLE_MARKER_FILE}" DIRECTORY)
+      set(ANGLE_MARKER_DIR_VALID TRUE)
+      foreach(ANGLE_REQUIRED_FILE IN LISTS ANGLE_REQUIRED_FILES)
+        if(NOT EXISTS "${ANGLE_MARKER_DIR}/${ANGLE_REQUIRED_FILE}")
+          set(ANGLE_MARKER_DIR_VALID FALSE)
+        endif()
+      endforeach()
+
+      if(ANGLE_MARKER_DIR_VALID)
+        file(MAKE_DIRECTORY "${ANGLE_DIR_DST}")
+        foreach(ANGLE_REQUIRED_FILE IN LISTS ANGLE_REQUIRED_FILES)
+          file(COPY "${ANGLE_MARKER_DIR}/${ANGLE_REQUIRED_FILE}" DESTINATION "${ANGLE_DIR_DST}")
+        endforeach()
+        break()
+      endif()
+    endforeach()
+  endif()
+endfunction()
+
+SEED_MEDIA_KIT_ANGLE_FALLBACK()
+
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
@@ -78,9 +174,7 @@ include(flutter/generated_plugins.cmake)
 set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
-endif()
+set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")

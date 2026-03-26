@@ -20,20 +20,37 @@ class DesktopExitCoordinator with WindowListener {
     milliseconds: 350,
   );
   static const Duration _subWindowCloseTimeout = Duration(milliseconds: 800);
+  static const Duration _mainWindowTeardownDelay = Duration(milliseconds: 200);
+  static const List<String> _exitStepOrder = <String>[
+    'close_sub_windows',
+    'unregister_hotkey',
+    'dispose_tray',
+    'disable_prevent_close',
+    'close_main_window',
+    'await_main_window_teardown',
+    'close_databases',
+  ];
 
   DesktopExitCoordinator._({
     required WidgetRef ref,
     required DesktopQuickInputController quickInputController,
+    required Future<void> Function() closeDatabases,
+    required Duration mainWindowTeardownDelay,
   }) : _ref = ref,
-       _quickInputController = quickInputController;
+       _quickInputController = quickInputController,
+       _closeDatabases = closeDatabases,
+       _mainWindowTeardownDelayOverride = mainWindowTeardownDelay;
 
   static DesktopExitCoordinator? _instance;
 
   final WidgetRef _ref;
   final DesktopQuickInputController _quickInputController;
+  final Future<void> Function() _closeDatabases;
+  final Duration _mainWindowTeardownDelayOverride;
   bool _listenerAttached = false;
   bool _exiting = false;
   Completer<void>? _exitCompleter;
+  Timer? _forceExitTimer;
 
   static DesktopExitCoordinator? get instance => _instance;
   static bool get isReady => _instance != null;
@@ -41,12 +58,34 @@ class DesktopExitCoordinator with WindowListener {
   static DesktopExitCoordinator init({
     required WidgetRef ref,
     required DesktopQuickInputController quickInputController,
+    Future<void> Function()? closeDatabases,
+    Duration mainWindowTeardownDelay = _mainWindowTeardownDelay,
   }) {
     _instance = DesktopExitCoordinator._(
       ref: ref,
       quickInputController: quickInputController,
+      closeDatabases: closeDatabases ?? DatabaseRegistry.closeAll,
+      mainWindowTeardownDelay: mainWindowTeardownDelay,
     );
     return _instance!;
+  }
+
+  @visibleForTesting
+  static void resetForTest() {
+    _instance = null;
+  }
+
+  @visibleForTesting
+  static List<String> debugExitStepOrder() =>
+      List<String>.unmodifiable(_exitStepOrder);
+
+  @visibleForTesting
+  static String debugMainWindowTerminationAction() =>
+      !kIsWeb && Platform.isWindows ? 'destroy' : 'close';
+
+  @visibleForTesting
+  Future<void> debugPerformExit({String? reason, bool force = false}) {
+    return _performExit(reason: reason, force: force);
   }
 
   static Future<void> requestClose({String? source}) async {
@@ -76,6 +115,8 @@ class DesktopExitCoordinator with WindowListener {
   }
 
   Future<void> dispose() async {
+    _forceExitTimer?.cancel();
+    _forceExitTimer = null;
     if (_listenerAttached) {
       windowManager.removeListener(this);
       _listenerAttached = false;
@@ -122,39 +163,53 @@ class DesktopExitCoordinator with WindowListener {
     _exiting = true;
     final completer = Completer<void>();
     _exitCompleter = completer;
-    unawaited(_forceExitAfterTimeout());
-    unawaited(_performExit(reason: reason, force: force).whenComplete(() {
-      if (!completer.isCompleted) completer.complete();
-    }));
+    _armForceExitFallback();
+    unawaited(
+      _performExit(reason: reason, force: force).whenComplete(() {
+        if (!completer.isCompleted) completer.complete();
+      }),
+    );
     await completer.future;
   }
 
   Future<void> _performExit({String? reason, bool force = false}) async {
     if (!kIsWeb && Platform.isWindows) {
-      _ref.read(logManagerProvider).info(
-        'Desktop exit requested',
-        context: {'reason': reason ?? 'unknown', 'force': force},
-      );
+      _ref
+          .read(logManagerProvider)
+          .info(
+            'Desktop exit requested',
+            context: {'reason': reason ?? 'unknown', 'force': force},
+          );
     }
     await _runExitStep(
-      'close_sub_windows',
+      _exitStepOrder[0],
       _closeSubWindows,
       timeout: _closeSubWindowsStepTimeout,
     );
     await _runExitStep(
-      'unregister_hotkey',
+      _exitStepOrder[1],
       () => _quickInputController.unregisterHotKey(),
     );
     await _runExitStep(
-      'dispose_tray',
+      _exitStepOrder[2],
       () => DesktopTrayController.instance.dispose(),
     );
-    await _runExitStep('close_databases', DatabaseRegistry.closeAll);
     await _runExitStep(
-      'disable_prevent_close',
+      _exitStepOrder[3],
       () => windowManager.setPreventClose(false),
     );
-    await _runExitStep('close_main_window', () => windowManager.close());
+    final closeMainWindowSucceeded = await _runExitStep(
+      _exitStepOrder[4],
+      _terminateMainWindowForExit,
+    );
+    final teardownDelaySucceeded = await _runExitStep(
+      _exitStepOrder[5],
+      () => Future<void>.delayed(_mainWindowTeardownDelayOverride),
+    );
+    if (closeMainWindowSucceeded && teardownDelaySucceeded) {
+      _cancelForceExitFallback();
+    }
+    await _runExitStep(_exitStepOrder[6], _closeDatabases);
   }
 
   Future<void> _closeSubWindows() async {
@@ -184,9 +239,9 @@ class DesktopExitCoordinator with WindowListener {
     } catch (_) {}
 
     try {
-      await WindowController.fromWindowId(id)
-          .close()
-          .timeout(_subWindowCloseTimeout);
+      await WindowController.fromWindowId(
+        id,
+      ).close().timeout(_subWindowCloseTimeout);
     } catch (_) {}
   }
 
@@ -209,27 +264,51 @@ class DesktopExitCoordinator with WindowListener {
     } catch (_) {}
   }
 
-  Future<void> _forceExitAfterTimeout() async {
-    await Future<void>.delayed(const Duration(seconds: 3));
-    if (!_exiting) return;
-    exit(0);
+  Future<void> _terminateMainWindowForExit() async {
+    if (!kIsWeb && Platform.isWindows) {
+      await windowManager.destroy();
+      return;
+    }
+    await windowManager.close();
   }
 
-  Future<void> _runExitStep(
+  void _armForceExitFallback() {
+    _forceExitTimer?.cancel();
+    _forceExitTimer = Timer(const Duration(seconds: 3), () {
+      if (!_exiting) return;
+      try {
+        _ref
+            .read(logManagerProvider)
+            .warn('Desktop force-exit fallback triggered');
+      } catch (_) {}
+      exit(0);
+    });
+  }
+
+  void _cancelForceExitFallback() {
+    _forceExitTimer?.cancel();
+    _forceExitTimer = null;
+  }
+
+  Future<bool> _runExitStep(
     String name,
     Future<void> Function() action, {
     Duration timeout = const Duration(seconds: 1),
   }) async {
     try {
       await action().timeout(timeout);
+      return true;
     } catch (error, stackTrace) {
       try {
-        _ref.read(logManagerProvider).warn(
+        _ref
+            .read(logManagerProvider)
+            .warn(
               'Exit step failed: $name',
               error: error,
               stackTrace: stackTrace,
             );
       } catch (_) {}
+      return false;
     }
   }
 }

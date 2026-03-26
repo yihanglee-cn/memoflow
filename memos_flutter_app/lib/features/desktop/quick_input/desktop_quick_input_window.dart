@@ -89,6 +89,7 @@ class DesktopQuickInputWindowScreen extends ConsumerStatefulWidget {
 class _DesktopQuickInputWindowScreenState
     extends ConsumerState<DesktopQuickInputWindowScreen> {
   late final TextEditingController _controller;
+  late final SmartEnterController _smartEnterController;
   late final FocusNode _focusNode;
   final _tagMenuKey = GlobalKey();
   final _templateMenuKey = GlobalKey();
@@ -118,6 +119,7 @@ class _DesktopQuickInputWindowScreenState
       HardwareKeyboard.instance.addHandler(_handleDesktopEditorShortcuts);
     }
     _controller = TextEditingController();
+    _smartEnterController = SmartEnterController(_controller);
     _focusNode = FocusNode();
     _requestInputFocus();
     unawaited(_initializeWindowManager());
@@ -130,6 +132,7 @@ class _DesktopQuickInputWindowScreenState
     if (isDesktopShortcutEnabled()) {
       HardwareKeyboard.instance.removeHandler(_handleDesktopEditorShortcuts);
     }
+    _smartEnterController.dispose();
     _controller.dispose();
     _focusNode.dispose();
     unawaited(_notifyMainWindowVisibility(false));
@@ -367,6 +370,33 @@ class _DesktopQuickInputWindowScreenState
     try {
       await DesktopMultiWindow.invokeMethod(0, desktopQuickInputClosedMethod);
     } catch (_) {}
+  }
+
+  KeyEventResult _handleEditorKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final primaryPressed = isPrimaryShortcutModifierPressed(pressed);
+    final shiftPressed = isShiftModifierPressed(pressed);
+    final altPressed = isAltModifierPressed(pressed);
+    final key = event.logicalKey;
+    if (primaryPressed || shiftPressed || altPressed) {
+      return KeyEventResult.ignored;
+    }
+    if (key != LogicalKeyboardKey.enter &&
+        key != LogicalKeyboardKey.numpadEnter) {
+      return KeyEventResult.ignored;
+    }
+
+    final nextValue = SmartEnterController.applySmartEnterKeyPress(
+      _controller.value,
+      lineBreak: Platform.isWindows ? '\r\n' : '\n',
+    );
+    if (nextValue == null) return KeyEventResult.ignored;
+
+    _smartEnterController.applyValue(nextValue);
+    setState(() {});
+    return KeyEventResult.handled;
   }
 
   void _insertText(String value, {int? caretOffset}) {
@@ -1753,25 +1783,33 @@ class _DesktopQuickInputWindowScreenState
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: TextField(
-                      controller: _controller,
-                      focusNode: _focusNode,
-                      autofocus: true,
-                      expands: true,
-                      maxLines: null,
-                      minLines: null,
-                      style: TextStyle(
-                        fontSize: 17,
-                        color: textMain,
-                        height: 1.45,
+                    child: Focus(
+                      canRequestFocus: false,
+                      onKeyEvent: _handleEditorKeyEvent,
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        autofocus: true,
+                        inputFormatters: const [SmartEnterTextInputFormatter()],
+                        expands: true,
+                        maxLines: null,
+                        minLines: null,
+                        style: TextStyle(
+                          fontSize: 17,
+                          color: textMain,
+                          height: 1.45,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: context
+                              .t
+                              .strings
+                              .legacy
+                              .msg_write_current_thought,
+                          hintStyle: TextStyle(color: textMuted),
+                          border: InputBorder.none,
+                        ),
+                        onChanged: (_) => setState(() {}),
                       ),
-                      decoration: InputDecoration(
-                        hintText:
-                            context.t.strings.legacy.msg_write_current_thought,
-                        hintStyle: TextStyle(color: textMuted),
-                        border: InputBorder.none,
-                      ),
-                      onChanged: (_) => setState(() {}),
                     ),
                   ),
                 ),
