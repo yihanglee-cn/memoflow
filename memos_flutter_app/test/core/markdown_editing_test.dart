@@ -6,7 +6,117 @@ TextEditingValue _value(String text, {required TextSelection selection}) {
   return TextEditingValue(text: text, selection: selection);
 }
 
+TextEditingValue _collapsedValue(String text, {int? offset}) {
+  return _value(
+    text,
+    selection: TextSelection.collapsed(offset: offset ?? text.length),
+  );
+}
+
 void main() {
+  group('SmartEnterController.applySmartEnterKeyPress', () {
+    test('continues unordered list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('- item'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '- item\n- ');
+      expect(result.selection, const TextSelection.collapsed(offset: 9));
+    });
+
+    test('increments ordered list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('1. item'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '1. item\n2. ');
+      expect(result.selection, const TextSelection.collapsed(offset: 11));
+    });
+
+    test('increments multi-digit ordered list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('9. item'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '9. item\n10. ');
+      expect(result.selection, const TextSelection.collapsed(offset: 12));
+    });
+
+    test('preserves indentation while incrementing ordered list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('  3. item'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '  3. item\n  4. ');
+      expect(result.selection, const TextSelection.collapsed(offset: 15));
+    });
+
+    test('continues unchecked task list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('- [ ] item'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '- [ ] item\n- [ ] ');
+      expect(result.selection, const TextSelection.collapsed(offset: 17));
+    });
+
+    test('resets checked task list items to unchecked', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('- [x] done'),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '- [x] done\n- [ ] ');
+      expect(result.selection, const TextSelection.collapsed(offset: 17));
+    });
+
+    test('exits empty ordered list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('2. '),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '\n');
+      expect(result.selection, const TextSelection.collapsed(offset: 1));
+    });
+
+    test('exits empty unchecked task list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('- [ ] '),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '\n');
+      expect(result.selection, const TextSelection.collapsed(offset: 1));
+    });
+
+    test('exits empty checked task list items', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('- [x] '),
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '\n');
+      expect(result.selection, const TextSelection.collapsed(offset: 1));
+    });
+
+    test('increments ordered list items with CRLF line breaks', () {
+      final result = SmartEnterController.applySmartEnterKeyPress(
+        _collapsedValue('9. item'),
+        lineBreak: '\r\n',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, '9. item\r\n10. ');
+      expect(result.selection, const TextSelection.collapsed(offset: 13));
+    });
+  });
+
   group('wrapMarkdownSelection', () {
     test(
       'unwraps when the selected content is already wrapped by matching markers',
@@ -172,6 +282,63 @@ void main() {
         expect(plain.text, text);
       },
     );
+
+    test(
+      'toggles unordered lists on the current line for a collapsed cursor',
+      () {
+        const text = '11111\n2222';
+
+        final listed = toggleBlockStyle(
+          _value(
+            text,
+            selection: const TextSelection.collapsed(offset: text.length),
+          ),
+          MarkdownBlockStyle.unorderedList,
+        );
+        expect(listed.text, '11111\n- 2222');
+
+        final plain = toggleBlockStyle(
+          listed,
+          MarkdownBlockStyle.unorderedList,
+        );
+        expect(plain.text, text);
+      },
+    );
+
+    test(
+      'toggles ordered lists on the current line for a collapsed cursor',
+      () {
+        const text = '11111\n2222';
+
+        final listed = toggleBlockStyle(
+          _value(
+            text,
+            selection: const TextSelection.collapsed(offset: text.length),
+          ),
+          MarkdownBlockStyle.orderedList,
+        );
+        expect(listed.text, '11111\n1. 2222');
+
+        final plain = toggleBlockStyle(listed, MarkdownBlockStyle.orderedList);
+        expect(plain.text, text);
+      },
+    );
+
+    test('toggles task lists on the current line for a collapsed cursor', () {
+      const text = '11111\n2222';
+
+      final listed = toggleBlockStyle(
+        _value(
+          text,
+          selection: const TextSelection.collapsed(offset: text.length),
+        ),
+        MarkdownBlockStyle.taskList,
+      );
+      expect(listed.text, '11111\n- [ ] 2222');
+
+      final plain = toggleBlockStyle(listed, MarkdownBlockStyle.taskList);
+      expect(plain.text, text);
+    });
 
     test('replaces headings instead of stacking them', () {
       final converted = toggleBlockStyle(

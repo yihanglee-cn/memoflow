@@ -13,6 +13,7 @@ import '../../state/sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
 import '../../core/app_localization.dart';
 import '../../core/desktop/shortcuts.dart';
+import '../../core/markdown_editing.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/tags.dart';
@@ -1067,6 +1068,25 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     );
     if (result == KeyEventResult.handled) {
       setState(() {});
+      return result;
+    }
+
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final primaryPressed = isPrimaryShortcutModifierPressed(pressed);
+    final shiftPressed = isShiftModifierPressed(pressed);
+    final altPressed = isAltModifierPressed(pressed);
+    final key = event.logicalKey;
+    if (event is KeyDownEvent &&
+        !primaryPressed &&
+        !shiftPressed &&
+        !altPressed &&
+        (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
+        _composer.applyDesktopSmartEnter(
+          lineBreak: Platform.isWindows ? '\r\n' : '\n',
+        )) {
+      setState(() {});
+      return KeyEventResult.handled;
     }
     return result;
   }
@@ -2739,6 +2759,9 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
                                                   controller: _controller,
                                                   focusNode: _editorFocusNode,
                                                   autofocus: widget.autoFocus,
+                                                  inputFormatters: const [
+                                                    SmartEnterTextInputFormatter(),
+                                                  ],
                                                   maxLines: null,
                                                   keyboardType:
                                                       TextInputType.multiline,

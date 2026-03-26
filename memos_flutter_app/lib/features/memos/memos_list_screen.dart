@@ -3113,33 +3113,31 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
 
     final activeQuery = detectActiveTagQuery(_inlineComposeController.value);
     final suggestions = _currentInlineTagSuggestions();
-    if (activeQuery == null || suggestions.isEmpty) {
-      return KeyEventResult.ignored;
-    }
-
     final key = event.logicalKey;
-    if (key == LogicalKeyboardKey.arrowDown) {
-      setState(() {
-        _inlineTagAutocompleteIndex =
-            (_inlineTagAutocompleteIndex + 1) % suggestions.length;
-      });
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowUp) {
-      setState(() {
-        _inlineTagAutocompleteIndex =
-            (_inlineTagAutocompleteIndex - 1 + suggestions.length) %
-            suggestions.length;
-      });
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.enter ||
-        key == LogicalKeyboardKey.numpadEnter) {
-      final selectedIndex = _inlineTagAutocompleteIndex
-          .clamp(0, suggestions.length - 1)
-          .toInt();
-      _applyInlineTagSuggestion(activeQuery, suggestions[selectedIndex]);
-      return KeyEventResult.handled;
+    if (activeQuery != null && suggestions.isNotEmpty) {
+      if (key == LogicalKeyboardKey.arrowDown) {
+        setState(() {
+          _inlineTagAutocompleteIndex =
+              (_inlineTagAutocompleteIndex + 1) % suggestions.length;
+        });
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp) {
+        setState(() {
+          _inlineTagAutocompleteIndex =
+              (_inlineTagAutocompleteIndex - 1 + suggestions.length) %
+              suggestions.length;
+        });
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter) {
+        final selectedIndex = _inlineTagAutocompleteIndex
+            .clamp(0, suggestions.length - 1)
+            .toInt();
+        _applyInlineTagSuggestion(activeQuery, suggestions[selectedIndex]);
+        return KeyEventResult.handled;
+      }
     }
 
     return KeyEventResult.ignored;
@@ -4670,6 +4668,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                         controller: _inlineComposeController,
                         focusNode: _inlineComposeFocusNode,
                         enabled: !_inlineComposeBusy,
+                        inputFormatters: const [SmartEnterTextInputFormatter()],
                         minLines: inlineComposeMinLines,
                         maxLines: inlineComposeMaxLines,
                         keyboardType: TextInputType.multiline,

@@ -55,6 +55,206 @@ void main() {
       expect(controller.text, '- [ ] item\n- [ ] ');
     });
 
+    test('applies smart enter for unordered list items', () {
+      final controller = MemoComposerController(initialText: '- item');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '- item\n- ');
+    });
+
+    test('applies smart enter for unordered list items with CRLF', () {
+      final controller = MemoComposerController(initialText: '- item');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\r\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 2,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '- item\r\n- ');
+    });
+
+    test(
+      'applies smart enter for unordered list items when cursor update lags',
+      () {
+        final controller = MemoComposerController(initialText: '- item');
+        addTearDown(controller.dispose);
+
+        controller.textController.selection = TextSelection.collapsed(
+          offset: controller.text.length,
+        );
+        controller.textController.value = controller.textController.value
+            .copyWith(
+              text: '${controller.text}\n',
+              selection: TextSelection.collapsed(
+                offset: controller.text.length,
+              ),
+              composing: TextRange.empty,
+            );
+
+        expect(controller.text, '- item\n- ');
+        expect(
+          controller.textController.selection,
+          const TextSelection.collapsed(offset: 9),
+        );
+      },
+    );
+
+    test('applies smart enter for ordered list items', () {
+      final controller = MemoComposerController(initialText: '1. item');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '1. item\n2. ');
+    });
+
+    test(
+      'applies smart enter for checked task items as unchecked next item',
+      () {
+        final controller = MemoComposerController(initialText: '- [x] done');
+        addTearDown(controller.dispose);
+
+        controller.textController.selection = TextSelection.collapsed(
+          offset: controller.text.length,
+        );
+        controller.textController.value = controller.textController.value
+            .copyWith(
+              text: '${controller.text}\n',
+              selection: TextSelection.collapsed(
+                offset: controller.text.length + 1,
+              ),
+              composing: TextRange.empty,
+            );
+
+        expect(controller.text, '- [x] done\n- [ ] ');
+      },
+    );
+
+    test('applies smart enter for ordered list items with CRLF', () {
+      final controller = MemoComposerController(initialText: '1. item');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\r\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 2,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '1. item\r\n2. ');
+    });
+
+    test('preserves indentation while incrementing ordered list items', () {
+      final controller = MemoComposerController(initialText: '  3. item');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '  3. item\n  4. ');
+    });
+
+    test('smart enter exits an empty ordered list item', () {
+      final controller = MemoComposerController(initialText: '1. ');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '\n');
+    });
+
+    test('smart enter exits an empty unordered list item', () {
+      final controller = MemoComposerController(initialText: '- ');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '\n');
+    });
+
+    test('smart enter exits an empty task list item', () {
+      final controller = MemoComposerController(initialText: '- [ ] ');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = TextSelection.collapsed(
+        offset: controller.text.length,
+      );
+      controller.textController.value = controller.textController.value
+          .copyWith(
+            text: '${controller.text}\n',
+            selection: TextSelection.collapsed(
+              offset: controller.text.length + 1,
+            ),
+            composing: TextRange.empty,
+          );
+
+      expect(controller.text, '\n');
+    });
+
     test('wraps selections with formatting markers', () {
       final controller = MemoComposerController(initialText: 'hello');
       addTearDown(controller.dispose);
@@ -157,6 +357,42 @@ void main() {
       );
       controller.insertTaskCheckbox();
       expect(controller.text, '- [ ] templated body');
+    });
+
+    test('unordered list wrapper applies to the current line', () {
+      final controller = MemoComposerController(initialText: '11111\n2222');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 10,
+      );
+      controller.insertUnorderedListMarker();
+
+      expect(controller.text, '11111\n- 2222');
+    });
+
+    test('ordered list wrapper applies to the current line', () {
+      final controller = MemoComposerController(initialText: '11111\n2222');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 10,
+      );
+      controller.insertOrderedListMarker();
+
+      expect(controller.text, '11111\n1. 2222');
+    });
+
+    test('task list wrapper applies to the current line', () {
+      final controller = MemoComposerController(initialText: '11111\n2222');
+      addTearDown(controller.dispose);
+
+      controller.textController.selection = const TextSelection.collapsed(
+        offset: 10,
+      );
+      controller.insertTaskCheckbox();
+
+      expect(controller.text, '11111\n- [ ] 2222');
     });
 
     test('inserts markdown snippets with expected cursor placement', () {

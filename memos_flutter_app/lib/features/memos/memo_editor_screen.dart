@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,6 +13,8 @@ import 'package:path_provider/path_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
 import '../../core/app_localization.dart';
+import '../../core/desktop/shortcuts.dart';
+import '../../core/markdown_editing.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/scene_micro_guide_widgets.dart';
@@ -169,6 +172,25 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     );
     if (result == KeyEventResult.handled) {
       setState(() {});
+      return result;
+    }
+
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    final primaryPressed = isPrimaryShortcutModifierPressed(pressed);
+    final shiftPressed = isShiftModifierPressed(pressed);
+    final altPressed = isAltModifierPressed(pressed);
+    final key = event.logicalKey;
+    if (event is KeyDownEvent &&
+        !primaryPressed &&
+        !shiftPressed &&
+        !altPressed &&
+        (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) &&
+        _composer.applyDesktopSmartEnter(
+          lineBreak: Platform.isWindows ? '\r\n' : '\n',
+        )) {
+      setState(() {});
+      return KeyEventResult.handled;
     }
     return result;
   }
@@ -2303,6 +2325,9 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
                                             controller: _contentController,
                                             focusNode: _editorFocusNode,
                                             enabled: !_saving,
+                                            inputFormatters: const [
+                                              SmartEnterTextInputFormatter(),
+                                            ],
                                             keyboardType:
                                                 TextInputType.multiline,
                                             maxLines: null,

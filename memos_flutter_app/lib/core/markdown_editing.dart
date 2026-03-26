@@ -1,4 +1,7 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class SmartEnterResult {
   const SmartEnterResult({required this.text, required this.selection});
@@ -7,29 +10,190 @@ class SmartEnterResult {
   final TextSelection selection;
 }
 
+class _InsertedLineBreak {
+  const _InsertedLineBreak({required this.offset, required this.length});
+
+  final int offset;
+  final int length;
+}
+
+enum _SmartEnterListKind { unordered, ordered, task }
+
+class _SmartEnterLineContext {
+  const _SmartEnterLineContext({
+    required this.lineStart,
+    required this.lineText,
+    required this.indent,
+    required this.kind,
+    required this.contentAfterPrefix,
+    this.orderedNumber,
+  });
+
+  final int lineStart;
+  final String lineText;
+  final String indent;
+  final _SmartEnterListKind kind;
+  final String contentAfterPrefix;
+  final int? orderedNumber;
+
+  bool get isPrefixOnly => contentAfterPrefix.trim().isEmpty;
+
+  String get continuationPrefix {
+    return switch (kind) {
+      _SmartEnterListKind.unordered => '$indent- ',
+      _SmartEnterListKind.ordered => '$indent${(orderedNumber ?? 0) + 1}. ',
+      _SmartEnterListKind.task => '$indent- [ ] ',
+    };
+  }
+}
+
+class SmartEnterTextInputFormatter extends TextInputFormatter {
+  const SmartEnterTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final result = SmartEnterController.transformEditUpdate(oldValue, newValue);
+    if (result == null) return newValue;
+    return newValue.copyWith(
+      text: result.text,
+      selection: result.selection,
+      composing: TextRange.empty,
+    );
+  }
+}
+
 class SmartEnterController {
   SmartEnterController(this.controller) {
-    _lastText = controller.text;
+    _lastValue = controller.value;
     controller.addListener(_handleChange);
   }
 
   final TextEditingController controller;
-  late String _lastText;
+  late TextEditingValue _lastValue;
   bool _applying = false;
 
-  static final RegExp _taskPrefixRegex = RegExp(
-    r'^(\s*(?:- \[(?: |x|X)\] |- |\d+\. ))',
+  static final RegExp _smartEnterUnorderedListPrefixRegex = RegExp(
+    r'^(\s*)-\s+',
   );
+  static final RegExp _smartEnterOrderedListPrefixRegex = RegExp(
+    r'^(\s*)(\d+)\.\s+',
+  );
+  static final RegExp _smartEnterTaskListPrefixRegex = RegExp(
+    r'^(\s*)- \[(?: |x|X)\]\s+',
+  );
+
+  static SmartEnterResult? transformEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final newText = newValue.text;
+    final insertedLineBreak = _findSingleInsertedLineBreak(
+      oldValue.text,
+      newText,
+    );
+    if (insertedLineBreak == null) return null;
+
+    final lineContext = _lineContextBeforeInsertedLineBreak(
+      newText,
+      insertedLineBreak,
+    );
+    if (lineContext == null) return null;
+
+    final cursor = insertedLineBreak.offset + insertedLineBreak.length;
+    if (cursor > newText.length) return null;
+
+    if (lineContext.isPrefixOnly) {
+      final updated = newText.replaceRange(
+        lineContext.lineStart,
+        insertedLineBreak.offset,
+        '',
+      );
+      final newCursor = (cursor - lineContext.lineText.length).clamp(
+        0,
+        updated.length,
+      );
+      return SmartEnterResult(
+        text: updated,
+        selection: TextSelection.collapsed(offset: newCursor),
+      );
+    }
+
+    final nextPrefix = lineContext.continuationPrefix;
+    final updated = newText.replaceRange(cursor, cursor, nextPrefix);
+    final newCursor = cursor + nextPrefix.length;
+    return SmartEnterResult(
+      text: updated,
+      selection: TextSelection.collapsed(offset: newCursor),
+    );
+  }
+
+  static TextEditingValue? applySmartEnterKeyPress(
+    TextEditingValue value, {
+    String lineBreak = '\n',
+  }) {
+    final selection = normalizeMarkdownSelection(
+      value.selection,
+      value.text.length,
+    );
+    if (!selection.isCollapsed) return null;
+
+    final cursor = selection.baseOffset;
+    if (cursor < 0 || cursor > value.text.length) return null;
+
+    final lineStart = cursor == 0
+        ? 0
+        : value.text.lastIndexOf('\n', cursor - 1) + 1;
+    final lineEndIndex = value.text.indexOf('\n', cursor);
+    var lineEnd = lineEndIndex == -1 ? value.text.length : lineEndIndex;
+    if (lineEnd > lineStart && value.text.codeUnitAt(lineEnd - 1) == 0x0D) {
+      lineEnd--;
+    }
+
+    final lineContext = _parseSmartEnterLineContext(
+      value.text.substring(lineStart, lineEnd),
+      lineStart: lineStart,
+    );
+    if (lineContext == null) return null;
+
+    if (lineContext.isPrefixOnly) {
+      final nextText = value.text.replaceRange(lineStart, lineEnd, lineBreak);
+      final nextCursor = lineStart + lineBreak.length;
+      return value.copyWith(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: nextCursor),
+        composing: TextRange.empty,
+      );
+    }
+
+    final inserted = '$lineBreak${lineContext.continuationPrefix}';
+    final nextText = value.text.replaceRange(cursor, cursor, inserted);
+    final nextCursor = cursor + inserted.length;
+    return value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextCursor),
+      composing: TextRange.empty,
+    );
+  }
 
   void dispose() {
     controller.removeListener(_handleChange);
   }
 
+  void applyValue(TextEditingValue value) {
+    _applying = true;
+    controller.value = value;
+    _lastValue = value;
+    _applying = false;
+  }
+
   void _handleChange() {
     if (_applying) return;
 
-    final newText = controller.text;
-    final result = handleSmartEnter(_lastText, newText);
+    final currentValue = controller.value;
+    final result = handleSmartEnter(_lastValue, currentValue);
     if (result != null) {
       _applying = true;
       controller.value = controller.value.copyWith(
@@ -39,48 +203,210 @@ class SmartEnterController {
       );
       _applying = false;
     }
-    _lastText = controller.text;
+    _lastValue = controller.value;
   }
 
-  SmartEnterResult? handleSmartEnter(String oldText, String newText) {
-    final selection = controller.selection;
-    if (!selection.isValid || !selection.isCollapsed) return null;
-
-    final cursor = selection.baseOffset;
-    if (cursor <= 0 || cursor > newText.length) return null;
-
-    if (newText.length != oldText.length + 1) return null;
-    if (newText[cursor - 1] != '\n') return null;
-
-    final prevLineStart = newText.lastIndexOf('\n', cursor - 2) + 1;
-    final prevLine = newText.substring(prevLineStart, cursor - 1);
-
-    final match = _taskPrefixRegex.firstMatch(prevLine);
-    if (match == null) return null;
-
-    final prefix = match.group(1)!;
-    final rest = prevLine.substring(prefix.length);
-    final isPrefixOnly = rest.trim().isEmpty;
-
-    if (isPrefixOnly) {
-      final updated = newText.replaceRange(
-        prevLineStart,
-        prevLineStart + prefix.length,
-        '',
+  SmartEnterResult? handleSmartEnter(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final newText = newValue.text;
+    final insertedLineBreak = _findSingleInsertedLineBreak(
+      oldValue.text,
+      newText,
+    );
+    if (insertedLineBreak == null) {
+      _debugLog(
+        'ignored',
+        oldText: oldValue.text,
+        newText: newText,
+        reason: 'no_single_line_break',
       );
-      final newCursor = (cursor - prefix.length).clamp(0, updated.length);
-      return SmartEnterResult(
-        text: updated,
-        selection: TextSelection.collapsed(offset: newCursor),
+      return null;
+    }
+
+    final cursor = insertedLineBreak.offset + insertedLineBreak.length;
+    if (cursor > newText.length) {
+      _debugLog(
+        'ignored',
+        oldText: oldValue.text,
+        newText: newText,
+        reason: 'cursor_out_of_range',
+      );
+      return null;
+    }
+
+    final lineContext = _lineContextBeforeInsertedLineBreak(
+      newText,
+      insertedLineBreak,
+    );
+    if (lineContext == null) {
+      _debugLog(
+        'ignored',
+        oldText: oldValue.text,
+        newText: newText,
+        reason: 'prefix_not_matched',
+      );
+      return null;
+    }
+
+    final result = transformEditUpdate(oldValue, newValue);
+
+    if (result == null) {
+      _debugLog(
+        'ignored',
+        oldText: oldValue.text,
+        newText: newText,
+        reason: 'transform_failed',
+      );
+      return null;
+    }
+
+    if (lineContext.isPrefixOnly) {
+      _debugLog(
+        'exit_list',
+        oldText: oldValue.text,
+        newText: newText,
+        resultText: result.text,
+        reason: 'prefix_only',
+      );
+      return result;
+    }
+
+    _debugLog(
+      'continue_list',
+      oldText: oldValue.text,
+      newText: newText,
+      resultText: result.text,
+      reason: 'prefix_matched',
+    );
+    return result;
+  }
+
+  static _InsertedLineBreak? _findSingleInsertedLineBreak(
+    String oldText,
+    String newText,
+  ) {
+    final delta = newText.length - oldText.length;
+    if (delta != 1 && delta != 2) return null;
+
+    var prefixLength = 0;
+    final sharedPrefixLimit = oldText.length < newText.length
+        ? oldText.length
+        : newText.length;
+    while (prefixLength < sharedPrefixLimit &&
+        oldText.codeUnitAt(prefixLength) == newText.codeUnitAt(prefixLength)) {
+      prefixLength++;
+    }
+
+    final lineBreakLength = _insertedLineBreakLength(newText, prefixLength);
+    if (lineBreakLength == null) return null;
+
+    final suffixLength = oldText.length - prefixLength;
+    final suffixStart = prefixLength + lineBreakLength;
+    if (suffixStart > newText.length) return null;
+    if (newText.substring(suffixStart) != oldText.substring(prefixLength)) {
+      return null;
+    }
+
+    if (prefixLength + lineBreakLength + suffixLength != newText.length) {
+      return null;
+    }
+
+    return _InsertedLineBreak(offset: prefixLength, length: lineBreakLength);
+  }
+
+  static _SmartEnterLineContext? _lineContextBeforeInsertedLineBreak(
+    String text,
+    _InsertedLineBreak insertedLineBreak,
+  ) {
+    final insertionOffset = insertedLineBreak.offset;
+    final lineStart = insertionOffset == 0
+        ? 0
+        : text.lastIndexOf('\n', insertionOffset - 1) + 1;
+    return _parseSmartEnterLineContext(
+      text.substring(lineStart, insertionOffset),
+      lineStart: lineStart,
+    );
+  }
+
+  static _SmartEnterLineContext? _parseSmartEnterLineContext(
+    String line, {
+    required int lineStart,
+  }) {
+    final taskMatch = _smartEnterTaskListPrefixRegex.firstMatch(line);
+    if (taskMatch != null) {
+      return _SmartEnterLineContext(
+        lineStart: lineStart,
+        lineText: line,
+        indent: taskMatch.group(1)!,
+        kind: _SmartEnterListKind.task,
+        contentAfterPrefix: line.substring(taskMatch.end),
       );
     }
 
-    final updated = newText.replaceRange(cursor, cursor, prefix);
-    final newCursor = cursor + prefix.length;
-    return SmartEnterResult(
-      text: updated,
-      selection: TextSelection.collapsed(offset: newCursor),
-    );
+    final orderedMatch = _smartEnterOrderedListPrefixRegex.firstMatch(line);
+    if (orderedMatch != null) {
+      final orderedNumber = int.tryParse(orderedMatch.group(2)!);
+      if (orderedNumber == null) return null;
+      return _SmartEnterLineContext(
+        lineStart: lineStart,
+        lineText: line,
+        indent: orderedMatch.group(1)!,
+        kind: _SmartEnterListKind.ordered,
+        orderedNumber: orderedNumber,
+        contentAfterPrefix: line.substring(orderedMatch.end),
+      );
+    }
+
+    final unorderedMatch = _smartEnterUnorderedListPrefixRegex.firstMatch(line);
+    if (unorderedMatch != null) {
+      return _SmartEnterLineContext(
+        lineStart: lineStart,
+        lineText: line,
+        indent: unorderedMatch.group(1)!,
+        kind: _SmartEnterListKind.unordered,
+        contentAfterPrefix: line.substring(unorderedMatch.end),
+      );
+    }
+
+    return null;
+  }
+
+  static int? _insertedLineBreakLength(String text, int offset) {
+    if (offset >= text.length) return null;
+    if (text.codeUnitAt(offset) == 0x0A) return 1;
+    if (offset + 1 < text.length &&
+        text.codeUnitAt(offset) == 0x0D &&
+        text.codeUnitAt(offset + 1) == 0x0A) {
+      return 2;
+    }
+    return null;
+  }
+
+  void _debugLog(
+    String event, {
+    required String oldText,
+    required String newText,
+    String? resultText,
+    required String reason,
+  }) {
+    assert(() {
+      final escapedOld = _escapeForLog(oldText);
+      final escapedNew = _escapeForLog(newText);
+      final escapedResult = resultText == null
+          ? null
+          : _escapeForLog(resultText);
+      developer.log(
+        'SmartEnter $event | reason=$reason | old="$escapedOld" | new="$escapedNew"${escapedResult == null ? '' : ' | result="$escapedResult"'}',
+        name: 'SmartEnter',
+      );
+      return true;
+    }());
+  }
+
+  String _escapeForLog(String value) {
+    return value.replaceAll('\r', r'\r').replaceAll('\n', r'\n');
   }
 }
 
@@ -482,7 +808,11 @@ TextEditingValue toggleBlockStyle(
     }
   }
 
-  final paragraphs = selectedLogicalParagraphs(value.text, value.selection);
+  final paragraphs = _selectedBlockRangesForToggle(
+    value.text,
+    normalizedSelection,
+    targetStyle,
+  );
   if (paragraphs.isEmpty) return value;
 
   final replacements = <_MarkdownReplacement>[];
@@ -509,6 +839,45 @@ TextEditingValue toggleBlockStyle(
 
   if (replacements.isEmpty) return value;
   return _applyReplacements(value, replacements);
+}
+
+List<MarkdownParagraphRange> _selectedBlockRangesForToggle(
+  String text,
+  TextSelection selection,
+  MarkdownBlockStyle targetStyle,
+) {
+  if (selection.isCollapsed && _usesLineScopedToggle(targetStyle)) {
+    final line = _selectedLine(text, selection);
+    if (line != null) {
+      return <MarkdownParagraphRange>[line];
+    }
+  }
+
+  return selectedLogicalParagraphs(text, selection);
+}
+
+bool _usesLineScopedToggle(MarkdownBlockStyle style) {
+  return switch (style) {
+    MarkdownBlockStyle.unorderedList ||
+    MarkdownBlockStyle.orderedList ||
+    MarkdownBlockStyle.taskList => true,
+    MarkdownBlockStyle.heading1 ||
+    MarkdownBlockStyle.heading2 ||
+    MarkdownBlockStyle.heading3 ||
+    MarkdownBlockStyle.quote => false,
+  };
+}
+
+MarkdownParagraphRange? _selectedLine(String text, TextSelection selection) {
+  if (!selection.isCollapsed || text.isEmpty) return null;
+
+  final offset = selection.baseOffset;
+  final lineStart = offset == 0 ? 0 : text.lastIndexOf('\n', offset - 1) + 1;
+  final lineEndIndex = text.indexOf('\n', offset);
+  final lineEnd = lineEndIndex == -1 ? text.length : lineEndIndex;
+  if (lineStart == lineEnd) return null;
+
+  return MarkdownParagraphRange(start: lineStart, end: lineEnd);
 }
 
 MarkdownCutResult? cutParagraphs(TextEditingValue value) {

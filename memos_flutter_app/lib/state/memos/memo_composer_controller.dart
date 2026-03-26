@@ -167,6 +167,16 @@ class MemoComposerController extends ChangeNotifier {
     );
   }
 
+  bool applyDesktopSmartEnter({String lineBreak = '\n'}) {
+    final nextValue = SmartEnterController.applySmartEnterKeyPress(
+      textController.value,
+      lineBreak: lineBreak,
+    );
+    if (nextValue == null) return false;
+    _smartEnterController.applyValue(nextValue);
+    return true;
+  }
+
   void toggleBold() {
     textController.value = wrapMarkdownSelection(
       textController.value,
