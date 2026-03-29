@@ -20,31 +20,29 @@ import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_request.dart';
 import '../../application/sync/sync_types.dart';
 import '../../core/app_localization.dart';
-import '../../core/attachment_toast.dart';
 import '../../application/desktop/desktop_settings_window.dart';
 import '../../core/desktop/shortcuts.dart';
 import '../../application/desktop/desktop_tray_controller.dart';
 import '../../application/desktop/desktop_exit_coordinator.dart';
 import '../../core/drawer_navigation.dart';
-import '../../core/location_launcher.dart';
-import '../../core/markdown_editing.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
 import '../../core/scene_micro_guide_widgets.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
-import '../../core/tag_badge.dart';
 import '../../core/tag_colors.dart';
 import '../../core/tags.dart';
 import '../../core/top_toast.dart';
 import '../../core/uid.dart';
 import '../../core/url.dart';
 import '../../state/memos/memos_list_providers.dart';
+import '../../state/memos/memos_list_load_more_controller.dart';
+import '../../state/memos/memo_composer_controller.dart';
+import '../../state/memos/memo_composer_state.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../../data/models/attachment.dart';
-import '../../data/models/location_settings.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo.dart';
 import '../../data/models/memo_location.dart';
@@ -80,7 +78,6 @@ import '../review/daily_review_screen.dart';
 import '../settings/desktop_shortcuts_overview_screen.dart';
 import '../location_picker/show_location_picker.dart';
 import '../settings/password_lock_screen.dart';
-import 'memo_hero_flight.dart';
 import '../settings/shortcut_editor_screen.dart';
 import '../settings/settings_screen.dart';
 import '../sync/sync_queue_screen.dart';
@@ -96,7 +93,6 @@ import 'memo_image_grid.dart';
 import 'memo_versions_screen.dart';
 import 'memo_media_grid.dart';
 import 'memo_markdown.dart';
-import 'memo_location_line.dart';
 import 'advanced_search_sheet.dart';
 import 'compose_toolbar_shared.dart';
 import 'gallery_attachment_picker.dart';
@@ -104,21 +100,14 @@ import 'link_memo_sheet.dart';
 import 'recycle_bin_screen.dart';
 import 'memo_video_grid.dart';
 import 'note_input_sheet.dart';
-import 'tag_autocomplete.dart';
 import 'windows_camera_capture_screen.dart';
-import 'widgets/audio_row.dart';
 import 'widgets/floating_collapse_button.dart';
+import 'widgets/memos_list_floating_actions.dart';
+import 'widgets/memos_list_inline_compose_card.dart';
+import 'widgets/memos_list_memo_card.dart';
+import 'widgets/memos_list_search_widgets.dart';
+import 'widgets/memos_list_title_menu.dart';
 import '../../i18n/strings.g.dart';
-
-const _maxPreviewLines = 6;
-const _maxPreviewRunes = 220;
-
-typedef _PreviewResult = ({String text, bool truncated});
-
-final RegExp _markdownLinkPattern = RegExp(r'\[([^\]]*)\]\(([^)]+)\)');
-final RegExp _whitespaceCollapsePattern = RegExp(r'\s+');
-
-enum _MemoSyncStatus { none, pending, failed }
 
 enum _MemoSortOption { createAsc, createDesc, updateAsc, updateDesc }
 
@@ -132,186 +121,19 @@ enum _AdvancedSearchChipKind {
   hasRelations,
 }
 
-_MemoSyncStatus _resolveMemoSyncStatus(
+MemoSyncStatus _resolveMemoSyncStatus(
   LocalMemo memo,
   OutboxMemoStatus status,
 ) {
   final uid = memo.uid.trim();
-  if (uid.isEmpty) return _MemoSyncStatus.none;
-  if (status.failed.contains(uid)) return _MemoSyncStatus.failed;
-  if (status.pending.contains(uid)) return _MemoSyncStatus.pending;
+  if (uid.isEmpty) return MemoSyncStatus.none;
+  if (status.failed.contains(uid)) return MemoSyncStatus.failed;
+  if (status.pending.contains(uid)) return MemoSyncStatus.pending;
   return switch (memo.syncState) {
-    SyncState.error => _MemoSyncStatus.failed,
-    SyncState.pending => _MemoSyncStatus.pending,
-    _ => _MemoSyncStatus.none,
+    SyncState.error => MemoSyncStatus.failed,
+    SyncState.pending => MemoSyncStatus.pending,
+    _ => MemoSyncStatus.none,
   };
-}
-
-int _compactRuneCount(String text) {
-  if (text.isEmpty) return 0;
-  final compact = text.replaceAll(_whitespaceCollapsePattern, '');
-  return compact.runes.length;
-}
-
-bool _isWhitespaceRune(int rune) {
-  switch (rune) {
-    case 0x09:
-    case 0x0A:
-    case 0x0B:
-    case 0x0C:
-    case 0x0D:
-    case 0x20:
-      return true;
-    default:
-      return String.fromCharCode(rune).trim().isEmpty;
-  }
-}
-
-int _cutIndexByCompactRunes(String text, int maxCompactRunes) {
-  if (text.isEmpty || maxCompactRunes <= 0) return 0;
-  var count = 0;
-  final iterator = RuneIterator(text);
-  while (iterator.moveNext()) {
-    final rune = iterator.current;
-    if (!_isWhitespaceRune(rune)) {
-      count++;
-      if (count >= maxCompactRunes) {
-        return iterator.rawIndex + iterator.currentSize;
-      }
-    }
-  }
-  return text.length;
-}
-
-String _truncatePreviewText(String text, int maxCompactRunes) {
-  var count = 0;
-  var index = 0;
-
-  for (final match in _markdownLinkPattern.allMatches(text)) {
-    final prefix = text.substring(index, match.start);
-    final prefixCount = _compactRuneCount(prefix);
-    if (count + prefixCount >= maxCompactRunes) {
-      final remaining = maxCompactRunes - count;
-      final cutOffset = _cutIndexByCompactRunes(prefix, remaining);
-      return text.substring(0, index + cutOffset);
-    }
-    count += prefixCount;
-
-    final label = match.group(1) ?? '';
-    final labelCount = _compactRuneCount(label);
-    if (count + labelCount >= maxCompactRunes) {
-      if (count >= maxCompactRunes) {
-        return text.substring(0, match.start);
-      }
-      return text.substring(0, match.end);
-    }
-    count += labelCount;
-    index = match.end;
-  }
-
-  final tail = text.substring(index);
-  final tailCount = _compactRuneCount(tail);
-  if (count + tailCount >= maxCompactRunes) {
-    final remaining = maxCompactRunes - count;
-    final cutOffset = _cutIndexByCompactRunes(tail, remaining);
-    return text.substring(0, index + cutOffset);
-  }
-
-  return text;
-}
-
-class _LruCache<K, V> {
-  _LruCache({required int capacity}) : _capacity = capacity;
-
-  final int _capacity;
-  final _map = <K, V>{};
-
-  V? get(K key) {
-    final value = _map.remove(key);
-    if (value == null) return null;
-    _map[key] = value;
-    return value;
-  }
-
-  void set(K key, V value) {
-    if (_capacity <= 0) return;
-    _map.remove(key);
-    _map[key] = value;
-    if (_map.length > _capacity) {
-      _map.remove(_map.keys.first);
-    }
-  }
-
-  void removeWhere(bool Function(K key) test) {
-    final keys = _map.keys.where(test).toList(growable: false);
-    for (final key in keys) {
-      _map.remove(key);
-    }
-  }
-}
-
-class _MemoRenderCacheEntry {
-  const _MemoRenderCacheEntry({
-    required this.previewText,
-    required this.preview,
-    required this.taskStats,
-  });
-
-  final String previewText;
-  final _PreviewResult preview;
-  final TaskStats taskStats;
-}
-
-final _memoRenderCache = _LruCache<String, _MemoRenderCacheEntry>(
-  capacity: 120,
-);
-
-String _memoRenderCacheKey(
-  LocalMemo memo, {
-  required bool collapseLongContent,
-  required bool collapseReferences,
-  required AppLanguage language,
-}) {
-  return '${memo.uid}|'
-      '${memo.contentFingerprint}|'
-      '${collapseLongContent ? 1 : 0}|'
-      '${collapseReferences ? 1 : 0}|'
-      '${language.name}';
-}
-
-void _invalidateMemoRenderCacheForUid(String memoUid) {
-  final trimmed = memoUid.trim();
-  if (trimmed.isEmpty) return;
-  _memoRenderCache.removeWhere((key) => key.startsWith('$trimmed|'));
-}
-
-_PreviewResult _truncatePreview(
-  String text, {
-  required bool collapseLongContent,
-}) {
-  if (!collapseLongContent) {
-    return (text: text, truncated: false);
-  }
-
-  var result = text;
-  var truncated = false;
-  final lines = result.split('\n');
-  if (lines.length > _maxPreviewLines) {
-    result = lines.take(_maxPreviewLines).join('\n');
-    truncated = true;
-  }
-
-  final truncatedText = _truncatePreviewText(result, _maxPreviewRunes);
-  if (truncatedText != result) {
-    result = truncatedText;
-    truncated = true;
-  }
-
-  if (truncated) {
-    result = result.trimRight();
-    result = result.endsWith('...') ? result : '$result...';
-  }
-  return (text: result, truncated: truncated);
 }
 
 class MemosListScreen extends ConsumerStatefulWidget {
@@ -366,7 +188,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   final _dayDateFmt = DateFormat('yyyy-MM-dd');
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
-  final _inlineComposeController = TextEditingController();
+  late final MemoComposerController _inlineComposer;
   final _inlineComposeFocusNode = FocusNode();
   final _inlineEditorFieldKey = GlobalKey();
   final _inlineTagMenuKey = GlobalKey();
@@ -377,8 +199,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   final _titleKey = GlobalKey();
   final _scrollController = ScrollController();
   final _floatingCollapseViewportKey = GlobalKey();
-  final Map<String, GlobalKey<_MemoCardState>> _memoCardKeys =
-      <String, GlobalKey<_MemoCardState>>{};
+  final Map<String, GlobalKey<MemoListCardState>> _memoCardKeys =
+      <String, GlobalKey<MemoListCardState>>{};
   GlobalKey<SliverAnimatedListState> _listKey =
       GlobalKey<SliverAnimatedListState>();
 
@@ -417,31 +239,21 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   bool _bootstrapImportActive = false;
   int _bootstrapImportTotal = 0;
   DateTime? _bootstrapImportStartedAt;
-  int _pageSize = _initialPageSize;
-  bool _reachedEnd = false;
-  bool _loadingMore = false;
-  String _paginationKey = '';
-  int _lastResultCount = 0;
-  int _currentResultCount = 0;
+  final _loadMoreController = MemosListLoadMoreController(
+    initialPageSize: _initialPageSize,
+    pageStep: _pageStep,
+  );
   String? _lastEmptyDiagnosticKey;
   String? _lastLoadingPhaseKey;
-  bool _currentLoading = false;
-  bool _currentShowSearchLanding = false;
-  double _mobileBottomPullDistance = 0;
-  bool _mobileBottomPullArmed = false;
   bool _floatingCollapseScrolling = false;
   VoiceRecordOverlayDragSession? _voiceOverlayDragSession;
   Future<void>? _voiceOverlayDragFuture;
   bool _floatingCollapseRecomputeScheduled = false;
   String? _floatingCollapseMemoUid;
-  DateTime? _lastDesktopWheelLoadAt;
   bool _scrollToTopAnimating = false;
   Timer? _scrollToTopTimer;
   double _lastObservedScrollOffset = 0;
   DateTime? _lastScrollJumpLogAt;
-  int _loadMoreRequestSeq = 0;
-  int? _activeLoadMoreRequestId;
-  String? _activeLoadMoreSource;
   String? _lastWorkspaceDebugSignature;
   bool _desktopWindowMaximized = false;
   bool _windowsHeaderSearchExpanded = false;
@@ -454,18 +266,30 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   final _inlineTemplateRenderer = MemoTemplateRenderer();
   MemoLocation? _inlineLocation;
   bool _inlineLocating = false;
-  int _inlineTagAutocompleteIndex = 0;
-  String? _inlineTagAutocompleteToken;
-  final List<TextEditingValue> _inlineUndoStack = <TextEditingValue>[];
-  final List<TextEditingValue> _inlineRedoStack = <TextEditingValue>[];
-  TextEditingValue _inlineLastValue = const TextEditingValue();
-  bool _inlineApplyingHistory = false;
-  static const int _inlineMaxHistory = 100;
   Timer? _inlineComposeDraftTimer;
   ProviderSubscription<AsyncValue<String>>? _inlineDraftSubscription;
-  final List<_InlinePendingAttachment> _inlinePendingAttachments =
-      <_InlinePendingAttachment>[];
-  final List<_InlineLinkedMemo> _inlineLinkedMemos = <_InlineLinkedMemo>[];
+  TextEditingController get _inlineComposeController =>
+      _inlineComposer.textController;
+  List<MemoComposerPendingAttachment> get _inlinePendingAttachments =>
+      _inlineComposer.pendingAttachments;
+  List<MemoComposerLinkedMemo> get _inlineLinkedMemos =>
+      _inlineComposer.linkedMemos;
+  bool get _inlineCanUndo => _inlineComposer.canUndo;
+  bool get _inlineCanRedo => _inlineComposer.canRedo;
+  int get _pageSize => _loadMoreController.pageSize;
+  bool get _reachedEnd => _loadMoreController.reachedEnd;
+  bool get _loadingMore => _loadMoreController.loadingMore;
+  String get _paginationKey => _loadMoreController.paginationKey;
+  int get _lastResultCount => _loadMoreController.lastResultCount;
+  int get _currentResultCount => _loadMoreController.currentResultCount;
+  bool get _currentLoading => _loadMoreController.currentLoading;
+  bool get _currentShowSearchLanding => _loadMoreController.currentShowSearchLanding;
+  double get _mobileBottomPullDistance =>
+      _loadMoreController.mobileBottomPullDistance;
+  bool get _mobileBottomPullArmed => _loadMoreController.mobileBottomPullArmed;
+  int? get _activeLoadMoreRequestId =>
+      _loadMoreController.activeLoadMoreRequestId;
+  String? get _activeLoadMoreSource => _loadMoreController.activeLoadMoreSource;
 
   ({int startSec, int endSecExclusive}) _dayRangeSeconds(DateTime day) {
     final localDay = DateTime(day.year, day.month, day.day);
@@ -480,6 +304,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   void initState() {
     super.initState();
     _activeTagFilter = _normalizeTag(widget.tag);
+    _inlineComposer = MemoComposerController();
     _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _handleScroll());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -490,9 +315,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     });
     _inlineComposeController.addListener(_handleInlineComposeChanged);
     _inlineComposeController.addListener(_scheduleInlineComposeDraftSave);
-    _inlineComposeController.addListener(_trackInlineComposeHistory);
     _inlineComposeFocusNode.addListener(_handleInlineComposeFocusChanged);
-    _inlineLastValue = _inlineComposeController.value;
     _applyInlineComposeDraft(ref.read(noteDraftProvider));
     _inlineDraftSubscription = ref.listenManual<AsyncValue<String>>(
       noteDraftProvider,
@@ -600,8 +423,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _inlineDraftSubscription?.close();
     _inlineComposeController.removeListener(_handleInlineComposeChanged);
     _inlineComposeController.removeListener(_scheduleInlineComposeDraftSave);
-    _inlineComposeController.removeListener(_trackInlineComposeHistory);
-    _inlineComposeController.dispose();
+    _inlineComposer.dispose();
     _inlineComposeFocusNode.removeListener(_handleInlineComposeFocusChanged);
     _inlineComposeFocusNode.dispose();
     _searchFocusNode.dispose();
@@ -690,15 +512,11 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
 
   void _resetMobilePullLoadState({bool notify = false}) {
     if (_mobileBottomPullDistance == 0 && !_mobileBottomPullArmed) return;
+    _loadMoreController.resetTouchPull();
     if (notify && mounted) {
-      setState(() {
-        _mobileBottomPullDistance = 0;
-        _mobileBottomPullArmed = false;
-      });
+      setState(() {});
       return;
     }
-    _mobileBottomPullDistance = 0;
-    _mobileBottomPullArmed = false;
   }
 
   bool _handleLoadMoreScrollNotification(ScrollNotification notification) {
@@ -734,22 +552,25 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
               (notification.metrics.maxScrollExtent - 1);
       if (!atBottom || notification.overscroll <= 0) return false;
 
-      final nextDistance = (_mobileBottomPullDistance + notification.overscroll)
-          .clamp(0.0, _mobilePullLoadThreshold * 2);
-      final nextArmed = nextDistance >= _mobilePullLoadThreshold;
-      if (nextDistance != _mobileBottomPullDistance ||
-          nextArmed != _mobileBottomPullArmed) {
-        setState(() {
-          _mobileBottomPullDistance = nextDistance;
-          _mobileBottomPullArmed = nextArmed;
-        });
+      final nextDistance = _mobileBottomPullDistance + notification.overscroll;
+      final previousDistance = _mobileBottomPullDistance;
+      final previousArmed = _mobileBottomPullArmed;
+      _loadMoreController.updateTouchPullDistance(
+        nextDistance,
+        threshold: _mobilePullLoadThreshold,
+      );
+      if (previousDistance != _mobileBottomPullDistance ||
+          previousArmed != _mobileBottomPullArmed) {
+        setState(() {});
       }
       return false;
     }
 
     if (notification is ScrollEndNotification) {
-      final armed = _mobileBottomPullArmed;
-      _resetMobilePullLoadState(notify: true);
+      final armed = _loadMoreController.consumeTouchPullArm();
+      if (mounted) {
+        setState(() {});
+      }
       if (armed) {
         _loadMoreFromActionWithSource('mobile_pull_release');
       }
@@ -772,22 +593,17 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     if (!nearBottom) return;
 
     final now = DateTime.now();
-    final last = _lastDesktopWheelLoadAt;
-    if (last != null && now.difference(last) < _desktopWheelLoadDebounce) {
+    if (_loadMoreController.shouldThrottleDesktopWheel(
+      now,
+      _desktopWheelLoadDebounce,
+    )) {
       return;
     }
-    _lastDesktopWheelLoadAt = now;
     _loadMoreFromActionWithSource('desktop_wheel');
   }
 
   String _describeLoadMoreBlockReason() {
-    if (_currentShowSearchLanding) return 'search_landing';
-    if (_currentLoading) return 'provider_loading';
-    if (_loadingMore) return 'already_loading_more';
-    if (_reachedEnd) return 'reached_end';
-    if (_currentResultCount <= 0) return 'empty_result';
-    if (_currentResultCount < _pageSize) return 'result_less_than_page_size';
-    return 'unknown';
+    return _loadMoreController.describeBlockReason();
   }
 
   Map<String, Object?> _paginationDebugContext({
@@ -1074,8 +890,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _scheduleFloatingCollapseRecompute();
   }
 
-  GlobalKey<_MemoCardState> _memoCardKeyFor(String memoUid) {
-    return _memoCardKeys.putIfAbsent(memoUid, GlobalKey<_MemoCardState>.new);
+  GlobalKey<MemoListCardState> _memoCardKeyFor(String memoUid) {
+    return _memoCardKeys.putIfAbsent(memoUid, GlobalKey<MemoListCardState>.new);
   }
 
   void _syncMemoCardKeys(List<LocalMemo> memos) {
@@ -1094,10 +910,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _recomputeFloatingCollapseTarget() {
-    final viewportRect = _globalRectForKey(_floatingCollapseViewportKey);
+    final viewportRect = globalRectForKey(_floatingCollapseViewportKey);
     if (viewportRect == null) return;
 
-    _MemoFloatingCollapseCandidate? nextCandidate;
+    MemoFloatingCollapseCandidate? nextCandidate;
     for (final key in _memoCardKeys.values) {
       final candidate = key.currentState?.resolveFloatingCollapseCandidate(
         viewportRect,
@@ -1154,12 +970,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _triggerLoadMore({required String source}) {
-    final requestId = ++_loadMoreRequestSeq;
     final previousPageSize = _pageSize;
-    _activeLoadMoreRequestId = requestId;
-    _activeLoadMoreSource = source;
-    _loadingMore = true;
-    _pageSize += _pageStep;
+    final requestId = _loadMoreController.beginLoadMore(source: source);
     _logPaginationDebug(
       'load_more_trigger',
       metrics: _scrollController.hasClients ? _scrollController.position : null,
@@ -1176,15 +988,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   bool _canLoadMore() {
-    if (_currentShowSearchLanding || _currentLoading) return false;
     if (_scrollToTopAnimating) return false;
-    if (_loadingMore || _reachedEnd) return false;
-    if (_currentResultCount <= 0) return false;
-    if (_currentResultCount < _pageSize) {
-      _reachedEnd = true;
-      return false;
-    }
-    return true;
+    return _loadMoreController.canLoadMore();
   }
 
   void _loadMoreFromActionWithSource(String source) {
@@ -1785,112 +1590,27 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _toggleInlineHighlight() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '==',
-      suffix: '==',
-    );
+    _inlineComposer.toggleHighlight();
   }
 
   void _toggleInlineUnorderedList() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.unorderedList,
-    );
+    _inlineComposer.toggleUnorderedList();
   }
 
   void _toggleInlineOrderedList() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.orderedList,
-    );
+    _inlineComposer.toggleOrderedList();
   }
 
   void _toggleInlineTaskList() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.taskList,
-    );
-  }
-
-  void _toggleInlineQuote() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.quote,
-    );
-  }
-
-  void _toggleInlineHeading1() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.heading1,
-    );
-  }
-
-  void _toggleInlineHeading2() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.heading2,
-    );
-  }
-
-  void _toggleInlineHeading3() {
-    _inlineComposeController.value = toggleBlockStyle(
-      _inlineComposeController.value,
-      MarkdownBlockStyle.heading3,
-    );
-  }
-
-  void _insertInlineDivider() {
-    _inlineComposeController.value = insertBlockSnippet(
-      _inlineComposeController.value,
-      '---',
-      caretOffset: 3,
-    );
+    _inlineComposer.toggleTaskList();
   }
 
   void _insertInlineCodeBlock() {
-    _inlineComposeController.value = insertBlockSnippet(
-      _inlineComposeController.value,
-      '```\n\n```',
-      caretOffset: 4,
-    );
-  }
-
-  void _insertInlineMath() {
-    _inlineComposeController.value = insertInlineSnippet(
-      _inlineComposeController.value,
-      r'$$',
-      caretOffset: 1,
-    );
-  }
-
-  void _insertInlineBlockMath() {
-    const blockMath = '\$\$\n\n\$\$';
-    _inlineComposeController.value = insertBlockSnippet(
-      _inlineComposeController.value,
-      blockMath,
-      caretOffset: 3,
-    );
-  }
-
-  void _insertInlineTableTemplate() {
-    _inlineComposeController.value = insertBlockSnippet(
-      _inlineComposeController.value,
-      '| Column 1 | Column 2 |\n| --- | --- |\n| Value 1 | Value 2 |',
-      caretOffset: 2,
-    );
+    _inlineComposer.insertCodeBlock();
   }
 
   Future<void> _cutInlineParagraphs() async {
-    final result = cutParagraphs(_inlineComposeController.value);
-    if (result == null) return;
-    try {
-      await Clipboard.setData(ClipboardData(text: result.copiedText));
-    } catch (_) {
-      return;
-    }
-    _inlineComposeController.value = result.value;
+    await _inlineComposer.cutCurrentParagraphs();
   }
 
   bool _handleDesktopShortcuts(KeyEvent event) {
@@ -2224,7 +1944,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     BuildContext context, {
     required VoidCallback maybeHaptic,
   }) {
-    return _PillRow(
+    return MemosListPillRow(
       onWeeklyInsights: () {
         maybeHaptic();
         Navigator.of(
@@ -2399,12 +2119,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                 ),
                 const SizedBox(width: 8),
               ],
-              _DesktopWindowIconButton(
+              DesktopWindowIconButton(
                 tooltip: context.t.strings.legacy.msg_minimize,
                 onPressed: () => unawaited(_minimizeDesktopWindow()),
                 icon: Icons.minimize_rounded,
               ),
-              _DesktopWindowIconButton(
+              DesktopWindowIconButton(
                 tooltip: _desktopWindowMaximized
                     ? context.t.strings.legacy.msg_restore_window
                     : context.t.strings.legacy.msg_maximize,
@@ -2413,7 +2133,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                     ? Icons.filter_none_rounded
                     : Icons.crop_square_rounded,
               ),
-              _DesktopWindowIconButton(
+              DesktopWindowIconButton(
                 tooltip: context.t.strings.legacy.msg_close,
                 onPressed: () => unawaited(_closeDesktopWindow()),
                 icon: Icons.close_rounded,
@@ -2980,7 +2700,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
               runSpacing: 8,
               children: [
                 for (final chip in chips)
-                  _FilterTagChip(
+                  MemosListFilterTagChip(
                     label: chip.label,
                     onClear: () => _removeSingleAdvancedFilter(chip.kind),
                   ),
@@ -3256,15 +2976,15 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   Future<void> _handleMemoSyncStatusTap(
-    _MemoSyncStatus status,
+    MemoSyncStatus status,
     String memoUid,
   ) async {
     switch (status) {
-      case _MemoSyncStatus.failed:
+      case MemoSyncStatus.failed:
         await _retryFailedMemoSync(memoUid);
         return;
-      case _MemoSyncStatus.pending:
-      case _MemoSyncStatus.none:
+      case MemoSyncStatus.pending:
+      case MemoSyncStatus.none:
         _openSyncQueue();
         return;
     }
@@ -3371,78 +3091,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _syncInlineTagAutocompleteState() {
-    final activeQuery = detectActiveTagQuery(_inlineComposeController.value);
-    final token = activeQuery == null
-        ? null
-        : '${activeQuery.start}:${activeQuery.query.toLowerCase()}';
-    if (_inlineTagAutocompleteToken != token) {
-      _inlineTagAutocompleteToken = token;
-      _inlineTagAutocompleteIndex = 0;
-    }
-
-    final suggestions = _currentInlineTagSuggestions();
-    if (suggestions.isEmpty) {
-      _inlineTagAutocompleteIndex = 0;
-      return;
-    }
-
-    _inlineTagAutocompleteIndex = _inlineTagAutocompleteIndex
-        .clamp(0, suggestions.length - 1)
-        .toInt();
+    _inlineComposer.syncTagAutocompleteState(
+      tagStats: _currentInlineTagStats(),
+      hasFocus: _inlineComposeFocusNode.hasFocus,
+    );
   }
 
   List<TagStat> _currentInlineTagStats() {
     return ref.read(tagStatsProvider).valueOrNull ?? const <TagStat>[];
-  }
-
-  List<TagStat> _currentInlineTagSuggestions() {
-    if (!_inlineComposeFocusNode.hasFocus) return const <TagStat>[];
-    final activeQuery = detectActiveTagQuery(_inlineComposeController.value);
-    if (activeQuery == null) return const <TagStat>[];
-    return buildTagSuggestions(
-      _currentInlineTagStats(),
-      query: activeQuery.query,
-    );
-  }
-
-  KeyEventResult _handleInlineTagAutocompleteKeyEvent(
-    FocusNode node,
-    KeyEvent event,
-  ) {
-    if (event is! KeyDownEvent) {
-      return KeyEventResult.ignored;
-    }
-
-    final activeQuery = detectActiveTagQuery(_inlineComposeController.value);
-    final suggestions = _currentInlineTagSuggestions();
-    final key = event.logicalKey;
-    if (activeQuery != null && suggestions.isNotEmpty) {
-      if (key == LogicalKeyboardKey.arrowDown) {
-        setState(() {
-          _inlineTagAutocompleteIndex =
-              (_inlineTagAutocompleteIndex + 1) % suggestions.length;
-        });
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.arrowUp) {
-        setState(() {
-          _inlineTagAutocompleteIndex =
-              (_inlineTagAutocompleteIndex - 1 + suggestions.length) %
-              suggestions.length;
-        });
-        return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.enter ||
-          key == LogicalKeyboardKey.numpadEnter) {
-        final selectedIndex = _inlineTagAutocompleteIndex
-            .clamp(0, suggestions.length - 1)
-            .toInt();
-        _applyInlineTagSuggestion(activeQuery, suggestions[selectedIndex]);
-        return KeyEventResult.handled;
-      }
-    }
-
-    return KeyEventResult.ignored;
   }
 
   String _resolveInlineComposeVisibility() {
@@ -3495,131 +3151,31 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     }
   }
 
-  void _insertInlineComposeText(String text, {int? caretOffset}) {
-    _inlineComposeController.value = insertInlineSnippet(
-      _inlineComposeController.value,
-      text,
-      caretOffset: caretOffset,
-    );
-  }
-
-  void _startInlineTagAutocomplete() {
-    if (_inlineComposeBusy) return;
-    final activeQuery = detectActiveTagQuery(_inlineComposeController.value);
-    if (activeQuery == null) {
-      _insertInlineComposeText('#');
-    }
-    _inlineTagAutocompleteIndex = 0;
-    _inlineComposeFocusNode.requestFocus();
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  void _applyInlineTagSuggestion(ActiveTagQuery query, TagStat tag) {
-    final value = _inlineComposeController.value;
-    final selection = value.selection;
-    final end = selection.isValid && selection.isCollapsed
-        ? selection.extentOffset.clamp(query.start, value.text.length).toInt()
-        : query.end;
-    final replacement = '#${tag.path} ';
-    final nextText = value.text.replaceRange(query.start, end, replacement);
-    final caret = query.start + replacement.length;
-    _inlineComposeController.value = value.copyWith(
-      text: nextText,
-      selection: TextSelection.collapsed(offset: caret),
-      composing: TextRange.empty,
-    );
-    _inlineTagAutocompleteIndex = 0;
-    _inlineTagAutocompleteToken = null;
-    _inlineComposeFocusNode.requestFocus();
-  }
-
   void _replaceInlineComposeText(String text) {
-    _inlineComposeController.value = _inlineComposeController.value.copyWith(
-      text: text,
-      selection: TextSelection.collapsed(offset: text.length),
-      composing: TextRange.empty,
+    _inlineComposer.replaceText(
+      text,
+      clearHistory: false,
     );
-  }
-
-  void _trackInlineComposeHistory() {
-    if (_inlineApplyingHistory) return;
-    final value = _inlineComposeController.value;
-    if (value.text == _inlineLastValue.text &&
-        value.selection == _inlineLastValue.selection) {
-      return;
-    }
-    _inlineUndoStack.add(_inlineLastValue);
-    if (_inlineUndoStack.length > _inlineMaxHistory) {
-      _inlineUndoStack.removeAt(0);
-    }
-    _inlineRedoStack.clear();
-    _inlineLastValue = value;
   }
 
   void _undoInlineCompose() {
-    if (_inlineUndoStack.isEmpty || _inlineComposeBusy) return;
-    _inlineApplyingHistory = true;
-    final current = _inlineComposeController.value;
-    final previous = _inlineUndoStack.removeLast();
-    _inlineRedoStack.add(current);
-    _inlineComposeController.value = previous;
-    _inlineLastValue = previous;
-    _inlineApplyingHistory = false;
+    if (!_inlineCanUndo || _inlineComposeBusy) return;
+    _inlineComposer.undo();
     if (mounted) setState(() {});
   }
 
   void _redoInlineCompose() {
-    if (_inlineRedoStack.isEmpty || _inlineComposeBusy) return;
-    _inlineApplyingHistory = true;
-    final current = _inlineComposeController.value;
-    final next = _inlineRedoStack.removeLast();
-    _inlineUndoStack.add(current);
-    _inlineComposeController.value = next;
-    _inlineLastValue = next;
-    _inlineApplyingHistory = false;
+    if (!_inlineCanRedo || _inlineComposeBusy) return;
+    _inlineComposer.redo();
     if (mounted) setState(() {});
   }
 
   void _toggleInlineBold() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '**',
-      suffix: '**',
-    );
-  }
-
-  void _toggleInlineItalic() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '*',
-      suffix: '*',
-    );
-  }
-
-  void _toggleInlineStrikethrough() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '~~',
-      suffix: '~~',
-    );
-  }
-
-  void _toggleInlineCode() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '`',
-      suffix: '`',
-    );
+    _inlineComposer.toggleBold();
   }
 
   void _toggleInlineUnderline() {
-    _inlineComposeController.value = wrapMarkdownSelection(
-      _inlineComposeController.value,
-      prefix: '<u>',
-      suffix: '</u>',
-    );
+    _inlineComposer.toggleUnderline();
   }
 
   Future<void> _openWindowsCameraSettings() async {
@@ -3706,17 +3262,16 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       if (!mounted) return;
       final filename = path.split(Platform.pathSeparator).last;
       final mimeType = _guessInlineAttachmentMimeType(filename);
-      setState(() {
-        _inlinePendingAttachments.add(
-          _InlinePendingAttachment(
-            uid: generateUid(),
-            filePath: path,
-            filename: filename,
-            mimeType: mimeType,
-            size: size,
-          ),
-        );
-      });
+      _inlineComposer.addPendingAttachments([
+        MemoComposerPendingAttachment(
+          uid: generateUid(),
+          filePath: path,
+          filename: filename,
+          mimeType: mimeType,
+          size: size,
+        ),
+      ]);
+      setState(() {});
       showTopToast(
         context,
         context.t.strings.legacy.msg_added_photo_attachment,
@@ -3757,218 +3312,31 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     }
   }
 
-  Widget _buildInlineComposeToolbar({
-    required BuildContext context,
-    required bool isDark,
-    required MemoToolbarPreferences preferences,
-    required List<MemoTemplate> availableTemplates,
-    required String visibilityLabel,
-    required IconData visibilityIcon,
-    required Color visibilityColor,
-  }) {
-    final actions = <MemoComposeToolbarActionSpec>[
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.bold,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineBold,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.italic,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineItalic,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.strikethrough,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineStrikethrough,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.inlineCode,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineCode,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.list,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineUnorderedList,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.orderedList,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineOrderedList,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.taskList,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineTaskList,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.quote,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineQuote,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.heading1,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineHeading1,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.heading2,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineHeading2,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.heading3,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineHeading3,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.underline,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineUnderline,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.highlight,
-        enabled: !_inlineComposeBusy,
-        onPressed: _toggleInlineHighlight,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.divider,
-        enabled: !_inlineComposeBusy,
-        onPressed: _insertInlineDivider,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.codeBlock,
-        enabled: !_inlineComposeBusy,
-        onPressed: _insertInlineCodeBlock,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.inlineMath,
-        enabled: !_inlineComposeBusy,
-        onPressed: _insertInlineMath,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.blockMath,
-        enabled: !_inlineComposeBusy,
-        onPressed: _insertInlineBlockMath,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.table,
-        enabled: !_inlineComposeBusy,
-        onPressed: _insertInlineTableTemplate,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.cutParagraph,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(_cutInlineParagraphs()),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.undo,
-        enabled: !_inlineComposeBusy && _inlineUndoStack.isNotEmpty,
-        onPressed: _undoInlineCompose,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.redo,
-        enabled: !_inlineComposeBusy && _inlineRedoStack.isNotEmpty,
-        onPressed: _redoInlineCompose,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.tag,
-        buttonKey: _inlineTagMenuKey,
-        enabled: !_inlineComposeBusy,
-        onPressed: _startInlineTagAutocomplete,
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.template,
-        buttonKey: _inlineTemplateMenuKey,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(
-          _openInlineTemplateMenuFromKey(
-            _inlineTemplateMenuKey,
-            availableTemplates,
-          ),
-        ),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.attachment,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(_pickInlineAttachments()),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.gallery,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(_handleInlineGalleryToolbarPressed()),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.todo,
-        buttonKey: _inlineTodoMenuKey,
-        enabled: !_inlineComposeBusy,
-        onPressed: () =>
-            unawaited(_openInlineTodoShortcutMenuFromKey(_inlineTodoMenuKey)),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.link,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(_openInlineLinkMemoSheet()),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.camera,
-        enabled: !_inlineComposeBusy,
-        onPressed: () => unawaited(_captureInlinePhoto()),
-      ),
-      MemoComposeToolbarActionSpec.builtin(
-        id: MemoToolbarActionId.location,
-        icon: _inlineLocating ? Icons.my_location : null,
-        enabled: !_inlineComposeBusy && !_inlineLocating,
-        onPressed: () => unawaited(_requestInlineLocation()),
-      ),
-      ...preferences.customButtons.map(
-        (button) => MemoComposeToolbarActionSpec.custom(
-          button: button,
-          enabled: !_inlineComposeBusy,
-          onPressed: () => _insertInlineComposeText(button.insertContent),
-        ),
-      ),
-    ];
-
-    return MemoComposeToolbar(
-      isDark: isDark,
-      preferences: preferences,
-      actions: actions,
-      visibilityMessage: context.t.strings.legacy.msg_visibility_2(
-        visibilityLabel: visibilityLabel,
-      ),
-      visibilityIcon: visibilityIcon,
-      visibilityColor: visibilityColor,
-      visibilityButtonKey: _inlineVisibilityMenuKey,
-      onVisibilityPressed: _inlineComposeBusy
-          ? null
-          : () => unawaited(
-              _openInlineVisibilityMenuFromKey(_inlineVisibilityMenuKey),
-            ),
-    );
-  }
-
   Set<String> get _inlineLinkedMemoNames =>
-      _inlineLinkedMemos.map((m) => m.name).toSet();
+      _inlineComposer.linkedMemoNames;
 
   void _addInlineLinkedMemo(Memo memo) {
     final name = memo.name.trim();
     if (name.isEmpty) return;
-    if (_inlineLinkedMemos.any((m) => m.name == name)) return;
+    if (_inlineComposer.linkedMemos.any((item) => item.name == name)) return;
     final raw = memo.content.replaceAll(RegExp(r'\s+'), ' ').trim();
     final label = raw.isNotEmpty
         ? _truncateInlineLabel(raw)
         : _truncateInlineLabel(
             name.startsWith('memos/') ? name.substring('memos/'.length) : name,
           );
-    setState(
-      () => _inlineLinkedMemos.add(_InlineLinkedMemo(name: name, label: label)),
+    _inlineComposer.addLinkedMemo(
+      MemoComposerLinkedMemo(name: name, label: label),
     );
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _removeInlineLinkedMemo(String name) {
-    setState(() => _inlineLinkedMemos.removeWhere((m) => m.name == name));
+    if (_inlineComposer.removeLinkedMemo(name) && mounted) {
+      setState(() {});
+    }
   }
 
   String _truncateInlineLabel(String text, {int maxLength = 24}) {
@@ -4222,10 +3590,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     return mimeType.trim().toLowerCase().startsWith('image/');
   }
 
-  bool _isInlineVideoMimeType(String mimeType) {
-    return mimeType.trim().toLowerCase().startsWith('video/');
-  }
-
   Future<void> _handleInlineGalleryToolbarPressed() async {
     if (!isMemoGalleryToolbarSupportedPlatform) {
       showTopToast(context, context.t.strings.legacy.msg_gallery_mobile_only);
@@ -4247,21 +3611,18 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         return;
       }
 
-      setState(() {
-        _inlinePendingAttachments.addAll(
-          result.attachments
-              .map(
-                (attachment) => _InlinePendingAttachment(
-                  uid: generateUid(),
-                  filePath: attachment.filePath,
-                  filename: attachment.filename,
-                  mimeType: attachment.mimeType,
-                  size: attachment.size,
-                ),
-              )
-              .toList(growable: false),
-        );
-      });
+      _inlineComposer.addPendingAttachments(
+        result.attachments.map(
+          (attachment) => MemoComposerPendingAttachment(
+            uid: generateUid(),
+            filePath: attachment.filePath,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+          ),
+        ),
+      );
+      setState(() {});
       final skipped = [
         if (result.skippedCount > 0)
           context.t.strings.legacy.msg_unavailable_file_count(
@@ -4301,7 +3662,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       final files = result?.files ?? const <PlatformFile>[];
       if (files.isEmpty) return;
 
-      final added = <_InlinePendingAttachment>[];
+      final added = <MemoComposerPendingAttachment>[];
       var missingPathCount = 0;
       Directory? tempDir;
       for (final file in files) {
@@ -4346,7 +3707,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             : path.split(Platform.pathSeparator).last;
         final mimeType = _guessInlineAttachmentMimeType(filename);
         added.add(
-          _InlinePendingAttachment(
+          MemoComposerPendingAttachment(
             uid: generateUid(),
             filePath: path,
             filename: filename,
@@ -4365,9 +3726,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         return;
       }
 
-      setState(() {
-        _inlinePendingAttachments.addAll(added);
-      });
+      _inlineComposer.addPendingAttachments(added);
+      setState(() {});
       final skipped = [
         if (missingPathCount > 0)
           context.t.strings.legacy.msg_unavailable_file_count(
@@ -4394,11 +3754,13 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _removeInlinePendingAttachment(String uid) {
-    setState(() => _inlinePendingAttachments.removeWhere((a) => a.uid == uid));
+    if (_inlineComposer.removePendingAttachment(uid) && mounted) {
+      setState(() {});
+    }
   }
 
   File? _resolveInlinePendingAttachmentFile(
-    _InlinePendingAttachment attachment,
+    MemoComposerPendingAttachment attachment,
   ) {
     final path = attachment.filePath.trim();
     if (path.isEmpty) return null;
@@ -4412,7 +3774,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   List<
     ({
       AttachmentImageSource source,
-      _InlinePendingAttachment attachment,
+      MemoComposerPendingAttachment attachment,
       File file,
     })
   >
@@ -4421,7 +3783,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         <
           ({
             AttachmentImageSource source,
-            _InlinePendingAttachment attachment,
+            MemoComposerPendingAttachment attachment,
             File file,
           })
         >[];
@@ -4444,7 +3806,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   Future<void> _openInlineAttachmentViewer(
-    _InlinePendingAttachment attachment,
+    MemoComposerPendingAttachment attachment,
   ) async {
     final items = _inlinePendingImageSources();
     if (items.isEmpty) return;
@@ -4469,617 +3831,19 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final id = result.sourceId;
     if (!id.startsWith('inline-pending:')) return;
     final uid = id.substring('inline-pending:'.length);
-    final index = _inlinePendingAttachments.indexWhere((a) => a.uid == uid);
-    if (index < 0) return;
-    setState(() {
-      _inlinePendingAttachments[index] = _InlinePendingAttachment(
+    if (!_inlineComposer.replacePendingAttachment(
+      uid,
+      MemoComposerPendingAttachment(
         uid: uid,
         filePath: result.filePath,
         filename: result.filename,
         mimeType: result.mimeType,
         size: result.size,
-      );
-    });
-  }
-
-  Widget _buildInlineAttachmentPreview(bool isDark) {
-    if (_inlinePendingAttachments.isEmpty) return const SizedBox.shrink();
-    const tileSize = 62.0;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: SizedBox(
-        height: tileSize,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            children: [
-              for (var i = 0; i < _inlinePendingAttachments.length; i++) ...[
-                if (i > 0) const SizedBox(width: 10),
-                _buildInlineAttachmentTile(
-                  _inlinePendingAttachments[i],
-                  isDark: isDark,
-                  size: tileSize,
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
-    );
-  }
-
-  Widget _buildInlineAttachmentTile(
-    _InlinePendingAttachment attachment, {
-    required bool isDark,
-    required double size,
-  }) {
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final surfaceColor = isDark
-        ? MemoFlowPalette.audioSurfaceDark
-        : MemoFlowPalette.audioSurfaceLight;
-    final iconColor =
-        (isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight)
-            .withValues(alpha: 0.6);
-    final removeBg = isDark
-        ? Colors.black.withValues(alpha: 0.55)
-        : Colors.black.withValues(alpha: 0.5);
-    final shadowColor = Colors.black.withValues(alpha: isDark ? 0.35 : 0.12);
-    final isImage = _isInlineImageMimeType(attachment.mimeType);
-    final isVideo = _isInlineVideoMimeType(attachment.mimeType);
-    final file = _resolveInlinePendingAttachmentFile(attachment);
-
-    Widget content;
-    if (isImage && file != null) {
-      content = Image.file(
-        file,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return _inlineAttachmentFallback(
-            iconColor: iconColor,
-            surfaceColor: surfaceColor,
-            isImage: true,
-          );
-        },
-      );
-    } else if (isVideo && file != null) {
-      final entry = MemoVideoEntry(
-        id: attachment.uid,
-        title: attachment.filename.isNotEmpty ? attachment.filename : 'video',
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        localFile: file,
-        videoUrl: null,
-        headers: null,
-      );
-      content = AttachmentVideoThumbnail(
-        entry: entry,
-        width: size,
-        height: size,
-        borderRadius: 14,
-        fit: BoxFit.cover,
-        showPlayIcon: false,
-      );
-    } else {
-      content = _inlineAttachmentFallback(
-        iconColor: iconColor,
-        surfaceColor: surfaceColor,
-        isImage: isImage,
-        isVideo: isVideo,
-      );
-    }
-
-    final tile = Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: surfaceColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor.withValues(alpha: 0.7)),
-        boxShadow: [
-          BoxShadow(
-            color: shadowColor,
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ClipRRect(borderRadius: BorderRadius.circular(14), child: content),
-    );
-
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        GestureDetector(
-          onTap: (isImage && file != null)
-              ? () => _openInlineAttachmentViewer(attachment)
-              : null,
-          child: tile,
-        ),
-        Positioned(
-          top: 4,
-          right: 4,
-          child: GestureDetector(
-            onTap: _inlineComposeBusy
-                ? null
-                : () => _removeInlinePendingAttachment(attachment.uid),
-            child: Container(
-              width: 18,
-              height: 18,
-              decoration: BoxDecoration(
-                color: removeBg,
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: const Icon(Icons.close, size: 12, color: Colors.white),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _inlineAttachmentFallback({
-    required Color iconColor,
-    required Color surfaceColor,
-    required bool isImage,
-    bool isVideo = false,
-  }) {
-    return Container(
-      color: surfaceColor,
-      alignment: Alignment.center,
-      child: Icon(
-        isImage
-            ? Icons.image_outlined
-            : (isVideo
-                  ? Icons.videocam_outlined
-                  : Icons.insert_drive_file_outlined),
-        size: 22,
-        color: iconColor,
-      ),
-    );
-  }
-
-  void _addInlineVoiceAttachment(VoiceRecordResult result) {
-    final messenger = ScaffoldMessenger.of(context);
-    final path = result.filePath.trim();
-    if (path.isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_recording_path_missing),
-        ),
-      );
+    )) {
       return;
     }
-
-    final file = File(path);
-    if (!file.existsSync()) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            context.t.strings.legacy.msg_recording_file_not_found_2,
-          ),
-        ),
-      );
-      return;
-    }
-
-    final size = result.size > 0 ? result.size : file.lengthSync();
-    final filename = result.fileName.trim().isNotEmpty
-        ? result.fileName.trim()
-        : path.split(Platform.pathSeparator).last;
-    final mimeType = _guessInlineAttachmentMimeType(filename);
-    setState(() {
-      _inlinePendingAttachments.add(
-        _InlinePendingAttachment(
-          uid: generateUid(),
-          filePath: path,
-          filename: filename,
-          mimeType: mimeType,
-          size: size,
-        ),
-      );
-    });
-    showTopToast(context, context.t.strings.legacy.msg_added_voice_attachment);
-  }
-
-  Future<void> _submitInlineCompose() async {
-    if (_inlineComposeBusy || !widget.enableCompose) return;
-    final content = _inlineComposeController.text.trimRight();
-    final relations = _inlineLinkedMemos
-        .map((m) => m.toRelationJson())
-        .toList(growable: false);
-    final pendingAttachments = List<_InlinePendingAttachment>.from(
-      _inlinePendingAttachments,
-    );
-    final hasAttachments = pendingAttachments.isNotEmpty;
-    if (content.trim().isEmpty && !hasAttachments) {
-      if (relations.isNotEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.t.strings.legacy.msg_enter_content_before_creating_link,
-            ),
-          ),
-        );
-        return;
-      }
-      if (!mounted) return;
-      final result = await Navigator.of(context).push<VoiceRecordResult>(
-        MaterialPageRoute(builder: (_) => const VoiceRecordScreen()),
-      );
-      if (!mounted || result == null) return;
-      _addInlineVoiceAttachment(result);
-      return;
-    }
-
-    setState(() => _inlineComposeBusy = true);
-    try {
-      final now = DateTime.now();
-      final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
-      final uid = generateUid();
-      final tags = extractTags(content);
-      final visibility = _currentInlineVisibility();
-      final attachments = pendingAttachments
-          .map((attachment) {
-            final rawPath = attachment.filePath.trim();
-            final externalLink = rawPath.isEmpty
-                ? ''
-                : rawPath.startsWith('content://')
-                ? rawPath
-                : Uri.file(rawPath).toString();
-            return Attachment(
-              name: 'attachments/${attachment.uid}',
-              filename: attachment.filename,
-              type: attachment.mimeType,
-              size: attachment.size,
-              externalLink: externalLink,
-            ).toJson();
-          })
-          .toList(growable: false);
-      final pendingUploads = pendingAttachments
-          .map(
-            (attachment) => MemosListPendingAttachment(
-              uid: attachment.uid,
-              filePath: attachment.filePath,
-              filename: attachment.filename,
-              mimeType: attachment.mimeType,
-              size: attachment.size,
-            ),
-          )
-          .toList(growable: false);
-
-      await ref
-          .read(memosListControllerProvider)
-          .createInlineComposeMemo(
-            uid: uid,
-            content: content,
-            visibility: visibility,
-            nowSec: nowSec,
-            tags: tags,
-            attachments: attachments,
-            location: _inlineLocation,
-            relations: relations,
-            pendingAttachments: pendingUploads,
-          );
-
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
-              ),
-            ),
-      );
-      _inlineComposeDraftTimer?.cancel();
-      _inlineComposeController.clear();
-      await ref.read(noteDraftProvider.notifier).clear();
-      if (mounted) {
-        setState(() {
-          _inlinePendingAttachments.clear();
-          _inlineLinkedMemos.clear();
-          _inlineLocation = null;
-          _inlineLocating = false;
-          _inlineUndoStack.clear();
-          _inlineRedoStack.clear();
-          _inlineLastValue = _inlineComposeController.value;
-        });
-        _inlineComposeFocusNode.requestFocus();
-      }
-    } catch (error, stackTrace) {
-      ref
-          .read(logManagerProvider)
-          .error(
-            'Inline compose submit failed',
-            error: error,
-            stackTrace: stackTrace,
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_create_failed_2(e: error)),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _inlineComposeBusy = false);
-      }
-    }
-  }
-
-  Widget _buildInlineComposeCard({
-    required bool isDark,
-    required List<TagStat> tagStats,
-    required List<MemoTemplate> availableTemplates,
-  }) {
-    final cardColor = isDark
-        ? MemoFlowPalette.cardDark
-        : MemoFlowPalette.cardLight;
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final textColor = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final hintColor = textColor.withValues(alpha: isDark ? 0.42 : 0.55);
-    final chipBg = isDark
-        ? Colors.white.withValues(alpha: 0.06)
-        : MemoFlowPalette.audioSurfaceLight;
-    final chipText = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final tagColorLookup = ref.watch(tagColorLookupProvider);
-    final toolbarPreferences = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
-    );
-    final inlineComposeMinLines = Platform.isWindows ? 3 : 1;
-    final inlineComposeMaxLines = Platform.isWindows ? 8 : 5;
-    final (visibilityLabel, visibilityIcon, visibilityColor) =
-        _resolveInlineVisibilityStyle(context, _currentInlineVisibility());
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor.withValues(alpha: 0.75)),
-        boxShadow: isDark
-            ? null
-            : [
-                BoxShadow(
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
-                  color: Colors.black.withValues(alpha: 0.05),
-                ),
-              ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildInlineAttachmentPreview(isDark),
-          if (_inlineLinkedMemos.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: _inlineLinkedMemos
-                    .map(
-                      (memo) => InputChip(
-                        avatar: Icon(
-                          Icons.alternate_email_rounded,
-                          size: 16,
-                          color: chipText.withValues(alpha: 0.75),
-                        ),
-                        label: Text(
-                          memo.label,
-                          style: TextStyle(fontSize: 12, color: chipText),
-                        ),
-                        backgroundColor: chipBg,
-                        deleteIconColor: chipText.withValues(alpha: 0.55),
-                        onDeleted: _inlineComposeBusy
-                            ? null
-                            : () => _removeInlineLinkedMemo(memo.name),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ),
-          if (_inlineLocating)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    context.t.strings.legacy.msg_locating,
-                    style: TextStyle(fontSize: 12, color: chipText),
-                  ),
-                ],
-              ),
-            ),
-          if (_inlineLocation != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: InputChip(
-                  avatar: Icon(
-                    Icons.place_outlined,
-                    size: 16,
-                    color: chipText.withValues(alpha: 0.75),
-                  ),
-                  label: Text(
-                    _inlineLocation!.displayText(fractionDigits: 6),
-                    style: TextStyle(fontSize: 12, color: chipText),
-                  ),
-                  backgroundColor: chipBg,
-                  deleteIconColor: chipText.withValues(alpha: 0.55),
-                  onPressed: _inlineComposeBusy ? null : _requestInlineLocation,
-                  onDeleted: _inlineComposeBusy
-                      ? null
-                      : () => setState(() => _inlineLocation = null),
-                ),
-              ),
-            ),
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: _inlineComposeController,
-            builder: (context, value, _) {
-              final inlineEditorTextStyle = TextStyle(
-                fontSize: 15,
-                height: 1.35,
-                color: textColor,
-              );
-              final inlineActiveTagQuery = _inlineComposeFocusNode.hasFocus
-                  ? detectActiveTagQuery(value)
-                  : null;
-              final inlineTagSuggestions = inlineActiveTagQuery == null
-                  ? const <TagStat>[]
-                  : buildTagSuggestions(
-                      tagStats,
-                      query: inlineActiveTagQuery.query,
-                    );
-              final highlightedInlineTagSuggestionIndex =
-                  inlineTagSuggestions.isEmpty
-                  ? 0
-                  : _inlineTagAutocompleteIndex
-                        .clamp(0, inlineTagSuggestions.length - 1)
-                        .toInt();
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  KeyedSubtree(
-                    key: _inlineEditorFieldKey,
-                    child: Focus(
-                      canRequestFocus: false,
-                      onKeyEvent: _handleInlineTagAutocompleteKeyEvent,
-                      child: TextField(
-                        controller: _inlineComposeController,
-                        focusNode: _inlineComposeFocusNode,
-                        enabled: !_inlineComposeBusy,
-                        inputFormatters: const [SmartEnterTextInputFormatter()],
-                        minLines: inlineComposeMinLines,
-                        maxLines: inlineComposeMaxLines,
-                        keyboardType: TextInputType.multiline,
-                        style: inlineEditorTextStyle,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          border: InputBorder.none,
-                          hintText: context.t.strings.legacy.msg_write_thoughts,
-                          hintStyle: TextStyle(color: hintColor),
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (_inlineComposeFocusNode.hasFocus &&
-                      inlineActiveTagQuery != null &&
-                      inlineTagSuggestions.isNotEmpty)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: TagAutocompleteOverlay(
-                          editorKey: _inlineEditorFieldKey,
-                          value: value,
-                          textStyle: inlineEditorTextStyle,
-                          tags: inlineTagSuggestions,
-                          tagColors: tagColorLookup,
-                          highlightedIndex: highlightedInlineTagSuggestionIndex,
-                          onHighlight: (index) {
-                            if (_inlineTagAutocompleteIndex == index) return;
-                            setState(() {
-                              _inlineTagAutocompleteIndex = index;
-                            });
-                          },
-                          onSelect: (tag) => _applyInlineTagSuggestion(
-                            inlineActiveTagQuery,
-                            tag,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _buildInlineComposeToolbar(
-                  context: context,
-                  isDark: isDark,
-                  preferences: toolbarPreferences,
-                  availableTemplates: availableTemplates,
-                  visibilityLabel: visibilityLabel,
-                  visibilityIcon: visibilityIcon,
-                  visibilityColor: visibilityColor,
-                ),
-              ),
-              const SizedBox(width: 8),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: _inlineComposeController,
-                builder: (context, value, _) {
-                  final showSend =
-                      value.text.trim().isNotEmpty ||
-                      _inlinePendingAttachments.isNotEmpty;
-                  return Material(
-                    color: MemoFlowPalette.primary,
-                    borderRadius: BorderRadius.circular(10),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(10),
-                      onTap: _inlineComposeBusy ? null : _submitInlineCompose,
-                      child: SizedBox(
-                        width: 38,
-                        height: 30,
-                        child: Center(
-                          child: _inlineComposeBusy
-                              ? SizedBox.square(
-                                  dimension: 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 160),
-                                  transitionBuilder: (child, animation) {
-                                    return ScaleTransition(
-                                      scale: animation,
-                                      child: child,
-                                    );
-                                  },
-                                  child: Icon(
-                                    showSend
-                                        ? Icons.send_rounded
-                                        : Icons.graphic_eq,
-                                    key: ValueKey<bool>(showSend),
-                                    size: showSend ? 18 : 20,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    setState(() {});
   }
 
   Future<void> _openAccountSwitcher() async {
@@ -5495,6 +4259,161 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
   }
 
+  void _addInlineVoiceAttachment(VoiceRecordResult result) {
+    final messenger = ScaffoldMessenger.of(context);
+    final path = result.filePath.trim();
+    if (path.isEmpty) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_recording_path_missing),
+        ),
+      );
+      return;
+    }
+
+    final file = File(path);
+    if (!file.existsSync()) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            context.t.strings.legacy.msg_recording_file_not_found_2,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final size = result.size > 0 ? result.size : file.lengthSync();
+    final filename = result.fileName.trim().isNotEmpty
+        ? result.fileName.trim()
+        : path.split(Platform.pathSeparator).last;
+    final mimeType = _guessInlineAttachmentMimeType(filename);
+    _inlineComposer.addPendingAttachments([
+      MemoComposerPendingAttachment(
+        uid: generateUid(),
+        filePath: path,
+        filename: filename,
+        mimeType: mimeType,
+        size: size,
+      ),
+    ]);
+    if (mounted) {
+      setState(() {});
+    }
+    showTopToast(context, context.t.strings.legacy.msg_added_voice_attachment);
+  }
+  Future<void> _submitInlineCompose() async {
+    if (_inlineComposeBusy || !widget.enableCompose) return;
+    final content = _inlineComposeController.text.trimRight();
+    final relations = _inlineLinkedMemos
+        .map((memo) => memo.toRelationJson())
+        .toList(growable: false);
+    final pendingAttachments = List<MemoComposerPendingAttachment>.from(
+      _inlinePendingAttachments,
+    );
+    final hasAttachments = pendingAttachments.isNotEmpty;
+    if (content.trim().isEmpty && !hasAttachments) {
+      if (relations.isNotEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.t.strings.legacy.msg_enter_content_before_creating_link,
+            ),
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final result = await Navigator.of(context).push<VoiceRecordResult>(
+        MaterialPageRoute(builder: (_) => const VoiceRecordScreen()),
+      );
+      if (!mounted || result == null) return;
+      _addInlineVoiceAttachment(result);
+      return;
+    }
+
+    setState(() => _inlineComposeBusy = true);
+    try {
+      final now = DateTime.now();
+      final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
+      final uid = generateUid();
+      final tags = extractTags(content);
+      final visibility = _currentInlineVisibility();
+      final attachments = pendingAttachments
+          .map((attachment) {
+            final rawPath = attachment.filePath.trim();
+            final externalLink = rawPath.isEmpty
+                ? ''
+                : rawPath.startsWith('content://')
+                ? rawPath
+                : Uri.file(rawPath).toString();
+            return Attachment(
+              name: 'attachments/${attachment.uid}',
+              filename: attachment.filename,
+              type: attachment.mimeType,
+              size: attachment.size,
+              externalLink: externalLink,
+            ).toJson();
+          })
+          .toList(growable: false);
+
+      await ref
+          .read(memosListControllerProvider)
+          .createInlineComposeMemo(
+            uid: uid,
+            content: content,
+            visibility: visibility,
+            nowSec: nowSec,
+            tags: tags,
+            attachments: attachments,
+            location: _inlineLocation,
+            relations: relations,
+            pendingAttachments: pendingAttachments,
+          );
+
+      unawaited(
+        ref
+            .read(syncCoordinatorProvider.notifier)
+            .requestSync(
+              const SyncRequest(
+                kind: SyncRequestKind.memos,
+                reason: SyncRequestReason.manual,
+              ),
+            ),
+      );
+      _inlineComposeDraftTimer?.cancel();
+      await ref.read(noteDraftProvider.notifier).clear();
+      _inlineComposer.replaceText('', clearHistory: true);
+      _inlineComposer.clearPendingAttachments();
+      _inlineComposer.clearLinkedMemos();
+      if (mounted) {
+        setState(() {
+          _inlineLocation = null;
+          _inlineLocating = false;
+        });
+        _inlineComposeFocusNode.requestFocus();
+      }
+    } catch (error, stackTrace) {
+      ref
+          .read(logManagerProvider)
+          .error(
+            'Inline compose submit failed',
+            error: error,
+            stackTrace: stackTrace,
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_create_failed_2(e: error)),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _inlineComposeBusy = false);
+      }
+    }
+  }
   Future<void> _createShortcutFromMenu() async {
     final result = await Navigator.of(context).push<ShortcutEditorResult>(
       MaterialPageRoute<ShortcutEditorResult>(
@@ -5561,7 +4480,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         (availableHeight > 120 ? availableHeight : overlay.size.height * 0.6)
             .clamp(140.0, overlay.size.height - 12.0);
 
-    final action = await showGeneralDialog<_TitleMenuAction>(
+    final action = await showGeneralDialog<MemosListTitleMenuAction>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'title_menu',
@@ -5572,7 +4491,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             left: left,
             top: top,
             width: width,
-            child: _TitleMenuDropdown(
+            child: MemosListTitleMenuDropdown(
               selectedShortcutId: _selectedShortcutId,
               showShortcuts: showShortcuts,
               showAccountSwitcher: accounts.length > 1,
@@ -5585,19 +4504,19 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
     if (!mounted || action == null) return;
     switch (action.type) {
-      case _TitleMenuActionType.selectShortcut:
+      case MemosListTitleMenuActionType.selectShortcut:
         setState(() {
           _selectedShortcutId = action.shortcutId;
           _selectedQuickSearchKind = null;
         });
         break;
-      case _TitleMenuActionType.clearShortcut:
+      case MemosListTitleMenuActionType.clearShortcut:
         setState(() => _selectedShortcutId = null);
         break;
-      case _TitleMenuActionType.createShortcut:
+      case MemosListTitleMenuActionType.createShortcut:
         await _createShortcutFromMenu();
         break;
-      case _TitleMenuActionType.openAccountSwitcher:
+      case MemosListTitleMenuActionType.openAccountSwitcher:
         await _openAccountSwitcher();
         break;
     }
@@ -5662,7 +4581,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       skipQuotedLines: skipQuotedLines,
     );
     if (updated == memo.content) return;
-    _invalidateMemoRenderCacheForUid(memo.uid);
+    invalidateMemoRenderCacheForUid(memo.uid);
     invalidateMemoMarkdownCacheForUid(memo.uid);
     await _updateMemoContent(
       memo,
@@ -5769,12 +4688,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     }
   }
 
-  Future<void> _handleMemoAction(LocalMemo memo, _MemoCardAction action) async {
+  Future<void> _handleMemoAction(LocalMemo memo, MemoCardAction action) async {
     switch (action) {
-      case _MemoCardAction.togglePinned:
+      case MemoCardAction.togglePinned:
         await _updateMemo(memo, pinned: !memo.pinned);
         return;
-      case _MemoCardAction.edit:
+      case MemoCardAction.edit:
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => MemoEditorScreen(existing: memo),
@@ -5782,27 +4701,27 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         );
         ref.invalidate(memoRelationsProvider(memo.uid));
         return;
-      case _MemoCardAction.history:
+      case MemoCardAction.history:
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => MemoVersionsScreen(memoUid: memo.uid),
           ),
         );
         return;
-      case _MemoCardAction.reminder:
+      case MemoCardAction.reminder:
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => MemoReminderEditorScreen(memo: memo),
           ),
         );
         return;
-      case _MemoCardAction.archive:
+      case MemoCardAction.archive:
         await _archiveMemo(memo);
         return;
-      case _MemoCardAction.restore:
+      case MemoCardAction.restore:
         await _restoreMemo(memo);
         return;
-      case _MemoCardAction.delete:
+      case MemoCardAction.delete:
         await _deleteMemo(memo);
         return;
     }
@@ -6128,7 +5047,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         _selectedQuickSearchKind != null;
     final highlightQuery = _searchController.text.trim();
 
-    return _MemoCard(
+    return MemoListCard(
       key: _memoCardKeyFor(memo.uid),
       memo: memo,
       dateText: _dateFmt.format(displayTime),
@@ -6150,7 +5069,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           : (pos) => _seekAudioPosition(memo, pos),
       onAudioTap: removing ? null : () => _toggleAudioPlayback(memo),
       syncStatus: syncStatus,
-      onSyncStatusTap: syncStatus == _MemoSyncStatus.none
+      onSyncStatusTap: syncStatus == MemoSyncStatus.none
           ? null
           : () => unawaited(_handleMemoSyncStatusTap(syncStatus, memo.uid)),
       onToggleTask: removing
@@ -6179,7 +5098,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           : () {
               maybeHaptic();
               _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
-              unawaited(_handleMemoAction(memo, _MemoCardAction.edit));
+              unawaited(_handleMemoAction(memo, MemoCardAction.edit));
             },
       onLongPress: removing
           ? () {}
@@ -6237,31 +5156,28 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         '${startTimeSec ?? ''}|${endTimeSecExclusive ?? ''}|${useShortcutFilter ? 1 : 0}|'
         '${selectedQuickSearchKind?.name ?? ''}|${useQuickSearch ? 1 : 0}|'
         '${useRemoteSearch ? 1 : 0}|${advancedFilters.signature}';
-    if (_paginationKey != queryKey) {
+    final previousQueryKey = _paginationKey;
+    if (_loadMoreController.syncQueryKey(
+      queryKey,
+      previousVisibleCount: _currentResultCount,
+    )) {
       final previousVisibleCount = _currentResultCount;
-      if (previousVisibleCount > 0 && _paginationKey.isNotEmpty) {
+      if (previousVisibleCount > 0 && previousQueryKey.isNotEmpty) {
         ref
             .read(logManagerProvider)
             .info(
               'Memos pagination: query_changed_reset_results',
               context: <String, Object?>{
                 'visibleCountBeforeReset': previousVisibleCount,
-                'fromKey': _paginationKey,
+                'fromKey': previousQueryKey,
                 'toKey': queryKey,
               },
             );
       }
       _logPaginationDebug(
         'query_key_changed_reset_pagination',
-        context: {'fromKey': _paginationKey, 'toKey': queryKey},
+        context: {'fromKey': previousQueryKey, 'toKey': queryKey},
       );
-      _paginationKey = queryKey;
-      _pageSize = _initialPageSize;
-      _reachedEnd = false;
-      _loadingMore = false;
-      _lastResultCount = 0;
-      _resetMobilePullLoadState(notify: false);
-      _lastDesktopWheelLoadAt = null;
     }
     final shortcutQuery = (
       searchQuery: searchQuery,
@@ -6318,6 +5234,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final availableTemplates = templateSettings.enabled
         ? templateSettings.templates
         : const <MemoTemplate>[];
+    final toolbarPreferences = ref.watch(
+      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+    );
+    final inlineVisibility = _currentInlineVisibility();
+    final inlineVisibilityStyle = _resolveInlineVisibilityStyle(
+      context,
+      inlineVisibility,
+    );
     final recommendedTags = [...tagStats]
       ..sort((a, b) {
         if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
@@ -6350,18 +5274,20 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
     final hasProviderValue = memosValue != null;
 
-    _currentResultCount = hasProviderValue
+    final nextResultCount = hasProviderValue
         ? memosValue.length
         : _animatedMemos.length;
-    _currentLoading = memosLoading;
-    _currentShowSearchLanding = showSearchLanding;
-    if (hasProviderValue && _currentResultCount != _lastResultCount) {
-      final previousCount = _lastResultCount;
-      final wasLoadingMore = _loadingMore;
-      final requestId = _activeLoadMoreRequestId;
-      final requestSource = _activeLoadMoreSource;
-      _lastResultCount = _currentResultCount;
-      _loadingMore = false;
+    final previousCount = _lastResultCount;
+    final wasLoadingMore = _loadingMore;
+    final requestId = _activeLoadMoreRequestId;
+    final requestSource = _activeLoadMoreSource;
+    _loadMoreController.updateSnapshot(
+      hasProviderValue: hasProviderValue,
+      resultCount: nextResultCount,
+      providerLoading: memosLoading,
+      showSearchLanding: showSearchLanding,
+    );
+    if (hasProviderValue && _currentResultCount != previousCount) {
       if (wasLoadingMore) {
         _logPaginationDebug(
           'load_more_applied',
@@ -6376,12 +5302,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             'delta': _currentResultCount - previousCount,
           },
         );
-        _activeLoadMoreRequestId = null;
-        _activeLoadMoreSource = null;
       }
-    }
-    if (hasProviderValue) {
-      _reachedEnd = _currentResultCount < _pageSize;
     }
 
     _maybeAutoScanLocalLibrary(
@@ -6458,7 +5379,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final loadMoreHintTextColor =
         (isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight)
             .withValues(alpha: isDark ? 0.52 : 0.46);
-    final loadMoreHintDisplayText = '— $loadMoreHintText —';
+    final loadMoreHintDisplayText = '- $loadMoreHintText -';
     final headerBg =
         (isDark
                 ? MemoFlowPalette.backgroundDark
@@ -6867,7 +5788,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                               16,
                                               8,
                                             ),
-                                            child: _SearchQuickFilterBar(
+                                            child: MemosListSearchQuickFilterBar(
                                               selectedKind:
                                                   _selectedQuickSearchKind,
                                               onSelectKind:
@@ -6914,7 +5835,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                                 child: Align(
                                                   alignment:
                                                       Alignment.centerLeft,
-                                                  child: _FilterTagChip(
+                                                  child: MemosListFilterTagChip(
                                                     label:
                                                         '#${resolvedTag!.trim()}',
                                                     colors: tagColorLookup
@@ -6958,10 +5879,83 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-                              child: _buildInlineComposeCard(
+                              child: MemosListInlineComposeCard(
+                                composer: _inlineComposer,
+                                focusNode: _inlineComposeFocusNode,
+                                busy: _inlineComposeBusy,
+                                locating: _inlineLocating,
+                                location: _inlineLocation,
+                                visibility: inlineVisibility,
+                                visibilityTouched: _inlineVisibilityTouched,
+                                visibilityLabel: inlineVisibilityStyle.$1,
+                                visibilityIcon: inlineVisibilityStyle.$2,
+                                visibilityColor: inlineVisibilityStyle.$3,
                                 isDark: isDark,
                                 tagStats: tagStats,
                                 availableTemplates: availableTemplates,
+                                tagColorLookup: tagColorLookup,
+                                toolbarPreferences: toolbarPreferences,
+                                editorFieldKey: _inlineEditorFieldKey,
+                                tagMenuKey: _inlineTagMenuKey,
+                                templateMenuKey: _inlineTemplateMenuKey,
+                                todoMenuKey: _inlineTodoMenuKey,
+                                visibilityMenuKey: _inlineVisibilityMenuKey,
+                                onSubmit: () {
+                                  unawaited(_submitInlineCompose());
+                                },
+                                onRemoveAttachment:
+                                    _removeInlinePendingAttachment,
+                                onOpenAttachment: (attachment) {
+                                  unawaited(
+                                    _openInlineAttachmentViewer(attachment),
+                                  );
+                                },
+                                onRemoveLinkedMemo: _removeInlineLinkedMemo,
+                                onRequestLocation: () {
+                                  unawaited(_requestInlineLocation());
+                                },
+                                onClearLocation: () {
+                                  setState(() => _inlineLocation = null);
+                                },
+                                onOpenTemplateMenu: () {
+                                  unawaited(
+                                    _openInlineTemplateMenuFromKey(
+                                      _inlineTemplateMenuKey,
+                                      availableTemplates,
+                                    ),
+                                  );
+                                },
+                                onPickGallery: () {
+                                  unawaited(
+                                    _handleInlineGalleryToolbarPressed(),
+                                  );
+                                },
+                                onPickFile: () {
+                                  unawaited(_pickInlineAttachments());
+                                },
+                                onOpenLinkMemo: () {
+                                  unawaited(_openInlineLinkMemoSheet());
+                                },
+                                onCaptureCamera: () {
+                                  unawaited(_captureInlinePhoto());
+                                },
+                                onOpenTodoMenu: () {
+                                  unawaited(
+                                    _openInlineTodoShortcutMenuFromKey(
+                                      _inlineTodoMenuKey,
+                                    ),
+                                  );
+                                },
+                                onOpenVisibilityMenu: () {
+                                  unawaited(
+                                    _openInlineVisibilityMenuFromKey(
+                                      _inlineVisibilityMenuKey,
+                                    ),
+                                  );
+                                },
+                                onCutParagraphs: () {
+                                  unawaited(_cutInlineParagraphs());
+                                },
                               ),
                             ),
                           ),
@@ -6969,7 +5963,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                             !_searching &&
                             recommendedTags.isNotEmpty)
                           SliverToBoxAdapter(
-                            child: _TagFilterBar(
+                            child: MemosListTagFilterBar(
                               tags: recommendedTags
                                   .take(12)
                                   .map((e) => e.tag)
@@ -7001,7 +5995,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                           )
                         else if (showSearchLanding)
                           SliverToBoxAdapter(
-                            child: _SearchLanding(
+                            child: MemosListSearchLanding(
                               history: searchHistory,
                               onClearHistory: () => ref
                                   .read(searchHistoryProvider.notifier)
@@ -7123,7 +6117,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
               Positioned(
                 right: 16,
                 bottom: backToTopBaseOffset + bottomInset,
-                child: _BackToTopButton(
+                child: BackToTopButton(
                   visible: _showBackToTop,
                   hapticsEnabled: hapticsEnabled,
                   onPressed: _scrollToTop,
@@ -7191,7 +6185,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         })(),
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
         floatingActionButton: showComposeFab
-            ? _MemoFlowFab(
+            ? MemoFlowFab(
                 onPressed: _openNoteInput,
                 onLongPressStart: _handleVoiceFabLongPressStart,
                 onLongPressMoveUpdate: _handleVoiceFabLongPressMoveUpdate,
@@ -7204,2612 +6198,4 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 }
 
-class _InlinePendingAttachment {
-  const _InlinePendingAttachment({
-    required this.uid,
-    required this.filePath,
-    required this.filename,
-    required this.mimeType,
-    required this.size,
-  });
 
-  final String uid;
-  final String filePath;
-  final String filename;
-  final String mimeType;
-  final int size;
-}
-
-class _InlineLinkedMemo {
-  const _InlineLinkedMemo({required this.name, required this.label});
-
-  final String name;
-  final String label;
-
-  Map<String, dynamic> toRelationJson() {
-    return {
-      'relatedMemo': {'name': name},
-      'type': 'REFERENCE',
-    };
-  }
-}
-
-class _DesktopWindowIconButton extends StatelessWidget {
-  const _DesktopWindowIconButton({
-    required this.tooltip,
-    required this.onPressed,
-    required this.icon,
-    this.destructive = false,
-  });
-
-  final String tooltip;
-  final VoidCallback onPressed;
-  final IconData icon;
-  final bool destructive;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final iconColor = destructive
-        ? (isDark ? const Color(0xFFFFB4B4) : const Color(0xFFC62828))
-        : (isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight);
-    final hoverColor = destructive
-        ? const Color(0x33E53935)
-        : (isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : Colors.black.withValues(alpha: 0.06));
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          hoverColor: hoverColor,
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            width: 36,
-            height: 30,
-            child: Icon(icon, size: 18, color: iconColor),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PillRow extends StatelessWidget {
-  const _PillRow({
-    required this.onWeeklyInsights,
-    required this.onAiSummary,
-    required this.onDailyReview,
-  });
-
-  final VoidCallback onWeeklyInsights;
-  final VoidCallback onAiSummary;
-  final VoidCallback onDailyReview;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final bgColor = isDark
-        ? MemoFlowPalette.cardDark
-        : MemoFlowPalette.cardLight;
-    final textColor = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _PillButton(
-            icon: Icons.insights,
-            iconColor: MemoFlowPalette.primary,
-            label: context.t.strings.legacy.msg_monthly_stats,
-            onPressed: onWeeklyInsights,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
-          const SizedBox(width: 10),
-          _PillButton(
-            icon: Icons.auto_awesome,
-            iconColor: isDark
-                ? MemoFlowPalette.aiChipBlueDark
-                : MemoFlowPalette.aiChipBlueLight,
-            label: context.t.strings.legacy.msg_ai_summary,
-            onPressed: onAiSummary,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
-          const SizedBox(width: 10),
-          _PillButton(
-            icon: Icons.explore,
-            iconColor: isDark
-                ? MemoFlowPalette.reviewChipOrangeDark
-                : MemoFlowPalette.reviewChipOrangeLight,
-            label: context.t.strings.legacy.msg_random_review,
-            onPressed: onDailyReview,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-enum _TitleMenuActionType {
-  selectShortcut,
-  clearShortcut,
-  createShortcut,
-  openAccountSwitcher,
-}
-
-class _TitleMenuAction {
-  const _TitleMenuAction._(this.type, {this.shortcutId});
-
-  const _TitleMenuAction.selectShortcut(String id)
-    : this._(_TitleMenuActionType.selectShortcut, shortcutId: id);
-  const _TitleMenuAction.clearShortcut()
-    : this._(_TitleMenuActionType.clearShortcut);
-  const _TitleMenuAction.createShortcut()
-    : this._(_TitleMenuActionType.createShortcut);
-  const _TitleMenuAction.openAccountSwitcher()
-    : this._(_TitleMenuActionType.openAccountSwitcher);
-
-  final _TitleMenuActionType type;
-  final String? shortcutId;
-}
-
-class _TitleMenuDropdown extends ConsumerWidget {
-  const _TitleMenuDropdown({
-    required this.selectedShortcutId,
-    required this.showShortcuts,
-    required this.showAccountSwitcher,
-    required this.maxHeight,
-    required this.formatShortcutError,
-  });
-
-  final String? selectedShortcutId;
-  final bool showShortcuts;
-  final bool showAccountSwitcher;
-  final double maxHeight;
-  final String Function(BuildContext, Object) formatShortcutError;
-
-  static const _shortcutIcons = [
-    Icons.folder_outlined,
-    Icons.lightbulb_outline,
-    Icons.edit_note,
-    Icons.bookmark_border,
-    Icons.label_outline,
-  ];
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final shortcutHints = ref.watch(memosListShortcutHintsProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
-    final border = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final dividerColor = border.withValues(alpha: 0.6);
-
-    final shortcutsAsync = showShortcuts ? ref.watch(shortcutsProvider) : null;
-    final canCreateShortcut = shortcutHints.canCreateShortcut;
-    final items = <Widget>[];
-
-    void addRow(Widget row) {
-      if (items.isNotEmpty) {
-        items.add(Divider(height: 1, color: dividerColor));
-      }
-      items.add(row);
-    }
-
-    if (showShortcuts && shortcutsAsync != null) {
-      shortcutsAsync.when(
-        data: (shortcuts) {
-          final hasSelection =
-              selectedShortcutId != null &&
-              selectedShortcutId!.isNotEmpty &&
-              shortcuts.any(
-                (shortcut) => shortcut.shortcutId == selectedShortcutId,
-              );
-          addRow(
-            _TitleMenuItem(
-              icon: Icons.note_outlined,
-              label: context.t.strings.legacy.msg_all_memos_2,
-              selected: !hasSelection,
-              onTap: () => Navigator.of(
-                context,
-              ).pop(const _TitleMenuAction.clearShortcut()),
-            ),
-          );
-
-          if (shortcuts.isEmpty) {
-            addRow(
-              _TitleMenuItem(
-                icon: Icons.info_outline,
-                label: context.t.strings.legacy.msg_no_shortcuts,
-                enabled: false,
-                textColor: textMuted,
-                iconColor: textMuted,
-              ),
-            );
-          } else {
-            for (var i = 0; i < shortcuts.length; i++) {
-              final shortcut = shortcuts[i];
-              final label = shortcut.title.trim().isNotEmpty
-                  ? shortcut.title.trim()
-                  : context.t.strings.legacy.msg_untitled;
-              addRow(
-                _TitleMenuItem(
-                  icon: _shortcutIcons[i % _shortcutIcons.length],
-                  label: label,
-                  selected: shortcut.shortcutId == selectedShortcutId,
-                  onTap: () => Navigator.of(
-                    context,
-                  ).pop(_TitleMenuAction.selectShortcut(shortcut.shortcutId)),
-                ),
-              );
-            }
-          }
-
-          if (canCreateShortcut) {
-            addRow(
-              _TitleMenuItem(
-                icon: Icons.add_circle_outline,
-                label: context.t.strings.legacy.msg_shortcut,
-                accent: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(const _TitleMenuAction.createShortcut()),
-              ),
-            );
-          }
-        },
-        loading: () {
-          addRow(
-            _TitleMenuItem(
-              icon: Icons.note_outlined,
-              label: context.t.strings.legacy.msg_all_memos_2,
-              selected:
-                  selectedShortcutId == null || selectedShortcutId!.isEmpty,
-              onTap: () => Navigator.of(
-                context,
-              ).pop(const _TitleMenuAction.clearShortcut()),
-            ),
-          );
-          addRow(
-            _TitleMenuItem(
-              icon: Icons.hourglass_bottom,
-              label: context.t.strings.legacy.msg_loading,
-              enabled: false,
-              textColor: textMuted,
-              iconColor: textMuted,
-            ),
-          );
-          if (canCreateShortcut) {
-            addRow(
-              _TitleMenuItem(
-                icon: Icons.add_circle_outline,
-                label: context.t.strings.legacy.msg_shortcut,
-                accent: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(const _TitleMenuAction.createShortcut()),
-              ),
-            );
-          }
-        },
-        error: (error, _) {
-          addRow(
-            _TitleMenuItem(
-              icon: Icons.note_outlined,
-              label: context.t.strings.legacy.msg_all_memos_2,
-              selected:
-                  selectedShortcutId == null || selectedShortcutId!.isEmpty,
-              onTap: () => Navigator.of(
-                context,
-              ).pop(const _TitleMenuAction.clearShortcut()),
-            ),
-          );
-          addRow(
-            _TitleMenuItem(
-              icon: Icons.info_outline,
-              label: formatShortcutError(context, error),
-              enabled: false,
-              textColor: textMuted,
-              iconColor: textMuted,
-            ),
-          );
-          if (canCreateShortcut) {
-            addRow(
-              _TitleMenuItem(
-                icon: Icons.add_circle_outline,
-                label: context.t.strings.legacy.msg_shortcut,
-                accent: true,
-                onTap: () => Navigator.of(
-                  context,
-                ).pop(const _TitleMenuAction.createShortcut()),
-              ),
-            );
-          }
-        },
-      );
-    }
-
-    if (showAccountSwitcher) {
-      addRow(
-        _TitleMenuItem(
-          icon: Icons.swap_horiz,
-          label: context.t.strings.legacy.msg_switch_account,
-          onTap: () => Navigator.of(
-            context,
-          ).pop(const _TitleMenuAction.openAccountSwitcher()),
-        ),
-      );
-    }
-
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        decoration: BoxDecoration(
-          color: card,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: border),
-          boxShadow: [
-            BoxShadow(
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-              color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.12),
-            ),
-          ],
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: maxHeight),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth.isFinite
-                    ? constraints.maxWidth
-                    : 240.0;
-                return SingleChildScrollView(
-                  primary: false,
-                  child: SizedBox(
-                    width: width,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: items,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TitleMenuItem extends StatelessWidget {
-  const _TitleMenuItem({
-    required this.icon,
-    required this.label,
-    this.selected = false,
-    this.accent = false,
-    this.enabled = true,
-    this.onTap,
-    this.textColor,
-    this.iconColor,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final bool accent;
-  final bool enabled;
-  final VoidCallback? onTap;
-  final Color? textColor;
-  final Color? iconColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final baseMuted = textMain.withValues(alpha: 0.6);
-    final accentColor = MemoFlowPalette.primary;
-    final labelColor =
-        textColor ??
-        (accent
-            ? accentColor
-            : selected
-            ? textMain
-            : baseMuted);
-    final resolvedIconColor =
-        iconColor ??
-        (accent
-            ? accentColor
-            : selected
-            ? accentColor
-            : baseMuted);
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: resolvedIconColor),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: labelColor,
-                  ),
-                ),
-              ),
-              if (selected)
-                Icon(Icons.check, size: 16, color: accentColor)
-              else
-                const SizedBox(width: 16),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SearchLanding extends StatefulWidget {
-  const _SearchLanding({
-    required this.history,
-    required this.onClearHistory,
-    required this.onRemoveHistory,
-    required this.onSelectHistory,
-    required this.tags,
-    required this.tagColors,
-    required this.onSelectTag,
-  });
-
-  final List<String> history;
-  final VoidCallback onClearHistory;
-  final ValueChanged<String> onRemoveHistory;
-  final ValueChanged<String> onSelectHistory;
-  final List<String> tags;
-  final TagColorLookup tagColors;
-  final ValueChanged<String> onSelectTag;
-
-  @override
-  State<_SearchLanding> createState() => _SearchLandingState();
-}
-
-class _SearchLandingState extends State<_SearchLanding> {
-  static const _collapsedTagCount = 6;
-  static const _historyListMaxHeight = 220.0;
-
-  final ScrollController _historyScrollController = ScrollController();
-  bool _showAllTags = false;
-
-  @override
-  void dispose() {
-    _historyScrollController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final tags = widget.tags;
-    final hasMoreTags = tags.length > _collapsedTagCount;
-    final visibleTags = _showAllTags || !hasMoreTags
-        ? tags
-        : tags.take(_collapsedTagCount).toList(growable: false);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                context.t.strings.legacy.msg_recent_searches,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const Spacer(),
-              if (widget.history.isNotEmpty)
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  onPressed: widget.onClearHistory,
-                  icon: Icon(Icons.delete_outline, size: 18, color: textMuted),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (widget.history.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                context.t.strings.legacy.msg_no_search_history,
-                style: TextStyle(fontSize: 12, color: textMuted),
-              ),
-            )
-          else
-            ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxHeight: _historyListMaxHeight,
-              ),
-              child: Scrollbar(
-                controller: _historyScrollController,
-                thumbVisibility: true,
-                child: ListView.builder(
-                  controller: _historyScrollController,
-                  shrinkWrap: true,
-                  primary: false,
-                  padding: EdgeInsets.zero,
-                  itemCount: widget.history.length,
-                  itemBuilder: (context, index) {
-                    final item = widget.history[index];
-                    return InkWell(
-                      onTap: () => widget.onSelectHistory(item),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Row(
-                          children: [
-                            Icon(Icons.history, size: 18, color: textMuted),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                item,
-                                style: TextStyle(fontSize: 14, color: textMain),
-                              ),
-                            ),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () => widget.onRemoveHistory(item),
-                              icon: Icon(
-                                Icons.close,
-                                size: 18,
-                                color: textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              Text(
-                context.t.strings.legacy.msg_suggested_tags,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: textMain,
-                ),
-              ),
-              const Spacer(),
-              if (hasMoreTags)
-                TextButton.icon(
-                  onPressed: () => setState(() => _showAllTags = !_showAllTags),
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  icon: Icon(
-                    _showAllTags ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
-                    color: textMuted,
-                  ),
-                  label: Text(
-                    _showAllTags
-                        ? context.t.strings.legacy.msg_collapse
-                        : context.t.strings.legacy.msg_show_all,
-                    style: TextStyle(fontSize: 12, color: textMuted),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (tags.isEmpty)
-            Text(
-              context.t.strings.legacy.msg_no_tags,
-              style: TextStyle(fontSize: 12, color: textMuted),
-            )
-          else
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final tag in visibleTags)
-                  InkWell(
-                    onTap: () => widget.onSelectTag('#${tag.trim()}'),
-                    borderRadius: BorderRadius.circular(12),
-                    child: TagBadge(
-                      label: '#${tag.trim()}',
-                      colors: widget.tagColors.resolveChipColorsByPath(
-                        tag.trim(),
-                        surfaceColor: Theme.of(context).colorScheme.surface,
-                        isDark: isDark,
-                      ),
-                      compact: true,
-                    ),
-                  ),
-              ],
-            ),
-          const SizedBox(height: 28),
-          Center(
-            child: Text(
-              context.t.strings.legacy.msg_search_title_content_tags,
-              style: TextStyle(fontSize: 12, color: textMuted),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SearchQuickFilterBar extends StatelessWidget {
-  const _SearchQuickFilterBar({
-    required this.selectedKind,
-    required this.onSelectKind,
-  });
-
-  final QuickSearchKind? selectedKind;
-  final ValueChanged<QuickSearchKind> onSelectKind;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.58 : 0.64);
-    final accent = MemoFlowPalette.primary;
-    final chipBg = isDark
-        ? MemoFlowPalette.cardDark
-        : MemoFlowPalette.cardLight;
-    final border = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final selectedBg = accent.withValues(alpha: isDark ? 0.22 : 0.14);
-    final selectedBorder = accent.withValues(alpha: isDark ? 0.58 : 0.48);
-    final items = <({QuickSearchKind kind, IconData icon, String label})>[
-      (
-        kind: QuickSearchKind.attachments,
-        icon: Icons.attachment_outlined,
-        label: context.t.strings.legacy.msg_attachments,
-      ),
-      (
-        kind: QuickSearchKind.links,
-        icon: Icons.link_outlined,
-        label: context.t.strings.legacy.msg_links_label,
-      ),
-      (
-        kind: QuickSearchKind.voice,
-        icon: Icons.keyboard_voice_outlined,
-        label: context.t.strings.legacy.msg_voice_memos,
-      ),
-      (
-        kind: QuickSearchKind.onThisDay,
-        icon: Icons.history_edu_outlined,
-        label: context.t.strings.legacy.msg_on_this_day,
-      ),
-    ];
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            _buildQuickChip(
-              item: items[i],
-              selected: selectedKind == items[i].kind,
-              textMuted: textMuted,
-              accent: accent,
-              chipBg: chipBg,
-              border: border,
-              selectedBg: selectedBg,
-              selectedBorder: selectedBorder,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuickChip({
-    required ({QuickSearchKind kind, IconData icon, String label}) item,
-    required bool selected,
-    required Color textMuted,
-    required Color accent,
-    required Color chipBg,
-    required Color border,
-    required Color selectedBg,
-    required Color selectedBorder,
-  }) {
-    final bg = selected ? selectedBg : chipBg;
-    final chipBorder = selected ? selectedBorder : border;
-    final textColor = selected ? accent : textMuted;
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: () => onSelectKind(item.kind),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: chipBorder),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(item.icon, size: 16, color: textColor),
-            const SizedBox(width: 6),
-            Text(
-              item.label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: textColor,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TagFilterBar extends StatelessWidget {
-  const _TagFilterBar({
-    required this.tags,
-    required this.selectedTag,
-    required this.onSelectTag,
-    required this.tagColors,
-  });
-
-  final List<String> tags;
-  final String? selectedTag;
-  final ValueChanged<String?> onSelectTag;
-  final TagColorLookup tagColors;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final accent = MemoFlowPalette.primary;
-    final chipBg = isDark
-        ? MemoFlowPalette.cardDark
-        : MemoFlowPalette.cardLight;
-    final border = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final selectedBg = accent.withValues(alpha: isDark ? 0.22 : 0.14);
-    final selectedBorder = accent.withValues(alpha: isDark ? 0.55 : 0.6);
-    final normalizedSelected = (selectedTag ?? '').trim();
-
-    Widget buildChip(
-      String label, {
-      required bool selected,
-      required VoidCallback onTap,
-      String? tagPath,
-    }) {
-      final colors = tagPath == null
-          ? null
-          : tagColors.resolveChipColorsByPath(
-              tagPath,
-              surfaceColor: Theme.of(context).colorScheme.surface,
-              isDark: isDark,
-            );
-      final bg = colors?.background ?? (selected ? selectedBg : chipBg);
-      final chipBorder = colors == null
-          ? (selected ? selectedBorder : border)
-          : (selected ? accent : colors.border);
-      final textColor = colors?.text ?? (selected ? accent : textMuted);
-      return InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: chipBorder),
-            boxShadow: isDark
-                ? null
-                : [
-                    BoxShadow(
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                      color: Colors.black.withValues(alpha: 0.06),
-                    ),
-                  ],
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: textColor,
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            context.t.strings.legacy.msg_filter_tags,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: textMain,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              buildChip(
-                context.t.strings.legacy.msg_all_2,
-                selected: normalizedSelected.isEmpty,
-                onTap: () => onSelectTag(null),
-              ),
-              for (final tag in tags)
-                buildChip(
-                  '#${tag.trim()}',
-                  selected: normalizedSelected == tag.trim(),
-                  onTap: () => onSelectTag(tag),
-                  tagPath: tag.trim(),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilterTagChip extends StatelessWidget {
-  const _FilterTagChip({required this.label, this.onClear, this.colors});
-
-  final String label;
-  final VoidCallback? onClear;
-  final TagChipColors? colors;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accent = MemoFlowPalette.primary;
-    final bg =
-        colors?.background ?? accent.withValues(alpha: isDark ? 0.22 : 0.14);
-    final border =
-        colors?.border ?? accent.withValues(alpha: isDark ? 0.55 : 0.6);
-    final textColor = colors?.text ?? accent;
-
-    final chip = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: textColor,
-            ),
-          ),
-          if (onClear != null) ...[
-            const SizedBox(width: 6),
-            Icon(Icons.close, size: 14, color: textColor),
-          ],
-        ],
-      ),
-    );
-
-    if (onClear == null) return chip;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onClear,
-        borderRadius: BorderRadius.circular(999),
-        child: chip,
-      ),
-    );
-  }
-}
-
-class _PillButton extends StatelessWidget {
-  const _PillButton({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.onPressed,
-    required this.backgroundColor,
-    required this.borderColor,
-    required this.textColor,
-  });
-
-  final IconData icon;
-  final Color iconColor;
-  final String label;
-  final VoidCallback onPressed;
-  final Color backgroundColor;
-  final Color borderColor;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [
-          BoxShadow(
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-            color: Colors.black.withValues(
-              alpha: Theme.of(context).brightness == Brightness.dark
-                  ? 0.2
-                  : 0.05,
-            ),
-          ),
-        ],
-      ),
-      child: OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 18, color: iconColor),
-        label: Text(
-          label,
-          style: TextStyle(fontWeight: FontWeight.w600, color: textColor),
-        ),
-        style: OutlinedButton.styleFrom(
-          backgroundColor: backgroundColor,
-          foregroundColor: textColor,
-          side: BorderSide(color: borderColor),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          shape: const StadiumBorder(),
-          visualDensity: VisualDensity.compact,
-        ),
-      ),
-    );
-  }
-}
-
-enum _MemoCardAction {
-  togglePinned,
-  edit,
-  history,
-  reminder,
-  archive,
-  restore,
-  delete,
-}
-
-Rect? _globalRectForKey(GlobalKey key) {
-  final context = key.currentContext;
-  if (context == null) return null;
-  final renderObject = context.findRenderObject();
-  if (renderObject is! RenderBox || !renderObject.hasSize) return null;
-  return renderObject.localToGlobal(Offset.zero) & renderObject.size;
-}
-
-class _MemoFloatingCollapseCandidate {
-  const _MemoFloatingCollapseCandidate({
-    required this.memoUid,
-    required this.visibleHeight,
-  });
-
-  final String memoUid;
-  final double visibleHeight;
-}
-
-class _MemoCard extends StatefulWidget {
-  const _MemoCard({
-    super.key,
-    required this.memo,
-    required this.dateText,
-    required this.reminderText,
-    required this.tagColors,
-    required this.initiallyExpanded,
-    required this.highlightQuery,
-    required this.collapseLongContent,
-    required this.collapseReferences,
-    required this.isAudioPlaying,
-    required this.isAudioLoading,
-    required this.audioPositionListenable,
-    required this.audioDurationListenable,
-    required this.imageEntries,
-    required this.mediaEntries,
-    required this.locationProvider,
-    required this.onAudioSeek,
-    required this.onAudioTap,
-    required this.syncStatus,
-    this.onSyncStatusTap,
-    required this.onToggleTask,
-    required this.onTap,
-    this.onLongPress,
-    this.onDoubleTap,
-    this.onFloatingStateChanged,
-    required this.onAction,
-  });
-
-  final LocalMemo memo;
-  final String dateText;
-  final String? reminderText;
-  final TagColorLookup tagColors;
-  final bool initiallyExpanded;
-  final String? highlightQuery;
-  final bool collapseLongContent;
-  final bool collapseReferences;
-  final bool isAudioPlaying;
-  final bool isAudioLoading;
-  final ValueListenable<Duration>? audioPositionListenable;
-  final ValueListenable<Duration?>? audioDurationListenable;
-  final List<MemoImageEntry> imageEntries;
-  final List<MemoMediaEntry> mediaEntries;
-  final LocationServiceProvider locationProvider;
-  final ValueChanged<Duration>? onAudioSeek;
-  final VoidCallback? onAudioTap;
-  final _MemoSyncStatus syncStatus;
-  final VoidCallback? onSyncStatusTap;
-  final ValueChanged<int> onToggleTask;
-  final VoidCallback onTap;
-  final VoidCallback? onLongPress;
-  final VoidCallback? onDoubleTap;
-  final VoidCallback? onFloatingStateChanged;
-  final ValueChanged<_MemoCardAction> onAction;
-
-  @override
-  State<_MemoCard> createState() => _MemoCardState();
-}
-
-class _MemoCardState extends State<_MemoCard> {
-  late bool _expanded;
-  final _cardKey = GlobalKey();
-  final _toggleButtonKey = GlobalKey();
-  bool _showToggle = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _expanded = widget.initiallyExpanded;
-  }
-
-  void _notifyFloatingStateChanged() {
-    widget.onFloatingStateChanged?.call();
-  }
-
-  void collapseFromFloating() {
-    if (!_expanded) return;
-    setState(() => _expanded = false);
-    _notifyFloatingStateChanged();
-  }
-
-  _MemoFloatingCollapseCandidate? resolveFloatingCollapseCandidate(
-    Rect viewportRect,
-  ) {
-    if (!_expanded || !_showToggle) return null;
-    final cardRect = _globalRectForKey(_cardKey);
-    final toggleRect = _globalRectForKey(_toggleButtonKey);
-    if (cardRect == null || toggleRect == null) return null;
-    final visibleHeight = math.max(
-      0.0,
-      math.min(cardRect.bottom, viewportRect.bottom) -
-          math.max(cardRect.top, viewportRect.top),
-    );
-    if (visibleHeight <= 0) return null;
-    if (!shouldShowFloatingCollapseForToggle(
-      viewportRect: viewportRect,
-      toggleRect: toggleRect,
-    )) {
-      return null;
-    }
-    return _MemoFloatingCollapseCandidate(
-      memoUid: widget.memo.uid,
-      visibleHeight: visibleHeight,
-    );
-  }
-
-  static String _previewText(
-    String content, {
-    required bool collapseReferences,
-    required AppLanguage language,
-  }) {
-    final trimmed = stripTaskListToggleHint(content).trim();
-    if (!collapseReferences) return trimmed;
-
-    final lines = trimmed.split('\n');
-    final keep = <String>[];
-    var quoteLines = 0;
-    for (final line in lines) {
-      if (line.trimLeft().startsWith('>')) {
-        quoteLines++;
-        continue;
-      }
-      keep.add(line);
-    }
-
-    final main = keep.join('\n').trim();
-    if (quoteLines == 0) return main;
-    if (main.isEmpty) {
-      final cleaned = lines
-          .map((l) => l.replaceFirst(RegExp(r'^\\s*>\\s?'), ''))
-          .join('\n')
-          .trim();
-      return cleaned.isEmpty ? trimmed : cleaned;
-    }
-    return '$main\n\n${trByLanguageKey(language: language, key: 'legacy.msg_quoted_lines', params: {'quoteLines': quoteLines})}';
-  }
-
-  @override
-  void didUpdateWidget(covariant _MemoCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.memo.uid != widget.memo.uid) {
-      _expanded = widget.initiallyExpanded;
-      _notifyFloatingStateChanged();
-      return;
-    }
-    if (oldWidget.initiallyExpanded != widget.initiallyExpanded) {
-      _expanded = widget.initiallyExpanded;
-      _notifyFloatingStateChanged();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final memo = widget.memo;
-    final dateText = widget.dateText;
-    final reminderText = widget.reminderText;
-    final collapseLongContent = widget.collapseLongContent;
-    final collapseReferences = widget.collapseReferences;
-    final onToggleTask = widget.onToggleTask;
-    final onTap = widget.onTap;
-    final onAction = widget.onAction;
-    final onAudioTap = widget.onAudioTap;
-    final audioPlaying = widget.isAudioPlaying;
-    final audioLoading = widget.isAudioLoading;
-    final audioPositionListenable = widget.audioPositionListenable;
-    final audioDurationListenable = widget.audioDurationListenable;
-    final onAudioSeek = widget.onAudioSeek;
-    final mediaEntries = widget.mediaEntries;
-    final syncStatus = widget.syncStatus;
-    final onSyncStatusTap = widget.onSyncStatusTap;
-    final onDoubleTap = widget.onDoubleTap;
-    final onLongPress = widget.onLongPress;
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final cardColor = isDark
-        ? MemoFlowPalette.cardDark
-        : MemoFlowPalette.cardLight;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final isPinned = memo.pinned;
-    final pinColor = MemoFlowPalette.primary;
-    final pinBorderColor = pinColor.withValues(alpha: isDark ? 0.5 : 0.4);
-    final pinTint = pinColor.withValues(alpha: isDark ? 0.18 : 0.08);
-    final cardSurface = isPinned
-        ? Color.alphaBlend(pinTint, cardColor)
-        : cardColor;
-    final cardBorderColor = isPinned ? pinBorderColor : borderColor;
-    final menuColor = isDark
-        ? const Color(0xFF2B2523)
-        : const Color(0xFFF6E7E3);
-    final deleteColor = isDark
-        ? const Color(0xFFFF7A7A)
-        : const Color(0xFFE05656);
-    final isArchived = widget.memo.state == 'ARCHIVED';
-    final pendingColor = textMain.withValues(alpha: isDark ? 0.45 : 0.35);
-    final attachmentColor = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final showSyncStatus = syncStatus != _MemoSyncStatus.none;
-    final headerMinHeight = 32.0;
-    final syncIcon = syncStatus == _MemoSyncStatus.failed
-        ? Icons.error_outline
-        : Icons.cloud_upload_outlined;
-    final syncColor = syncStatus == _MemoSyncStatus.failed
-        ? deleteColor
-        : pendingColor;
-    final pinnedChip = isPinned
-        ? Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: pinColor.withValues(alpha: isDark ? 0.18 : 0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: pinBorderColor),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.push_pin, size: 12, color: pinColor),
-                const SizedBox(width: 4),
-                Text(
-                  context.t.strings.legacy.msg_pinned,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                    color: pinColor,
-                  ),
-                ),
-              ],
-            ),
-          )
-        : null;
-
-    final audio = memo.attachments
-        .where((a) => a.type.startsWith('audio'))
-        .toList(growable: false);
-    final hasAudio = audio.isNotEmpty;
-    final nonMediaAttachments = filterNonMediaAttachments(memo.attachments);
-    final attachmentLines = attachmentNameLines(nonMediaAttachments);
-    final attachmentCount = nonMediaAttachments.length;
-    final language = context.appLanguage;
-    final normalizedHighlightQuery = widget.highlightQuery?.trim();
-    final highlightQuery =
-        normalizedHighlightQuery == null || normalizedHighlightQuery.isEmpty
-        ? null
-        : normalizedHighlightQuery;
-    final highlightKey = highlightQuery?.toLowerCase() ?? '';
-    final cacheKey = _memoRenderCacheKey(
-      memo,
-      collapseLongContent: collapseLongContent,
-      collapseReferences: collapseReferences,
-      language: language,
-    );
-    final cached = _memoRenderCache.get(cacheKey);
-    final previewText =
-        cached?.previewText ??
-        _previewText(
-          memo.content,
-          collapseReferences: false,
-          language: language,
-        );
-    final preview =
-        cached?.preview ??
-        _truncatePreview(previewText, collapseLongContent: collapseLongContent);
-    final taskStats =
-        cached?.taskStats ??
-        countTaskStats(memo.content, skipQuotedLines: collapseReferences);
-    if (cached == null) {
-      _memoRenderCache.set(
-        cacheKey,
-        _MemoRenderCacheEntry(
-          previewText: previewText,
-          preview: preview,
-          taskStats: taskStats,
-        ),
-      );
-    }
-    final showToggle = preview.truncated;
-    _showToggle = showToggle;
-    final showCollapsed = showToggle && !_expanded;
-    final displayText = previewText;
-    final markdownCacheKey = '$cacheKey|md|searchhl=v2|hl=$highlightKey';
-    final showProgress = !hasAudio && taskStats.total > 0;
-    final progress = showProgress ? taskStats.checked / taskStats.total : 0.0;
-    final audioDurationText = _parseVoiceDuration(memo.content) ?? '00:00';
-    final audioDurationFallback = _parseVoiceDurationValue(memo.content);
-
-    Widget buildMediaGrid() {
-      if (mediaEntries.isEmpty) return const SizedBox.shrink();
-      final previewBorder = borderColor.withValues(alpha: 0.65);
-      final previewBg = isDark
-          ? MemoFlowPalette.audioSurfaceDark.withValues(alpha: 0.6)
-          : MemoFlowPalette.audioSurfaceLight;
-      final maxHeight = MediaQuery.of(context).size.height * 0.4;
-      return MemoMediaGrid(
-        entries: mediaEntries,
-        columns: 3,
-        maxCount: 9,
-        maxHeight: maxHeight,
-        preserveSquareTilesWhenHeightLimited: Platform.isWindows,
-        radius: 0,
-        spacing: 4,
-        borderColor: previewBorder,
-        backgroundColor: previewBg,
-        textColor: textMain,
-        enableDownload: true,
-      );
-    }
-
-    String formatDuration(Duration value) {
-      final totalSeconds = value.inSeconds;
-      final hh = totalSeconds ~/ 3600;
-      final mm = (totalSeconds % 3600) ~/ 60;
-      final ss = totalSeconds % 60;
-      if (hh <= 0) {
-        return '${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
-      }
-      return '${hh.toString().padLeft(2, '0')}:${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
-    }
-
-    Widget buildAudioRow(Duration position, Duration? duration) {
-      final effectiveDuration = duration ?? audioDurationFallback;
-      final clampedPosition =
-          effectiveDuration != null && position > effectiveDuration
-          ? effectiveDuration
-          : position;
-      final totalText = effectiveDuration != null
-          ? formatDuration(effectiveDuration)
-          : audioDurationText;
-      final showPosition = clampedPosition > Duration.zero || audioPlaying;
-      final displayText = effectiveDuration != null && showPosition
-          ? '${formatDuration(clampedPosition)} / $totalText'
-          : (showPosition ? formatDuration(clampedPosition) : totalText);
-
-      return AudioRow(
-        durationText: displayText,
-        isDark: isDark,
-        playing: audioPlaying,
-        loading: audioLoading,
-        position: clampedPosition,
-        duration: duration,
-        durationFallback: audioDurationFallback,
-        onSeek: onAudioSeek,
-        onTap: onAudioTap,
-      );
-    }
-
-    Widget audioRow = buildAudioRow(Duration.zero, null);
-    if (audioPositionListenable != null && audioDurationListenable != null) {
-      audioRow = ValueListenableBuilder<Duration>(
-        valueListenable: audioPositionListenable,
-        builder: (context, position, _) {
-          return ValueListenableBuilder<Duration?>(
-            valueListenable: audioDurationListenable,
-            builder: (context, duration, _) {
-              return buildAudioRow(position, duration);
-            },
-          );
-        },
-      );
-    }
-
-    Widget content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (showProgress) ...[
-          _TaskProgressBar(
-            progress: progress,
-            isDark: isDark,
-            total: taskStats.total,
-            checked: taskStats.checked,
-          ),
-          const SizedBox(height: 2),
-        ],
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            MemoMarkdown(
-              cacheKey: markdownCacheKey,
-              data: displayText,
-              highlightQuery: highlightQuery,
-              maxLines: showCollapsed ? 6 : null,
-              textStyle: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: textMain),
-              blockSpacing: 4,
-              normalizeHeadings: true,
-              renderImages: false,
-              tagColors: widget.tagColors,
-              onToggleTask: (request) => onToggleTask(request.taskIndex),
-            ),
-            if (showToggle) ...[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  key: _toggleButtonKey,
-                  onPressed: () {
-                    setState(() => _expanded = !_expanded);
-                    _notifyFloatingStateChanged();
-                  },
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 2,
-                    ),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: Text(
-                    _expanded
-                        ? context.t.strings.legacy.msg_collapse
-                        : context.t.strings.legacy.msg_expand,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: MemoFlowPalette.primary,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            if (mediaEntries.isNotEmpty) ...[
-              const SizedBox(height: 2),
-              buildMediaGrid(),
-            ],
-            if (hasAudio) ...[const SizedBox(height: 2), audioRow],
-            if (attachmentCount > 0) ...[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Builder(
-                  builder: (context) {
-                    return Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(10),
-                        onTap: () =>
-                            showAttachmentNamesToast(context, attachmentLines),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.attach_file,
-                                size: 14,
-                                color: attachmentColor,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                attachmentCount.toString(),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: attachmentColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ],
-        ),
-        _MemoRelationsSection(
-          memoUid: memo.uid,
-          initialCount: memo.relationCount,
-        ),
-      ],
-    );
-
-    if (onDoubleTap != null) {
-      content = GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onDoubleTap: onDoubleTap,
-        child: content,
-      );
-    }
-
-    return Hero(
-      tag: memo.uid,
-      createRectTween: (begin, end) =>
-          MaterialRectArcTween(begin: begin, end: end),
-      flightShuttleBuilder: memoHeroFlightShuttleBuilder(isPinned: memo.pinned),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: Container(
-            key: _cardKey,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: cardSurface,
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: cardBorderColor),
-              boxShadow: [
-                BoxShadow(
-                  blurRadius: isDark ? 20 : 12,
-                  offset: const Offset(0, 4),
-                  color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.03),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Stack(
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          height: headerMinHeight,
-                          child: Row(
-                            children: [
-                              if (pinnedChip != null) ...[
-                                pinnedChip,
-                                const SizedBox(width: 8),
-                              ],
-                              Text(
-                                dateText,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.0,
-                                  color: textMain.withValues(
-                                    alpha: isDark ? 0.4 : 0.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (memo.location != null) ...[
-                          const SizedBox(height: 2),
-                          MemoLocationLine(
-                            location: memo.location!,
-                            textColor: textMain.withValues(
-                              alpha: isDark ? 0.4 : 0.5,
-                            ),
-                            onTap: () => openMemoLocation(
-                              context,
-                              memo.location!,
-                              memoUid: memo.uid,
-                              provider: widget.locationProvider,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Theme(
-                        data: Theme.of(context).copyWith(
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (reminderText != null)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.notifications_active_outlined,
-                                      size: 14,
-                                      color: MemoFlowPalette.primary,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      reminderText,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: MemoFlowPalette.primary,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            if (showSyncStatus)
-                              IconButton(
-                                onPressed: onSyncStatusTap,
-                                icon: Icon(
-                                  syncIcon,
-                                  size: 16,
-                                  color: syncColor,
-                                ),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints.tightFor(
-                                  width: 32,
-                                  height: 32,
-                                ),
-                                splashRadius: 16,
-                              ),
-                            SizedBox(
-                              width: 32,
-                              height: 32,
-                              child: Center(
-                                child: PopupMenuButton<_MemoCardAction>(
-                                  tooltip: context.t.strings.legacy.msg_more,
-                                  padding: EdgeInsets.zero,
-                                  icon: Icon(
-                                    Icons.more_horiz,
-                                    size: 20,
-                                    color: textMain.withValues(
-                                      alpha: isDark ? 0.4 : 0.5,
-                                    ),
-                                  ),
-                                  onSelected: onAction,
-                                  color: menuColor,
-                                  surfaceTintColor: Colors.transparent,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  itemBuilder: (context) => isArchived
-                                      ? [
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.history,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .settings
-                                                  .preferences
-                                                  .history,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.restore,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .legacy
-                                                  .msg_restore,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.delete,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .legacy
-                                                  .msg_delete,
-                                              style: TextStyle(
-                                                color: deleteColor,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ]
-                                      : [
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.togglePinned,
-                                            child: Text(
-                                              memo.pinned
-                                                  ? context
-                                                        .t
-                                                        .strings
-                                                        .legacy
-                                                        .msg_unpin
-                                                  : context
-                                                        .t
-                                                        .strings
-                                                        .legacy
-                                                        .msg_pin,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.edit,
-                                            child: Text(
-                                              context.t.strings.legacy.msg_edit,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.history,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .settings
-                                                  .preferences
-                                                  .history,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.reminder,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .legacy
-                                                  .msg_reminder,
-                                            ),
-                                          ),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.archive,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .legacy
-                                                  .msg_archive,
-                                            ),
-                                          ),
-                                          const PopupMenuDivider(),
-                                          PopupMenuItem(
-                                            value: _MemoCardAction.delete,
-                                            child: Text(
-                                              context
-                                                  .t
-                                                  .strings
-                                                  .legacy
-                                                  .msg_delete,
-                                              style: TextStyle(
-                                                color: deleteColor,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 0),
-                content,
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  static String? _parseVoiceDuration(String content) {
-    final value = _parseVoiceDurationValue(content);
-    if (value == null) return null;
-    final totalSeconds = value.inSeconds;
-    final hh = totalSeconds ~/ 3600;
-    final mm = (totalSeconds % 3600) ~/ 60;
-    final ss = totalSeconds % 60;
-    if (hh <= 0) {
-      return '${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
-    }
-    return '${hh.toString().padLeft(2, '0')}:${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
-  }
-
-  static Duration? _parseVoiceDurationValue(String content) {
-    final linePattern = RegExp(r'^[-*+•]?\s*', unicode: true);
-    final valuePattern = RegExp(
-      r'^(时长|Duration)\s*[:：]?\s*(\d{1,2}):(\d{1,2}):(\d{1,2})$',
-      caseSensitive: false,
-      unicode: true,
-    );
-
-    for (final rawLine in content.split('\n')) {
-      final trimmed = rawLine.trim();
-      if (trimmed.isEmpty) continue;
-      final line = trimmed.replaceFirst(linePattern, '');
-      final m = valuePattern.firstMatch(line);
-      if (m == null) continue;
-      final hh = int.tryParse(m.group(2) ?? '') ?? 0;
-      final mm = int.tryParse(m.group(3) ?? '') ?? 0;
-      final ss = int.tryParse(m.group(4) ?? '') ?? 0;
-      if (hh == 0 && mm == 0 && ss == 0) return null;
-      return Duration(hours: hh, minutes: mm, seconds: ss);
-    }
-
-    return null;
-  }
-}
-
-class _MemoRelationsSection extends ConsumerStatefulWidget {
-  const _MemoRelationsSection({
-    required this.memoUid,
-    required this.initialCount,
-  });
-
-  final String memoUid;
-  final int initialCount;
-
-  @override
-  ConsumerState<_MemoRelationsSection> createState() =>
-      _MemoRelationsSectionState();
-}
-
-class _MemoRelationsSectionState extends ConsumerState<_MemoRelationsSection> {
-  bool _expanded = false;
-  int _cachedTotal = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _cachedTotal = widget.initialCount;
-  }
-
-  @override
-  void didUpdateWidget(covariant _MemoRelationsSection oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.initialCount != oldWidget.initialCount) {
-      _cachedTotal = widget.initialCount;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (!_expanded && _cachedTotal == 0) {
-      return const SizedBox.shrink();
-    }
-
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final bg = isDark
-        ? MemoFlowPalette.audioSurfaceDark
-        : MemoFlowPalette.audioSurfaceLight;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.6 : 0.7);
-
-    final summaryRow = _RelationSummaryRow(
-      borderColor: borderColor,
-      bg: bg,
-      textMain: textMain,
-      textMuted: textMuted,
-      expanded: _expanded,
-      countText: _cachedTotal.toString(),
-      onTap: () => setState(() => _expanded = !_expanded),
-      boxed: false,
-    );
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor.withValues(alpha: 0.7)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            summaryRow,
-            if (_expanded) const SizedBox(height: 2),
-            if (_expanded) _buildExpanded(context, isDark),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildExpanded(BuildContext context, bool isDark) {
-    final relationsAsync = ref.watch(memoRelationsProvider(widget.memoUid));
-    return relationsAsync.when(
-      data: (relations) {
-        final currentName = 'memos/${widget.memoUid}';
-        final referencing = <_RelationItem>[];
-        final referencedBy = <_RelationItem>[];
-        final seenReferencing = <String>{};
-        final seenReferencedBy = <String>{};
-
-        for (final relation in relations) {
-          final type = relation.type.trim().toUpperCase();
-          if (type != 'REFERENCE') {
-            continue;
-          }
-          final memoName = relation.memo.name.trim();
-          final relatedName = relation.relatedMemo.name.trim();
-
-          if (memoName == currentName && relatedName.isNotEmpty) {
-            if (seenReferencing.add(relatedName)) {
-              referencing.add(
-                _RelationItem(
-                  name: relatedName,
-                  snippet: relation.relatedMemo.snippet,
-                ),
-              );
-            }
-            continue;
-          }
-          if (relatedName == currentName && memoName.isNotEmpty) {
-            if (seenReferencedBy.add(memoName)) {
-              referencedBy.add(
-                _RelationItem(name: memoName, snippet: relation.memo.snippet),
-              );
-            }
-          }
-        }
-
-        final total = referencing.length + referencedBy.length;
-        _maybeCacheTotal(total);
-
-        if (total == 0) {
-          return _buildEmptyState(context, isDark);
-        }
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (referencing.isNotEmpty)
-              _RelationGroup(
-                title: context.t.strings.legacy.msg_references,
-                items: referencing,
-                isDark: isDark,
-                showHeader: false,
-                onTap: (item) => _openMemo(context, ref, item.name),
-                boxed: false,
-              ),
-            if (referencing.isNotEmpty && referencedBy.isNotEmpty)
-              const SizedBox(height: 2),
-            if (referencedBy.isNotEmpty)
-              _RelationGroup(
-                title: context.t.strings.legacy.msg_referenced,
-                items: referencedBy,
-                isDark: isDark,
-                showHeader: false,
-                onTap: (item) => _openMemo(context, ref, item.name),
-                boxed: false,
-              ),
-          ],
-        );
-      },
-      loading: () => _buildLoading(context),
-      error: (error, stackTrace) => const SizedBox.shrink(),
-    );
-  }
-
-  void _maybeCacheTotal(int total) {
-    if (_cachedTotal == total) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() => _cachedTotal = total);
-    });
-  }
-
-  Widget _buildLoading(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.6 : 0.7);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Icon(Icons.link, size: 14, color: textMuted),
-          const SizedBox(width: 6),
-          Text(
-            context.t.strings.legacy.msg_loading_links,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: textMuted,
-            ),
-          ),
-          const Spacer(),
-          SizedBox.square(
-            dimension: 12,
-            child: CircularProgressIndicator(strokeWidth: 2, color: textMuted),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState(BuildContext context, bool isDark) {
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final textMuted = textMain.withValues(alpha: isDark ? 0.6 : 0.7);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Icon(Icons.link_off, size: 14, color: textMuted),
-          const SizedBox(width: 6),
-          Text(
-            context.t.strings.legacy.msg_no_links,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: textMuted,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _openMemo(
-    BuildContext context,
-    WidgetRef ref,
-    String rawName,
-  ) async {
-    final uid = _normalizeMemoUid(rawName);
-    if (uid.isEmpty || uid == widget.memoUid) return;
-
-    final result = await ref
-        .read(memosListControllerProvider)
-        .resolveMemoForOpen(uid: uid);
-    final error = result.error;
-    if (error != null) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_failed_load_4(e: error)),
-        ),
-      );
-      return;
-    }
-
-    if (result.isNotFound) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_memo_not_found_locally),
-        ),
-      );
-      return;
-    }
-
-    final memo = result.memo!;
-    if (!context.mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => MemoDetailScreen(initialMemo: memo),
-      ),
-    );
-  }
-
-  String _normalizeMemoUid(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '';
-    if (trimmed.startsWith('memos/')) return trimmed.substring('memos/'.length);
-    return trimmed;
-  }
-}
-
-class _RelationSummaryRow extends StatelessWidget {
-  const _RelationSummaryRow({
-    required this.borderColor,
-    required this.bg,
-    required this.textMain,
-    required this.textMuted,
-    required this.expanded,
-    required this.countText,
-    required this.onTap,
-    this.boxed = true,
-  });
-
-  final Color borderColor;
-  final Color bg;
-  final Color textMain;
-  final Color textMuted;
-  final bool expanded;
-  final String countText;
-  final VoidCallback onTap;
-  final bool boxed;
-
-  @override
-  Widget build(BuildContext context) {
-    final label = context.t.strings.legacy.msg_links;
-    final decoration = boxed
-        ? BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: borderColor.withValues(alpha: 0.7)),
-          )
-        : null;
-    final padding = boxed
-        ? const EdgeInsets.symmetric(horizontal: 12)
-        : EdgeInsets.zero;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          height: 34,
-          padding: padding,
-          decoration: decoration,
-          child: Row(
-            children: [
-              Icon(Icons.link, size: 14, color: textMuted),
-              const SizedBox(width: 6),
-              Text(
-                '$label - $countText',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: textMain,
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                expanded ? Icons.expand_less : Icons.expand_more,
-                size: 18,
-                color: textMuted,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RelationGroup extends StatelessWidget {
-  const _RelationGroup({
-    required this.title,
-    required this.items,
-    required this.isDark,
-    this.showHeader = true,
-    this.onTap,
-    this.boxed = true,
-  });
-
-  final String title;
-  final List<_RelationItem> items;
-  final bool isDark;
-  final bool showHeader;
-  final ValueChanged<_RelationItem>? onTap;
-  final bool boxed;
-
-  @override
-  Widget build(BuildContext context) {
-    final borderColor = isDark
-        ? MemoFlowPalette.borderDark
-        : MemoFlowPalette.borderLight;
-    final bg = isDark
-        ? MemoFlowPalette.audioSurfaceDark
-        : MemoFlowPalette.audioSurfaceLight;
-    final textMain = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-    final headerColor = textMain.withValues(alpha: isDark ? 0.7 : 0.8);
-    final chipBg = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : Colors.black.withValues(alpha: 0.06);
-
-    final decoration = boxed
-        ? BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: borderColor.withValues(alpha: 0.7)),
-          )
-        : null;
-    final padding = boxed
-        ? const EdgeInsets.fromLTRB(12, 10, 12, 12)
-        : EdgeInsets.zero;
-    return Container(
-      padding: padding,
-      decoration: decoration,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (showHeader) ...[
-            Row(
-              children: [
-                Icon(Icons.link, size: 14, color: headerColor),
-                const SizedBox(width: 6),
-                Text(
-                  '$title (${items.length})',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: headerColor,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-          ],
-          ...items.map((item) {
-            final row = Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: chipBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      _shortMemoId(item.name),
-                      style: TextStyle(fontSize: 10, color: headerColor),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _relationSnippet(item),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: textMain),
-                    ),
-                  ),
-                ],
-              ),
-            );
-            if (onTap == null) return row;
-            return Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () => onTap!(item),
-                child: row,
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  static String _relationSnippet(_RelationItem item) {
-    final snippet = item.snippet.trim();
-    if (snippet.isNotEmpty) return snippet;
-    final name = item.name.trim();
-    if (name.isNotEmpty) return name;
-    return '';
-  }
-
-  static String _shortMemoId(String name) {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty) return '--';
-    final raw = trimmed.startsWith('memos/')
-        ? trimmed.substring('memos/'.length)
-        : trimmed;
-    return raw.length <= 6 ? raw : raw.substring(0, 6);
-  }
-}
-
-class _RelationItem {
-  const _RelationItem({required this.name, required this.snippet});
-
-  final String name;
-  final String snippet;
-}
-
-class _TaskProgressBar extends StatefulWidget {
-  const _TaskProgressBar({
-    required this.progress,
-    required this.isDark,
-    required this.total,
-    required this.checked,
-  });
-
-  final double progress;
-  final bool isDark;
-  final int total;
-  final int checked;
-
-  @override
-  State<_TaskProgressBar> createState() => _TaskProgressBarState();
-}
-
-class _TaskProgressBarState extends State<_TaskProgressBar>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    final targetValue = widget.progress.clamp(0.0, 1.0);
-    _animation = Tween<double>(
-      begin: targetValue,
-      end: targetValue,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
-    _controller.value = 1.0;
-  }
-
-  @override
-  void didUpdateWidget(_TaskProgressBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.progress != widget.progress) {
-      final targetValue = widget.progress.clamp(0.0, 1.0);
-      final currentValue = _animation.value;
-      final difference = (targetValue - currentValue).abs();
-
-      // 閺嶈宓佹潻娑樺瀹割喛绐涚拫鍐╂殻閸斻劎鏁鹃弮鍫曟毐閿涙艾妯婄捄婵婄Ш婢堆嶇礉閸斻劎鏁鹃弮鍫曟？鐡掑﹪鏆?
-      final animationDuration = Duration(
-        milliseconds: (400 + difference * 500).round(),
-      );
-
-      _controller.duration = animationDuration;
-
-      _animation = Tween<double>(begin: currentValue, end: targetValue).animate(
-        CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-      );
-
-      _controller.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = widget.isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : Colors.black.withValues(alpha: 0.06);
-    final textColor = widget.isDark ? Colors.white70 : Colors.black54;
-
-    return AnimatedBuilder(
-      animation: _animation,
-      builder: (context, child) {
-        final percentage = (_animation.value * 100).round();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${context.t.strings.legacy.msg_progress} (${widget.checked}/${widget.total})',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: textColor,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: Text(
-                    '$percentage%',
-                    key: ValueKey(percentage),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: textColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: _animation.value,
-                minHeight: 8,
-                backgroundColor: bg,
-                valueColor: AlwaysStoppedAnimation(MemoFlowPalette.primary),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _MemoFlowFab extends StatefulWidget {
-  const _MemoFlowFab({
-    required this.onPressed,
-    required this.hapticsEnabled,
-    this.onLongPressStart,
-    this.onLongPressMoveUpdate,
-    this.onLongPressEnd,
-  });
-
-  final VoidCallback? onPressed;
-  final Future<void> Function(LongPressStartDetails details)? onLongPressStart;
-  final void Function(LongPressMoveUpdateDetails details)?
-  onLongPressMoveUpdate;
-  final void Function(LongPressEndDetails details)? onLongPressEnd;
-  final bool hapticsEnabled;
-
-  @override
-  State<_MemoFlowFab> createState() => _MemoFlowFabState();
-}
-
-class _MemoFlowFabState extends State<_MemoFlowFab> {
-  var _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = Theme.of(context).brightness == Brightness.dark
-        ? MemoFlowPalette.backgroundDark
-        : MemoFlowPalette.backgroundLight;
-
-    return GestureDetector(
-      onTapDown: widget.onPressed == null
-          ? null
-          : (_) {
-              if (widget.hapticsEnabled) {
-                HapticFeedback.selectionClick();
-              }
-              setState(() => _pressed = true);
-            },
-      onTapCancel: () => setState(() => _pressed = false),
-      onTapUp: widget.onPressed == null
-          ? null
-          : (_) {
-              setState(() => _pressed = false);
-              widget.onPressed?.call();
-            },
-      onLongPressStart: widget.onLongPressStart == null
-          ? null
-          : (details) {
-              setState(() => _pressed = false);
-              if (widget.hapticsEnabled) {
-                HapticFeedback.mediumImpact();
-              }
-              unawaited(widget.onLongPressStart!.call(details));
-            },
-      onLongPressMoveUpdate: widget.onLongPressMoveUpdate,
-      onLongPressEnd: widget.onLongPressEnd,
-      child: AnimatedScale(
-        scale: _pressed ? 0.9 : 1.0,
-        duration: const Duration(milliseconds: 160),
-        child: Container(
-          width: 64,
-          height: 64,
-          decoration: BoxDecoration(
-            color: MemoFlowPalette.primary,
-            shape: BoxShape.circle,
-            border: Border.all(color: bg, width: 4),
-            boxShadow: [
-              BoxShadow(
-                blurRadius: 24,
-                offset: const Offset(0, 10),
-                color: MemoFlowPalette.primary.withValues(
-                  alpha: Theme.of(context).brightness == Brightness.dark
-                      ? 0.2
-                      : 0.3,
-                ),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.add, size: 32, color: Colors.white),
-        ),
-      ),
-    );
-  }
-}
-
-class _BackToTopButton extends StatefulWidget {
-  const _BackToTopButton({
-    required this.visible,
-    required this.hapticsEnabled,
-    required this.onPressed,
-  });
-
-  final bool visible;
-  final bool hapticsEnabled;
-  final VoidCallback onPressed;
-
-  @override
-  State<_BackToTopButton> createState() => _BackToTopButtonState();
-}
-
-class _BackToTopButtonState extends State<_BackToTopButton> {
-  var _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = MemoFlowPalette.primary;
-    final iconColor = Colors.white;
-    final scale = widget.visible ? (_pressed ? 0.92 : 1.0) : 0.85;
-
-    return IgnorePointer(
-      ignoring: !widget.visible,
-      child: AnimatedOpacity(
-        opacity: widget.visible ? 1 : 0,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-        child: AnimatedScale(
-          scale: scale,
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          child: Semantics(
-            button: true,
-            label: context.t.strings.legacy.msg_back_top,
-            child: GestureDetector(
-              onTapDown: (_) {
-                if (widget.hapticsEnabled) {
-                  HapticFeedback.selectionClick();
-                }
-                setState(() => _pressed = true);
-              },
-              onTapCancel: () => setState(() => _pressed = false),
-              onTapUp: (_) {
-                setState(() => _pressed = false);
-                widget.onPressed();
-              },
-              child: Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: bg,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                      color: MemoFlowPalette.primary.withValues(
-                        alpha: isDark ? 0.35 : 0.25,
-                      ),
-                    ),
-                  ],
-                ),
-                child: Icon(
-                  Icons.keyboard_arrow_up,
-                  size: 26,
-                  color: iconColor,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

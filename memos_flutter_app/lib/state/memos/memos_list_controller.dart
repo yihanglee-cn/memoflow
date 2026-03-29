@@ -137,7 +137,7 @@ class MemosListController {
     required List<Map<String, dynamic>> attachments,
     required MemoLocation? location,
     required List<Map<String, dynamic>> relations,
-    required List<MemosListPendingAttachment> pendingAttachments,
+    required List<MemoComposerPendingAttachment> pendingAttachments,
   }) async {
     final db = _ref.read(databaseProvider);
     final attachmentPayloads = pendingAttachments

@@ -16,6 +16,7 @@ import 'create_memo_outbox_payload.dart';
 import 'memo_delete_service.dart';
 import 'memo_timeline_provider.dart';
 import 'memos_providers.dart';
+import 'memo_composer_state.dart';
 import '../system/session_provider.dart';
 import '../settings/user_settings_provider.dart';
 part 'memos_list_controller.dart';
@@ -29,22 +30,6 @@ class OutboxMemoStatus {
 
   final Set<String> pending;
   final Set<String> failed;
-}
-
-class MemosListPendingAttachment {
-  const MemosListPendingAttachment({
-    required this.uid,
-    required this.filePath,
-    required this.filename,
-    required this.mimeType,
-    required this.size,
-  });
-
-  final String uid;
-  final String filePath;
-  final String filename;
-  final String mimeType;
-  final int size;
 }
 
 class MemosListMemoResolveResult {
