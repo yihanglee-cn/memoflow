@@ -17,6 +17,8 @@ import '../../state/system/session_provider.dart';
 
 enum OnboardingMode { local, server }
 
+const _memoFlowOnboardingLogoAsset = 'assets/splash/splash_logo_native.png';
+
 class LanguageSelectionScreen extends ConsumerStatefulWidget {
   const LanguageSelectionScreen({super.key});
 
@@ -336,25 +338,27 @@ class _LanguageSelectionScreenState
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Container(
-                    width: 64,
-                    height: 64,
+                    width: 76,
+                    height: 76,
                     decoration: BoxDecoration(
-                      color: MemoFlowPalette.primary,
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          blurRadius: 18,
+                          blurRadius: 20,
                           offset: const Offset(0, 8),
                           color: MemoFlowPalette.primary.withValues(
-                            alpha: 0.25,
+                            alpha: isDark ? 0.18 : 0.16,
                           ),
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.mark_chat_unread_rounded,
-                      color: Colors.white,
-                      size: 30,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: Image.asset(
+                        _memoFlowOnboardingLogoAsset,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 14),

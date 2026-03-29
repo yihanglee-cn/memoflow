@@ -34,6 +34,19 @@ QuickQrActionTarget? classifyQuickQrPayload(String raw) {
   return null;
 }
 
+String _universalQuickQrHint(BuildContext context) {
+  final tag = Localizations.localeOf(context).toLanguageTag().toLowerCase();
+  if (tag.startsWith('zh-hant') ||
+      tag.startsWith('zh-tw') ||
+      tag.startsWith('zh-hk')) {
+    return '\u6383\u63cf\u5c0d\u65b9\u88dd\u7f6e\u6216\u5916\u639b\u986f\u793a\u7684\u4e8c\u7dad\u78bc\u4ee5\u7e7c\u7e8c';
+  }
+  if (tag.startsWith('zh')) {
+    return '\u626b\u63cf\u5bf9\u65b9\u8bbe\u5907\u6216\u63d2\u4ef6\u663e\u793a\u7684\u4e8c\u7ef4\u7801\u4ee5\u7ee7\u7eed';
+  }
+  return 'Scan the QR code shown on the other device or plugin to continue.';
+}
+
 Future<void> startUniversalQuickQrAction({
   required BuildContext context,
   required WidgetRef ref,
@@ -48,8 +61,7 @@ Future<void> startUniversalQuickQrAction({
     MaterialPageRoute<String>(
       builder: (_) => MemoFlowPairQrScanScreen(
         titleText: tr.msg_bridge_scan_title,
-        hintText:
-            '${tr.msg_memoflow_migration_scan_hint}\n${tr.msg_bridge_scan_hint}',
+        hintText: _universalQuickQrHint(context),
       ),
     ),
   );

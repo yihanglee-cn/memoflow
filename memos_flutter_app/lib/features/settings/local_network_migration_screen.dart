@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/memoflow_palette.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/settings/preferences_provider.dart';
 import 'migration/memoflow_migration_role_screen.dart';
 import 'memoflow_bridge_screen.dart';
+
+const _memoFlowMigrationIconAsset =
+    'assets/images/migration/memoflow_migration.svg';
+const _obsidianMigrationIconAsset =
+    'assets/images/migration/obsidian_migration.svg';
 
 class LocalNetworkMigrationScreen extends ConsumerWidget {
   const LocalNetworkMigrationScreen({super.key});
@@ -84,7 +90,15 @@ class LocalNetworkMigrationScreen extends ConsumerWidget {
                 title: context.t.strings.legacy.msg_memoflow_migration,
                 subtitle:
                     context.t.strings.legacy.msg_memoflow_migration_target_desc,
-                icon: Icons.swap_horiz_rounded,
+                icon: SvgPicture.asset(
+                  _memoFlowMigrationIconAsset,
+                  width: 20,
+                  height: 20,
+                  colorFilter: ColorFilter.mode(
+                    MemoFlowPalette.primary,
+                    BlendMode.srcIn,
+                  ),
+                ),
                 onTap: () {
                   haptic();
                   Navigator.of(context).push(
@@ -102,7 +116,11 @@ class LocalNetworkMigrationScreen extends ConsumerWidget {
                 textMuted: textMuted,
                 title: context.t.strings.legacy.msg_connect_obsidian,
                 subtitle: context.t.strings.legacy.msg_connect_obsidian_desc,
-                icon: Icons.hub_outlined,
+                icon: SvgPicture.asset(
+                  _obsidianMigrationIconAsset,
+                  width: 20,
+                  height: 20,
+                ),
                 onTap: () {
                   haptic();
                   Navigator.of(context).push(
@@ -151,7 +169,7 @@ class _TargetCard extends StatelessWidget {
   final Color textMuted;
   final String title;
   final String subtitle;
-  final IconData icon;
+  final Widget icon;
   final VoidCallback onTap;
 
   @override
@@ -189,7 +207,8 @@ class _TargetCard extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(icon, color: MemoFlowPalette.primary),
+                alignment: Alignment.center,
+                child: icon,
               ),
               const SizedBox(width: 14),
               Expanded(

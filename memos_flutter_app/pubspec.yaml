@@ -159,6 +159,8 @@ flutter:
     - assets/share/
     - third_party/readability/
     - assets/images/streamline--wind-flow-1-remix.png
+    - assets/images/flomo_import_logo.svg
+    - assets/images/migration/
     - assets/images/donation_qr.png
     - assets/images/default_avatar.webp
     - windows/runner/resources/app_icon.ico

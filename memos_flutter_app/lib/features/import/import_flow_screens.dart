@@ -5,6 +5,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -23,6 +24,8 @@ import '../../state/system/session_provider.dart';
 import '../memos/memos_list_screen.dart';
 import 'flomo_import_service.dart';
 import '../../i18n/strings.g.dart';
+
+const _flomoImportIconAsset = 'assets/images/flomo_import_logo.svg';
 
 class ImportSourceScreen extends StatelessWidget {
   const ImportSourceScreen({
@@ -239,7 +242,11 @@ class ImportSourceScreen extends StatelessWidget {
                                 .strings
                                 .legacy
                                 .msg_import_exported_html_zip_package,
-                            icon: Icons.auto_awesome_rounded,
+                            icon: SvgPicture.asset(
+                              _flomoImportIconAsset,
+                              width: 24,
+                              height: 24,
+                            ),
                             iconBg: MemoFlowPalette.primary.withValues(
                               alpha: isDark ? 0.2 : 0.12,
                             ),
@@ -260,7 +267,17 @@ class ImportSourceScreen extends StatelessWidget {
                                 .strings
                                 .legacy
                                 .msg_upload_zip_package_md_files,
-                            icon: Icons.description_rounded,
+                            icon: Text(
+                              'md',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.4,
+                                color: MemoFlowPalette.primary.withValues(
+                                  alpha: 0.92,
+                                ),
+                              ),
+                            ),
                             iconBg: MemoFlowPalette.primary.withValues(
                               alpha: isDark ? 0.2 : 0.1,
                             ),
@@ -380,7 +397,9 @@ class _ImportRunScreenState extends ConsumerState<ImportRunScreen> {
       // Force memo streams to re-query after bulk import.
       db.notifyDataChanged();
       unawaited(
-        ref.read(syncCoordinatorProvider.notifier).requestSync(
+        ref
+            .read(syncCoordinatorProvider.notifier)
+            .requestSync(
               const SyncRequest(
                 kind: SyncRequestKind.memos,
                 reason: SyncRequestReason.manual,
@@ -946,7 +965,7 @@ class _ImportSourceTile extends StatelessWidget {
 
   final String title;
   final String subtitle;
-  final IconData icon;
+  final Widget icon;
   final Color iconBg;
   final Color iconColor;
   final Color card;
@@ -978,7 +997,15 @@ class _ImportSourceTile extends StatelessWidget {
                   color: iconBg,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(icon, size: 22, color: iconColor),
+                child: Center(
+                  child: IconTheme(
+                    data: IconThemeData(color: iconColor, size: 22),
+                    child: DefaultTextStyle(
+                      style: TextStyle(color: iconColor),
+                      child: icon,
+                    ),
+                  ),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
