@@ -42,19 +42,23 @@ class MemosListHeaderController extends ChangeNotifier {
     bool initialSearching = false,
     bool initialWindowsHeaderSearchExpanded = false,
   }) : _searchController = searchController ?? TextEditingController(),
-       _searchFocusNode = searchFocusNode ?? FocusNode(),
-       _searching = initialSearching,
-       _selectedShortcutId = initialShortcutId,
-       _selectedQuickSearchKind = initialQuickSearchKind,
-       _advancedSearchFilters = initialAdvancedSearchFilters.normalized(),
-       _activeTagFilter = normalizeTag(initialTag),
+       _ownsSearchController = searchController == null,
+        _searchFocusNode = searchFocusNode ?? FocusNode(),
+       _ownsSearchFocusNode = searchFocusNode == null,
+        _searching = initialSearching,
+        _selectedShortcutId = initialShortcutId,
+        _selectedQuickSearchKind = initialQuickSearchKind,
+        _advancedSearchFilters = initialAdvancedSearchFilters.normalized(),
+        _activeTagFilter = normalizeTag(initialTag),
        _sortOption = initialSortOption,
        _windowsHeaderSearchExpanded = initialWindowsHeaderSearchExpanded {
     _searchController.addListener(_handleSearchTextChanged);
   }
 
   final TextEditingController _searchController;
+  final bool _ownsSearchController;
   final FocusNode _searchFocusNode;
+  final bool _ownsSearchFocusNode;
 
   bool _searching;
   String? _selectedShortcutId;
@@ -394,8 +398,12 @@ class MemosListHeaderController extends ChangeNotifier {
   @override
   void dispose() {
     _searchController.removeListener(_handleSearchTextChanged);
-    _searchFocusNode.dispose();
-    _searchController.dispose();
+    if (_ownsSearchFocusNode) {
+      _searchFocusNode.dispose();
+    }
+    if (_ownsSearchController) {
+      _searchController.dispose();
+    }
     super.dispose();
   }
 }

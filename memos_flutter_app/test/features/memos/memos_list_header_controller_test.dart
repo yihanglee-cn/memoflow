@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/data/models/attachment.dart';
 import 'package:memos_flutter_app/data/models/content_fingerprint.dart';
@@ -119,6 +120,23 @@ void main() {
       controller.advancedSearchFilters.hasAttachments,
       SearchToggleFilter.yes,
     );
+  });
+
+  test('dispose does not own injected controller and focus node', () {
+    final searchController = TextEditingController(text: 'memo');
+    final focusNode = FocusNode();
+    final controller = MemosListHeaderController(
+      searchController: searchController,
+      searchFocusNode: focusNode,
+    );
+
+    controller.dispose();
+
+    expect(() => searchController.text = 'after dispose', returnsNormally);
+    expect(() => focusNode.addListener(() {}), returnsNormally);
+
+    focusNode.dispose();
+    searchController.dispose();
   });
 }
 

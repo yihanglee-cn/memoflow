@@ -1203,19 +1203,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 180));
       }
-      if (!mounted) return;
-      final currentContext = context;
+      if (!context.mounted) return;
       final inFlightStatus = ref.read(syncCoordinatorProvider).memos;
       if (!inFlightStatus.running) {
-        final language = ref.read(
-          appPreferencesProvider.select((p) => p.language),
-        );
-        showSyncFeedback(
-          overlayContext: currentContext,
-          messengerContext: currentContext,
-          language: language,
-          succeeded: inFlightStatus.lastError == null,
-        );
+        _showRefreshSyncFeedback(succeeded: inFlightStatus.lastError == null);
       }
       return;
     }
@@ -1224,41 +1215,47 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         await scanner.scanAndMergeIncremental(forceDisk: false);
         _localLibraryCoordinator.markAutoScanTriggered();
       } catch (error) {
-        if (!mounted) return;
-        final currentContext = context;
-        ScaffoldMessenger.of(currentContext).showSnackBar(
-          SnackBar(
-            content: Text(
-              currentContext.t.strings.legacy.msg_scan_failed(e: error),
-            ),
-          ),
-        );
+        if (!context.mounted) return;
+        _showRefreshScanFailure(error);
       }
     }
-    if (!mounted) return;
+    if (!context.mounted) return;
     final syncResult = await coordinator.requestSync(
       const SyncRequest(
         kind: SyncRequestKind.memos,
         reason: SyncRequestReason.manual,
       ),
     );
-    if (!mounted) return;
+    if (!context.mounted) return;
     if (syncResult is SyncRunQueued) return;
     final syncStatus = ref.read(syncCoordinatorProvider).memos;
     if (syncStatus.running) return;
-    final language = ref.read(appPreferencesProvider.select((p) => p.language));
-    final currentContext = context;
-    showSyncFeedback(
-      overlayContext: currentContext,
-      messengerContext: currentContext,
-      language: language,
-      succeeded: syncStatus.lastError == null,
-    );
+    _showRefreshSyncFeedback(succeeded: syncStatus.lastError == null);
     if (useShortcutFilter && shortcutQuery != null) {
       ref.invalidate(shortcutMemosProvider(shortcutQuery));
     } else if (useQuickSearch && quickSearchQuery != null) {
       ref.invalidate(quickSearchMemosProvider(quickSearchQuery));
     }
+  }
+
+  void _showRefreshSyncFeedback({required bool succeeded}) {
+    final language = ref.read(appPreferencesProvider.select((p) => p.language));
+    showSyncFeedback(
+      overlayContext: context,
+      messengerContext: context,
+      language: language,
+      succeeded: succeeded,
+    );
+  }
+
+  void _showRefreshScanFailure(Object error) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          context.t.strings.legacy.msg_scan_failed(e: error),
+        ),
+      ),
+    );
   }
 
   void _removeMemoWithAnimation(LocalMemo memo) {

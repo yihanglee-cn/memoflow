@@ -97,6 +97,7 @@ class MemosListLocalLibraryCoordinator extends ChangeNotifier {
   bool _bootstrapImportActive = false;
   int _bootstrapImportTotal = 0;
   DateTime? _bootstrapImportStartedAt;
+  bool _disposed = false;
 
   bool get autoScanTriggered => _autoScanTriggered;
   bool get autoScanInFlight => _autoScanInFlight;
@@ -158,32 +159,33 @@ class MemosListLocalLibraryCoordinator extends ChangeNotifier {
     required int normalMemoCount,
     required bool syncRunning,
   }) async {
-    if (_autoScanTriggered || _autoScanInFlight) return;
+    if (_disposed || _autoScanTriggered || _autoScanInFlight) return;
     if (!hasCurrentLibrary || syncRunning || normalMemoCount > 0) return;
 
     final scanner = _adapter.currentScanner();
     if (scanner == null) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_autoScanTriggered || _autoScanInFlight) return;
+      if (_disposed || _autoScanTriggered || _autoScanInFlight) return;
       _autoScanInFlight = true;
       var bootstrapModeEnabled = false;
-      notifyListeners();
+      _notifyChanged();
       try {
         final hasLocalMemos = await _adapter.hasAnyLocalMemos();
-        if (hasLocalMemos) return;
+        if (_disposed || hasLocalMemos) return;
 
         final diskMemos = await scanner.fileSystem.listMemos();
-        if (diskMemos.isEmpty) return;
+        if (_disposed || diskMemos.isEmpty) return;
         if (diskMemos.length >= _bootstrapImportThreshold) {
           bootstrapModeEnabled = true;
           _bootstrapImportActive = true;
           _bootstrapImportTotal = diskMemos.length;
           _bootstrapImportStartedAt = _now();
-          notifyListeners();
+          _notifyChanged();
         }
         _autoScanTriggered = true;
-        notifyListeners();
+        _notifyChanged();
+        if (_disposed) return;
         await _adapter.requestMemosSync();
       } catch (error) {
         _onAutoScanFailure?.call(error);
@@ -194,12 +196,23 @@ class MemosListLocalLibraryCoordinator extends ChangeNotifier {
           _bootstrapImportStartedAt = null;
         }
         _autoScanInFlight = false;
-        notifyListeners();
+        _notifyChanged();
       }
     });
   }
 
   String formatLocalScanError(SyncError error) {
     return _errorFormatter(error);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notifyChanged() {
+    if (_disposed) return;
+    notifyListeners();
   }
 }

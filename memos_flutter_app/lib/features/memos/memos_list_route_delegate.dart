@@ -42,6 +42,97 @@ import 'widgets/memos_list_title_menu.dart';
 import '../../i18n/strings.g.dart';
 
 typedef MemosListRouteRead = T Function<T>(ProviderListenable<T> provider);
+typedef MemosListRouteToastPresenter =
+    bool Function(
+      BuildContext context,
+      String message, {
+      Duration duration,
+    });
+typedef MemosListRouteSettingsFallbackOpener =
+    Future<void> Function(BuildContext context);
+
+abstract interface class MemosListRouteDesktopAdapter {
+  bool get desktopShortcutsEnabled;
+  bool get traySupported;
+  bool get supportsWindowControls;
+  bool get supportsTaskbarVisibilityToggle;
+
+  bool openSettingsWindowIfSupported({required BuildContext feedbackContext});
+
+  Future<bool> isWindowVisible();
+  Future<void> hideToTray();
+  Future<void> showFromTray();
+  Future<void> setSkipTaskbar(bool skip);
+  Future<void> hideWindow();
+  Future<void> showWindow();
+  Future<void> focusWindow();
+  Future<bool> isWindowMaximized();
+  Future<void> minimizeWindow();
+  Future<void> maximizeWindow();
+  Future<void> unmaximizeWindow();
+  Future<void> requestCloseWindow();
+}
+
+class DefaultMemosListRouteDesktopAdapter
+    implements MemosListRouteDesktopAdapter {
+  const DefaultMemosListRouteDesktopAdapter();
+
+  @override
+  bool get desktopShortcutsEnabled => isDesktopShortcutEnabled();
+
+  @override
+  bool get traySupported => DesktopTrayController.instance.supported;
+
+  @override
+  bool get supportsWindowControls => Platform.isWindows;
+
+  @override
+  bool get supportsTaskbarVisibilityToggle =>
+      Platform.isWindows || Platform.isLinux;
+
+  @override
+  bool openSettingsWindowIfSupported({required BuildContext feedbackContext}) {
+    return openDesktopSettingsWindowIfSupported(feedbackContext: feedbackContext);
+  }
+
+  @override
+  Future<bool> isWindowVisible() => windowManager.isVisible();
+
+  @override
+  Future<void> hideToTray() => DesktopTrayController.instance.hideToTray();
+
+  @override
+  Future<void> showFromTray() => DesktopTrayController.instance.showFromTray();
+
+  @override
+  Future<void> setSkipTaskbar(bool skip) => windowManager.setSkipTaskbar(skip);
+
+  @override
+  Future<void> hideWindow() => windowManager.hide();
+
+  @override
+  Future<void> showWindow() => windowManager.show();
+
+  @override
+  Future<void> focusWindow() => windowManager.focus();
+
+  @override
+  Future<bool> isWindowMaximized() => windowManager.isMaximized();
+
+  @override
+  Future<void> minimizeWindow() => windowManager.minimize();
+
+  @override
+  Future<void> maximizeWindow() => windowManager.maximize();
+
+  @override
+  Future<void> unmaximizeWindow() => windowManager.unmaximize();
+
+  @override
+  Future<void> requestCloseWindow() {
+    return DesktopExitCoordinator.requestClose(source: 'window_button');
+  }
+}
 
 class MemosListRouteDelegate extends ChangeNotifier {
   MemosListRouteDelegate({
@@ -67,6 +158,9 @@ class MemosListRouteDelegate extends ChangeNotifier {
     required String? Function() selectedShortcutIdResolver,
     required void Function(String? shortcutId) selectShortcutId,
     required void Function(SceneMicroGuideId id) markSceneGuideSeen,
+    MemosListRouteDesktopAdapter? desktopAdapter,
+    MemosListRouteToastPresenter? showToast,
+    MemosListRouteSettingsFallbackOpener? openSettingsFallback,
   }) : _contextResolver = contextResolver,
        _read = read,
        _scaffoldKey = scaffoldKey,
@@ -89,7 +183,12 @@ class MemosListRouteDelegate extends ChangeNotifier {
        _dayFilter = dayFilter,
        _selectedShortcutIdResolver = selectedShortcutIdResolver,
        _selectShortcutId = selectShortcutId,
-       _markSceneGuideSeen = markSceneGuideSeen;
+       _markSceneGuideSeen = markSceneGuideSeen,
+       _desktopAdapter =
+           desktopAdapter ?? const DefaultMemosListRouteDesktopAdapter(),
+       _showToast = showToast ?? _defaultShowToast,
+       _openSettingsFallback =
+           openSettingsFallback ?? _defaultOpenSettingsFallback;
 
   final BuildContext Function() _contextResolver;
   final MemosListRouteRead _read;
@@ -113,11 +212,15 @@ class MemosListRouteDelegate extends ChangeNotifier {
   final String? Function() _selectedShortcutIdResolver;
   final void Function(String? shortcutId) _selectShortcutId;
   final void Function(SceneMicroGuideId id) _markSceneGuideSeen;
+  final MemosListRouteDesktopAdapter _desktopAdapter;
+  final MemosListRouteToastPresenter _showToast;
+  final MemosListRouteSettingsFallbackOpener _openSettingsFallback;
 
   final GlobalKey titleAnchorKey = GlobalKey();
 
   DateTime? _lastBackPressedAt;
   bool _desktopWindowMaximized = false;
+  bool _disposed = false;
 
   bool get desktopWindowMaximized => _desktopWindowMaximized;
 
@@ -470,7 +573,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
   }
 
   void showShortcutPlaceholder(String label) {
-    showTopToast(
+    _showToast(
       _context,
       '\u300c$label\u300d\u529f\u80fd\u6682\u672a\u5b9e\u73b0\uff08\u5360\u4f4d\uff09\u3002',
     );
@@ -493,7 +596,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
   }
 
   Future<void> openQuickRecordFromShortcut() async {
-    if (!isDesktopShortcutEnabled()) {
+    if (!_desktopAdapter.desktopShortcutsEnabled) {
       showShortcutPlaceholder(_context.t.strings.legacy.msg_quick_record);
       return;
     }
@@ -528,36 +631,36 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   Future<void> toggleMemoFlowVisibilityFromShortcut() async {
     final context = _context;
-    if (!isDesktopShortcutEnabled()) {
+    if (!_desktopAdapter.desktopShortcutsEnabled) {
       showShortcutPlaceholder('\u663e\u793a/\u9690\u85cf MemoFlow');
       return;
     }
     try {
-      if (DesktopTrayController.instance.supported) {
-        final visible = await windowManager.isVisible();
+      if (_desktopAdapter.traySupported) {
+        final visible = await _desktopAdapter.isWindowVisible();
         if (visible) {
-          await DesktopTrayController.instance.hideToTray();
+          await _desktopAdapter.hideToTray();
         } else {
-          await DesktopTrayController.instance.showFromTray();
+          await _desktopAdapter.showFromTray();
         }
         return;
       }
-      final visible = await windowManager.isVisible();
+      final visible = await _desktopAdapter.isWindowVisible();
       if (visible) {
-        if (Platform.isWindows || Platform.isLinux) {
-          await windowManager.setSkipTaskbar(true);
+        if (_desktopAdapter.supportsTaskbarVisibilityToggle) {
+          await _desktopAdapter.setSkipTaskbar(true);
         }
-        await windowManager.hide();
+        await _desktopAdapter.hideWindow();
         return;
       }
-      if (Platform.isWindows || Platform.isLinux) {
-        await windowManager.setSkipTaskbar(false);
+      if (_desktopAdapter.supportsTaskbarVisibilityToggle) {
+        await _desktopAdapter.setSkipTaskbar(false);
       }
-      await windowManager.show();
-      await windowManager.focus();
+      await _desktopAdapter.showWindow();
+      await _desktopAdapter.focusWindow();
     } catch (error) {
       if (!context.mounted) return;
-      showTopToast(
+      _showToast(
         context,
         context.t.strings.legacy.msg_toggle_memoflow_failed_with_error(
           error: error,
@@ -571,7 +674,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
     final lockState = _read(appLockProvider);
     if (lockState.enabled && lockState.hasPassword) {
       _read(appLockProvider.notifier).lock();
-      showTopToast(context, '\u5df2\u542f\u7528\u5e94\u7528\u9501\u3002');
+      _showToast(context, '\u5df2\u542f\u7528\u5e94\u7528\u9501\u3002');
       return;
     }
     Navigator.of(
@@ -592,47 +695,74 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   Future<void> openSettings() async {
     final context = _context;
-    if (openDesktopSettingsWindowIfSupported(feedbackContext: context)) {
+    if (_desktopAdapter.openSettingsWindowIfSupported(feedbackContext: context)) {
       return;
     }
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+    await _openSettingsFallback(context);
   }
 
   Future<void> syncDesktopWindowState() async {
-    if (!Platform.isWindows) return;
-    _desktopWindowMaximized = await windowManager.isMaximized();
-    notifyListeners();
+    if (!_desktopAdapter.supportsWindowControls || _disposed) return;
+    final maximized = await _desktopAdapter.isWindowMaximized();
+    if (_disposed || _desktopWindowMaximized == maximized) return;
+    _desktopWindowMaximized = maximized;
+    _notifyChanged();
   }
 
   Future<void> minimizeDesktopWindow() async {
-    if (!Platform.isWindows) return;
-    await windowManager.minimize();
+    if (!_desktopAdapter.supportsWindowControls) return;
+    await _desktopAdapter.minimizeWindow();
   }
 
   Future<void> toggleDesktopWindowMaximize() async {
-    if (!Platform.isWindows) return;
-    if (await windowManager.isMaximized()) {
-      await windowManager.unmaximize();
+    if (!_desktopAdapter.supportsWindowControls) return;
+    if (await _desktopAdapter.isWindowMaximized()) {
+      await _desktopAdapter.unmaximizeWindow();
     } else {
-      await windowManager.maximize();
+      await _desktopAdapter.maximizeWindow();
     }
     await syncDesktopWindowState();
   }
 
   Future<void> closeDesktopWindow() async {
-    if (!Platform.isWindows) return;
-    await DesktopExitCoordinator.requestClose(source: 'window_button');
+    if (!_desktopAdapter.supportsWindowControls) return;
+    await _desktopAdapter.requestCloseWindow();
   }
 
   void onWindowMaximize() {
+    if (_desktopWindowMaximized) return;
     _desktopWindowMaximized = true;
-    notifyListeners();
+    _notifyChanged();
   }
 
   void onWindowUnmaximize() {
+    if (!_desktopWindowMaximized) return;
     _desktopWindowMaximized = false;
+    _notifyChanged();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _notifyChanged() {
+    if (_disposed) return;
     notifyListeners();
+  }
+
+  static bool _defaultShowToast(
+    BuildContext context,
+    String message, {
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    return showTopToast(context, message, duration: duration);
+  }
+
+  static Future<void> _defaultOpenSettingsFallback(BuildContext context) {
+    return Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
   }
 }
