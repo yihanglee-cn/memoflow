@@ -74,6 +74,7 @@ import 'memo_versions_screen.dart';
 import 'memo_markdown.dart';
 import 'advanced_search_sheet.dart';
 import 'memos_list_audio_playback_coordinator.dart';
+import 'memos_list_desktop_shortcut_delegate.dart';
 import 'memos_list_inline_compose_coordinator.dart';
 import 'memos_list_mutation_coordinator.dart';
 import 'memos_list_screen_view_state.dart';
@@ -87,6 +88,7 @@ import 'widgets/memos_list_memo_card.dart';
 import 'widgets/memos_list_memo_card_container.dart';
 import 'widgets/memos_list_search_widgets.dart';
 import 'widgets/memos_list_title_menu.dart';
+import 'widgets/memos_list_windows_desktop_title_bar.dart';
 import '../../i18n/strings.g.dart';
 
 enum _MemoSortOption { createAsc, createDesc, updateAsc, updateDesc }
@@ -173,6 +175,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   String _listSignature = '';
   final Set<String> _pendingRemovedUids = <String>{};
   late final MemosListAudioPlaybackCoordinator _audioPlaybackCoordinator;
+  late final MemosListDesktopShortcutDelegate _desktopShortcutDelegate;
   late final MemosListMutationCoordinator _mutationCoordinator;
   late final MemosListViewportCoordinator _viewportCoordinator;
   DateTime? _lastBackPressedAt;
@@ -236,6 +239,61 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _viewportCoordinator = MemosListViewportCoordinator(
       initialPageSize: _initialPageSize,
       pageStep: _pageStep,
+    );
+    _desktopShortcutDelegate = MemosListDesktopShortcutDelegate(
+      bindingsResolver: () => normalizeDesktopShortcutBindings(
+        ref.read(appPreferencesProvider).desktopShortcutBindings,
+      ),
+      routeActive: _isDesktopShortcutRouteActive,
+      inlineEditorActive: () => _inlineComposeFocusNode.hasFocus,
+      traySupported: () => DesktopTrayController.instance.supported,
+      callbacks: MemosListDesktopShortcutCallbacks(
+        onMarkDesktopShortcutGuideSeen: () =>
+            _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts),
+        onOpenShortcutOverview: () {
+          _openShortcutOverviewPage();
+          showTopToast(
+            context,
+            context.t.strings.legacy.msg_shortcuts_overview_opened,
+          );
+        },
+        onFocusSearch: _focusSearchFromShortcut,
+        onOpenQuickInput: () => unawaited(_openQuickInputFromShortcut()),
+        onOpenQuickRecord: () => unawaited(_openQuickRecordFromShortcut()),
+        onSubmitInlineCompose: () => unawaited(_submitInlineCompose()),
+        onToggleBold: _toggleInlineBold,
+        onToggleUnderline: _toggleInlineUnderline,
+        onToggleHighlight: _toggleInlineHighlight,
+        onToggleUnorderedList: _toggleInlineUnorderedList,
+        onToggleOrderedList: _toggleInlineOrderedList,
+        onUndo: _undoInlineCompose,
+        onRedo: _redoInlineCompose,
+        onPageNavigation: ({required down, required source}) =>
+            _handlePageNavigationShortcut(down: down, source: source),
+        onOpenPasswordLock: _openPasswordLockFromShortcut,
+        onToggleSidebar: _toggleDesktopDrawerFromShortcut,
+        onRefresh: () => unawaited(
+          ref
+              .read(syncCoordinatorProvider.notifier)
+              .requestSync(
+                const SyncRequest(
+                  kind: SyncRequestKind.memos,
+                  reason: SyncRequestReason.manual,
+                ),
+              ),
+        ),
+        onBackHome: _backToAllMemos,
+        onOpenSettings: () {
+          if (openDesktopSettingsWindowIfSupported(feedbackContext: context)) {
+            return;
+          }
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+          );
+        },
+        onToggleMemoFlowVisibility: () =>
+            unawaited(_toggleMemoFlowVisibilityFromShortcut()),
+      ),
     );
     _inlineComposeCoordinator.addListener(
       _handleInlineComposeCoordinatorChanged,
@@ -1301,17 +1359,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
   }
 
-  bool _shouldTraceDesktopShortcut(
-    KeyEvent event,
-    Set<LogicalKeyboardKey> pressedKeys,
-  ) {
-    if (event is! KeyDownEvent) return false;
-    if (event.logicalKey == LogicalKeyboardKey.f1) return true;
-    return isPrimaryShortcutModifierPressed(pressedKeys) ||
-        isShiftModifierPressed(pressedKeys) ||
-        isAltModifierPressed(pressedKeys);
-  }
-
   void _logDesktopShortcutEvent({
     required String stage,
     required KeyEvent event,
@@ -1360,302 +1407,25 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
 
   bool _handleDesktopShortcuts(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
-
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
-    if (!_isDesktopShortcutRouteActive()) {
-      if (_shouldTraceDesktopShortcut(event, pressed)) {
-        _logDesktopShortcutEvent(
-          stage: 'ignored',
-          event: event,
-          pressedKeys: pressed,
-          reason: 'route_inactive_or_locked',
-        );
-      }
-      return false;
-    }
-
-    final bindings = normalizeDesktopShortcutBindings(
-      ref.read(appPreferencesProvider).desktopShortcutBindings,
-    );
-    bool matches(DesktopShortcutAction action) {
-      return matchesDesktopShortcut(
-        event: event,
-        pressedKeys: pressed,
-        binding: bindings[action]!,
-      );
-    }
-
-    final key = event.logicalKey;
-    final inlineEditorActive = _inlineComposeFocusNode.hasFocus;
-    final traceThisKey = _shouldTraceDesktopShortcut(event, pressed);
-
-    if (matches(DesktopShortcutAction.shortcutOverview) ||
-        key == LogicalKeyboardKey.f1) {
+    final dispatch = _desktopShortcutDelegate.handle(event, pressed);
+    if (dispatch.shouldLog) {
+      final stage = switch (dispatch.stage) {
+        MemosListDesktopShortcutDispatchStage.ignored => 'ignored',
+        MemosListDesktopShortcutDispatchStage.noMatch => 'no_match',
+        MemosListDesktopShortcutDispatchStage.matched => 'matched',
+        MemosListDesktopShortcutDispatchStage.delegated => 'delegated',
+      };
       _logDesktopShortcutEvent(
-        stage: 'matched',
+        stage: stage,
         event: event,
         pressedKeys: pressed,
-        action: DesktopShortcutAction.shortcutOverview,
-        reason: key == LogicalKeyboardKey.f1 ? 'f1_fallback' : null,
-      );
-      _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
-      _openShortcutOverviewPage();
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_shortcuts_overview_opened,
-      );
-      return true;
-    }
-
-    if (matches(DesktopShortcutAction.search)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.search,
-      );
-      _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
-      _focusSearchFromShortcut();
-      return true;
-    }
-    if (matches(DesktopShortcutAction.quickInput)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.quickInput,
-      );
-      unawaited(_openQuickInputFromShortcut());
-      return true;
-    }
-    if (matches(DesktopShortcutAction.quickRecord)) {
-      // Desktop global hotkey is handled in App-level hotkey_manager to avoid
-      // duplicate dialogs when the app is foregrounded.
-      if (!DesktopTrayController.instance.supported) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.quickRecord,
-          reason: 'in_window_dialog',
-        );
-        _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
-        unawaited(_openQuickRecordFromShortcut());
-      } else {
-        _logDesktopShortcutEvent(
-          stage: 'delegated',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.quickRecord,
-          reason: 'handled_by_app_hotkey_manager',
-        );
-        _markSceneGuideSeen(SceneMicroGuideId.desktopGlobalShortcuts);
-      }
-      return true;
-    }
-
-    if (inlineEditorActive) {
-      if (matches(DesktopShortcutAction.publishMemo) ||
-          (!isPrimaryShortcutModifierPressed(pressed) &&
-              isShiftModifierPressed(pressed) &&
-              !isAltModifierPressed(pressed) &&
-              key == LogicalKeyboardKey.enter)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.publishMemo,
-          reason: matches(DesktopShortcutAction.publishMemo)
-              ? 'binding'
-              : 'shift_enter_fallback',
-        );
-        unawaited(_submitInlineCompose());
-        return true;
-      }
-      if (matches(DesktopShortcutAction.bold)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.bold,
-        );
-        _toggleInlineBold();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.underline)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.underline,
-        );
-        _toggleInlineUnderline();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.highlight)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.highlight,
-        );
-        _toggleInlineHighlight();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.unorderedList)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.unorderedList,
-        );
-        _toggleInlineUnorderedList();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.orderedList)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.orderedList,
-        );
-        _toggleInlineOrderedList();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.undo)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.undo,
-        );
-        _undoInlineCompose();
-        return true;
-      }
-      if (matches(DesktopShortcutAction.redo)) {
-        _logDesktopShortcutEvent(
-          stage: 'matched',
-          event: event,
-          pressedKeys: pressed,
-          action: DesktopShortcutAction.redo,
-        );
-        _redoInlineCompose();
-        return true;
-      }
-    }
-    if (!inlineEditorActive &&
-        matches(DesktopShortcutAction.previousPage) &&
-        _handlePageNavigationShortcut(
-          down: false,
-          source: 'shortcut_previous_page',
-        )) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.previousPage,
-      );
-      return true;
-    }
-    if (!inlineEditorActive &&
-        matches(DesktopShortcutAction.nextPage) &&
-        _handlePageNavigationShortcut(
-          down: true,
-          source: 'shortcut_next_page',
-        )) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.nextPage,
-      );
-      return true;
-    }
-
-    if (matches(DesktopShortcutAction.enableAppLock)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.enableAppLock,
-      );
-      _openPasswordLockFromShortcut();
-      return true;
-    }
-    if (matches(DesktopShortcutAction.toggleSidebar)) {
-      final drawerResult = _toggleDesktopDrawerFromShortcut();
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.toggleSidebar,
-        extra: {'drawerResult': drawerResult},
-      );
-      return true;
-    }
-    if (matches(DesktopShortcutAction.refresh)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.refresh,
-      );
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
-              ),
-            ),
-      );
-      return true;
-    }
-    if (matches(DesktopShortcutAction.backHome)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.backHome,
-      );
-      _backToAllMemos();
-      return true;
-    }
-    if (matches(DesktopShortcutAction.openSettings)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.openSettings,
-      );
-      if (openDesktopSettingsWindowIfSupported(feedbackContext: context)) {
-        return true;
-      }
-      Navigator.of(
-        context,
-      ).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
-      return true;
-    }
-    if (matches(DesktopShortcutAction.toggleFlomo)) {
-      _logDesktopShortcutEvent(
-        stage: 'matched',
-        event: event,
-        pressedKeys: pressed,
-        action: DesktopShortcutAction.toggleFlomo,
-      );
-      unawaited(_toggleMemoFlowVisibilityFromShortcut());
-      return true;
-    }
-    if (traceThisKey) {
-      _logDesktopShortcutEvent(
-        stage: 'no_match',
-        event: event,
-        pressedKeys: pressed,
-        extra: {'inlineEditorActive': inlineEditorActive},
+        action: dispatch.action,
+        reason: dispatch.reason,
+        extra: dispatch.extra,
       );
     }
-    return false;
+    return dispatch.handled;
   }
 
   Future<void> _syncDesktopWindowState() async {
@@ -1683,212 +1453,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   Future<void> _closeDesktopWindow() async {
     if (!Platform.isWindows) return;
     await DesktopExitCoordinator.requestClose(source: 'window_button');
-  }
-
-  Widget _buildPillActionsRow(
-    BuildContext context, {
-    required VoidCallback maybeHaptic,
-  }) {
-    return MemosListPillRow(
-      onWeeklyInsights: () {
-        maybeHaptic();
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute<void>(builder: (_) => const StatsScreen()));
-      },
-      onAiSummary: () {
-        maybeHaptic();
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const AiSummaryScreen()),
-        );
-      },
-      onDailyReview: () {
-        maybeHaptic();
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const DailyReviewScreen()),
-        );
-      },
-    );
-  }
-
-  Widget _buildWindowsDesktopTitleBar(
-    BuildContext context, {
-    required bool isDark,
-    required bool enableHomeSort,
-    required bool showPillActions,
-    required VoidCallback maybeHaptic,
-    required bool screenshotModeEnabled,
-    required String debugApiVersionText,
-  }) {
-    final barBg = isDark
-        ? MemoFlowPalette.backgroundDark
-        : MemoFlowPalette.backgroundLight;
-    final divider = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : Colors.black.withValues(alpha: 0.08);
-    final textColor = isDark
-        ? MemoFlowPalette.textDark
-        : MemoFlowPalette.textLight;
-
-    return Container(
-      height: 46,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: barBg,
-        border: Border(bottom: BorderSide(color: divider)),
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          const DragToMoveArea(child: SizedBox.expand()),
-          Row(
-            children: [
-              SizedBox(
-                width: 260,
-                child: Row(
-                  children: [
-                    IgnorePointer(
-                      child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: Image.asset(
-                            'assets/splash/splash_logo.png',
-                            fit: BoxFit.cover,
-                            filterQuality: FilterQuality.high,
-                            errorBuilder: (_, _, _) => Icon(
-                              Icons.auto_stories_rounded,
-                              size: 22,
-                              color: textColor.withValues(alpha: 0.9),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: DefaultTextStyle.merge(
-                        style: TextStyle(color: textColor, fontSize: 14),
-                        child: widget.enableTitleMenu
-                            ? _buildHeaderTitleWidget(
-                                context,
-                                maybeHaptic: maybeHaptic,
-                              )
-                            : IgnorePointer(
-                                child: _buildHeaderTitleWidget(
-                                  context,
-                                  maybeHaptic: maybeHaptic,
-                                ),
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.center,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: _windowsHeaderSearchExpanded
-                          ? _buildTopSearchField(
-                              context,
-                              isDark: isDark,
-                              autofocus: false,
-                              hasAdvancedFilters: _hasAdvancedSearchFilters,
-                              onOpenAdvancedFilters: _openAdvancedSearchSheet,
-                              hintText:
-                                  context.t.strings.legacy.msg_quick_search,
-                            )
-                          : (showPillActions
-                                ? _buildPillActionsRow(
-                                    context,
-                                    maybeHaptic: maybeHaptic,
-                                  )
-                                : const SizedBox.shrink()),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (enableHomeSort) ...[
-                _buildSortMenuButton(context, isDark: isDark),
-                const SizedBox(width: 2),
-              ],
-              if (widget.enableSearch)
-                IconButton(
-                  tooltip: _windowsHeaderSearchExpanded
-                      ? context.t.strings.legacy.msg_cancel_2
-                      : context.t.strings.legacy.msg_search,
-                  onPressed: _toggleWindowsHeaderSearch,
-                  icon: Icon(
-                    _windowsHeaderSearchExpanded ? Icons.close : Icons.search,
-                  ),
-                ),
-              if (kDebugMode && !screenshotModeEnabled) ...[
-                IgnorePointer(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 130),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: MemoFlowPalette.primary.withValues(
-                          alpha: isDark ? 0.24 : 0.12,
-                        ),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: MemoFlowPalette.primary.withValues(
-                            alpha: isDark ? 0.45 : 0.25,
-                          ),
-                        ),
-                      ),
-                      child: Text(
-                        debugApiVersionText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: MemoFlowPalette.primary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              DesktopWindowIconButton(
-                tooltip: context.t.strings.legacy.msg_minimize,
-                onPressed: () => unawaited(_minimizeDesktopWindow()),
-                icon: Icons.minimize_rounded,
-              ),
-              DesktopWindowIconButton(
-                tooltip: _desktopWindowMaximized
-                    ? context.t.strings.legacy.msg_restore_window
-                    : context.t.strings.legacy.msg_maximize,
-                onPressed: () => unawaited(_toggleDesktopWindowMaximize()),
-                icon: _desktopWindowMaximized
-                    ? Icons.filter_none_rounded
-                    : Icons.crop_square_rounded,
-              ),
-              DesktopWindowIconButton(
-                tooltip: context.t.strings.legacy.msg_close,
-                onPressed: () => unawaited(_closeDesktopWindow()),
-                icon: Icons.close_rounded,
-                destructive: true,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -4189,9 +3753,34 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                               16,
                                               0,
                                             ),
-                                            child: _buildPillActionsRow(
-                                              context,
-                                              maybeHaptic: maybeHaptic,
+                                            child: MemosListPillRow(
+                                              onWeeklyInsights: () {
+                                                maybeHaptic();
+                                                Navigator.of(context).push(
+                                                  MaterialPageRoute<void>(
+                                                    builder: (_) =>
+                                                        const StatsScreen(),
+                                                  ),
+                                                );
+                                              },
+                                              onAiSummary: () {
+                                                maybeHaptic();
+                                                Navigator.of(context).push(
+                                                  MaterialPageRoute<void>(
+                                                    builder: (_) =>
+                                                        const AiSummaryScreen(),
+                                                  ),
+                                                );
+                                              },
+                                              onDailyReview: () {
+                                                maybeHaptic();
+                                                Navigator.of(context).push(
+                                                  MaterialPageRoute<void>(
+                                                    builder: (_) =>
+                                                        const DailyReviewScreen(),
+                                                  ),
+                                                );
+                                              },
                                             ),
                                           ),
                                         ),
@@ -4576,14 +4165,72 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           if (viewState.layout.useWindowsDesktopHeader && !_searching) {
             return Column(
               children: [
-                _buildWindowsDesktopTitleBar(
-                  context,
+                MemosListWindowsDesktopTitleBar(
                   isDark: isDark,
-                  enableHomeSort: viewState.query.enableHomeSort,
                   showPillActions: viewState.layout.showHeaderPillActions,
-                  maybeHaptic: maybeHaptic,
+                  windowsHeaderSearchExpanded: _windowsHeaderSearchExpanded,
+                  enableHomeSort: viewState.query.enableHomeSort,
+                  enableSearch: widget.enableSearch,
                   screenshotModeEnabled: screenshotModeEnabled,
+                  desktopWindowMaximized: _desktopWindowMaximized,
                   debugApiVersionText: debugApiVersionText,
+                  titleChild: widget.enableTitleMenu
+                      ? _buildHeaderTitleWidget(
+                          context,
+                          maybeHaptic: maybeHaptic,
+                        )
+                      : IgnorePointer(
+                          child: _buildHeaderTitleWidget(
+                            context,
+                            maybeHaptic: maybeHaptic,
+                          ),
+                        ),
+                  searchFieldChild: _buildTopSearchField(
+                    context,
+                    isDark: isDark,
+                    autofocus: false,
+                    hasAdvancedFilters: _hasAdvancedSearchFilters,
+                    onOpenAdvancedFilters: _openAdvancedSearchSheet,
+                    hintText: context.t.strings.legacy.msg_quick_search,
+                  ),
+                  sortButton: viewState.query.enableHomeSort
+                      ? _buildSortMenuButton(context, isDark: isDark)
+                      : null,
+                  onToggleSearch: _toggleWindowsHeaderSearch,
+                  onWeeklyInsights: () {
+                    maybeHaptic();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const StatsScreen(),
+                      ),
+                    );
+                  },
+                  onAiSummary: () {
+                    maybeHaptic();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const AiSummaryScreen(),
+                      ),
+                    );
+                  },
+                  onDailyReview: () {
+                    maybeHaptic();
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DailyReviewScreen(),
+                      ),
+                    );
+                  },
+                  onMinimize: () => unawaited(_minimizeDesktopWindow()),
+                  onToggleMaximize: () =>
+                      unawaited(_toggleDesktopWindowMaximize()),
+                  onClose: () => unawaited(_closeDesktopWindow()),
+                  searchTooltip: context.t.strings.legacy.msg_search,
+                  cancelTooltip: context.t.strings.legacy.msg_cancel_2,
+                  minimizeTooltip: context.t.strings.legacy.msg_minimize,
+                  maximizeTooltip: context.t.strings.legacy.msg_maximize,
+                  restoreTooltip: context.t.strings.legacy.msg_restore_window,
+                  closeTooltip: context.t.strings.legacy.msg_close,
                 ),
                 Expanded(child: bodyContent),
               ],
