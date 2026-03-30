@@ -28,7 +28,6 @@ import '../../core/sync_error_presenter.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
 import '../../core/tags.dart';
 import '../../core/top_toast.dart';
-import '../../core/uid.dart';
 import '../../state/memos/memos_list_providers.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/tags/tag_color_lookup.dart';
@@ -76,6 +75,7 @@ import 'memo_markdown.dart';
 import 'advanced_search_sheet.dart';
 import 'memos_list_audio_playback_coordinator.dart';
 import 'memos_list_inline_compose_coordinator.dart';
+import 'memos_list_mutation_coordinator.dart';
 import 'memos_list_screen_view_state.dart';
 import 'memos_list_viewport_coordinator.dart';
 import 'recycle_bin_screen.dart';
@@ -173,6 +173,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   String _listSignature = '';
   final Set<String> _pendingRemovedUids = <String>{};
   late final MemosListAudioPlaybackCoordinator _audioPlaybackCoordinator;
+  late final MemosListMutationCoordinator _mutationCoordinator;
   late final MemosListViewportCoordinator _viewportCoordinator;
   DateTime? _lastBackPressedAt;
   bool _autoScanTriggered = false;
@@ -187,8 +188,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   String? _lastWorkspaceDebugSignature;
   bool _desktopWindowMaximized = false;
   bool _windowsHeaderSearchExpanded = false;
-  bool _desktopQuickInputSubmitting = false;
-  bool _inlineComposeBusy = false;
   bool _inlineComposeDraftApplied = false;
   late final MemosListInlineComposeCoordinator _inlineComposeCoordinator;
   Timer? _inlineComposeDraftTimer;
@@ -197,6 +196,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       _inlineComposer.textController;
   bool get _inlineCanUndo => _inlineComposer.canUndo;
   bool get _inlineCanRedo => _inlineComposer.canRedo;
+  bool get _inlineComposeBusy => _mutationCoordinator.inlineComposeSubmitting;
   int get _pageSize => _viewportCoordinator.pageSize;
   bool get _reachedEnd => _viewportCoordinator.reachedEnd;
   bool get _loadingMore => _viewportCoordinator.loadingMore;
@@ -232,6 +232,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _audioPlaybackCoordinator = MemosListAudioPlaybackCoordinator(
       read: ref.read,
     );
+    _mutationCoordinator = MemosListMutationCoordinator(read: ref.read);
     _viewportCoordinator = MemosListViewportCoordinator(
       initialPageSize: _initialPageSize,
       pageStep: _pageStep,
@@ -242,6 +243,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _audioPlaybackCoordinator.addListener(
       _handleAudioPlaybackCoordinatorChanged,
     );
+    _mutationCoordinator.addListener(_handleMutationCoordinatorChanged);
     _viewportCoordinator.addListener(_handleViewportCoordinatorChanged);
     _scrollController.addListener(_handleViewportScrollChanged);
     WidgetsBinding.instance.addPostFrameCallback(
@@ -297,9 +299,11 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _audioPlaybackCoordinator.removeListener(
       _handleAudioPlaybackCoordinatorChanged,
     );
+    _mutationCoordinator.removeListener(_handleMutationCoordinatorChanged);
     _viewportCoordinator.removeListener(_handleViewportCoordinatorChanged);
     _inlineComposeCoordinator.dispose();
     _audioPlaybackCoordinator.dispose();
+    _mutationCoordinator.dispose();
     _viewportCoordinator.dispose();
     _inlineComposer.dispose();
     _inlineComposeFocusNode.removeListener(_handleInlineComposeFocusChanged);
@@ -329,6 +333,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _handleViewportCoordinatorChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  void _handleMutationCoordinatorChanged() {
     if (mounted) {
       setState(() {});
     }
@@ -1185,58 +1195,26 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   Future<void> _submitDesktopQuickInput(String rawContent) async {
-    final content = rawContent.trimRight();
-    if (content.trim().isEmpty || _desktopQuickInputSubmitting) return;
-
-    setState(() => _desktopQuickInputSubmitting = true);
-    try {
-      final now = DateTime.now();
-      final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
-      final uid = generateUid();
-      final visibility = _inlineComposeCoordinator.resolveDefaultVisibility();
-      final tags = extractTags(content);
-
-      await ref
-          .read(memosListControllerProvider)
-          .createQuickInputMemo(
-            uid: uid,
-            content: content,
-            visibility: visibility,
-            nowSec: nowSec,
-            tags: tags,
-          );
-
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
-              ),
-            ),
-      );
-      if (!mounted) return;
-      showTopToast(context, context.t.strings.legacy.msg_saved_to_memoflow);
-    } catch (error, stackTrace) {
-      ref
-          .read(logManagerProvider)
-          .error(
-            'Desktop quick input submit failed',
-            error: error,
-            stackTrace: stackTrace,
-          );
-      if (!mounted) return;
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_quick_input_save_failed_with_error(
-          error: error,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _desktopQuickInputSubmitting = false);
-      }
+    final visibility = _inlineComposeCoordinator.resolveDefaultVisibility();
+    final result = await _mutationCoordinator.submitQuickInput(
+      rawContent: rawContent,
+      visibility: visibility,
+    );
+    if (!mounted) return;
+    switch (result.kind) {
+      case MemosListMutationResultKind.handled:
+        showTopToast(context, context.t.strings.legacy.msg_saved_to_memoflow);
+        return;
+      case MemosListMutationResultKind.noop:
+        return;
+      case MemosListMutationResultKind.failed:
+        showTopToast(
+          context,
+          context.t.strings.legacy.msg_quick_input_save_failed_with_error(
+            error: result.error ?? '',
+          ),
+        );
+        return;
     }
   }
 
@@ -2334,30 +2312,17 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   Future<void> _retryFailedMemoSync(String memoUid) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) {
-      _openSyncQueue();
-      return;
-    }
-    final retried = await ref
-        .read(memosListControllerProvider)
-        .retryOutboxErrors(memoUid: normalizedUid);
-    if (retried <= 0) {
-      _openSyncQueue();
-      return;
-    }
+    final result = await _mutationCoordinator.retryFailedMemoSync(memoUid);
     if (!mounted) return;
-    showTopToast(context, context.t.strings.legacy.msg_retry_started);
-    unawaited(
-      ref
-          .read(syncCoordinatorProvider.notifier)
-          .requestSync(
-            const SyncRequest(
-              kind: SyncRequestKind.memos,
-              reason: SyncRequestReason.manual,
-            ),
-          ),
-    );
+    switch (result.kind) {
+      case MemosListRetryFailedSyncResultKind.retryStarted:
+        showTopToast(context, context.t.strings.legacy.msg_retry_started);
+        return;
+      case MemosListRetryFailedSyncResultKind.openSyncQueue:
+      case MemosListRetryFailedSyncResultKind.failed:
+        _openSyncQueue();
+        return;
+    }
   }
 
   Future<void> _handleMemoSyncStatusTap(
@@ -2946,66 +2911,38 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   Future<void> _submitInlineCompose() async {
-    if (_inlineComposeBusy || !widget.enableCompose) return;
+    if (!widget.enableCompose || _mutationCoordinator.inlineComposeSubmitting) {
+      return;
+    }
     final draft = await _inlineComposeCoordinator.prepareSubmissionDraft(
       context,
     );
     if (!mounted || draft == null) return;
 
-    setState(() => _inlineComposeBusy = true);
-    try {
-      final now = DateTime.now();
-      final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
-      final uid = generateUid();
-
-      await ref
-          .read(memosListControllerProvider)
-          .createInlineComposeMemo(
-            uid: uid,
-            content: draft.content,
-            visibility: draft.visibility,
-            nowSec: nowSec,
-            tags: draft.tags,
-            attachments: draft.attachmentsPayload,
-            location: draft.location,
-            relations: draft.relations,
-            pendingAttachments: draft.pendingAttachments,
-          );
-
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
+    final result = await _mutationCoordinator.submitInlineCompose(draft);
+    if (!mounted) return;
+    switch (result.kind) {
+      case MemosListMutationResultKind.handled:
+        _inlineComposeDraftTimer?.cancel();
+        await ref.read(noteDraftProvider.notifier).clear();
+        _inlineComposeCoordinator.resetAfterSuccessfulSubmit();
+        if (mounted) {
+          _inlineComposeFocusNode.requestFocus();
+        }
+        return;
+      case MemosListMutationResultKind.noop:
+        return;
+      case MemosListMutationResultKind.failed:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.t.strings.legacy.msg_create_failed_2(
+                e: result.error ?? '',
               ),
             ),
-      );
-      _inlineComposeDraftTimer?.cancel();
-      await ref.read(noteDraftProvider.notifier).clear();
-      _inlineComposeCoordinator.resetAfterSuccessfulSubmit();
-      if (mounted) {
-        _inlineComposeFocusNode.requestFocus();
-      }
-    } catch (error, stackTrace) {
-      ref
-          .read(logManagerProvider)
-          .error(
-            'Inline compose submit failed',
-            error: error,
-            stackTrace: stackTrace,
-          );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_create_failed_2(e: error)),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _inlineComposeBusy = false);
-      }
+          ),
+        );
+        return;
     }
   }
 
@@ -3117,52 +3054,32 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     }
   }
 
-  Future<void> _updateMemo(
+  Future<MemosListMutationResult> _updateMemo(
     LocalMemo memo, {
     bool? pinned,
     String? state,
+    bool triggerSync = true,
   }) async {
-    await ref
-        .read(memosListControllerProvider)
-        .updateMemo(memo, pinned: pinned, state: state);
-    unawaited(
-      ref
-          .read(syncCoordinatorProvider.notifier)
-          .requestSync(
-            const SyncRequest(
-              kind: SyncRequestKind.memos,
-              reason: SyncRequestReason.manual,
-            ),
-          ),
+    return _mutationCoordinator.updateMemo(
+      memo,
+      pinned: pinned,
+      state: state,
+      triggerSync: triggerSync,
     );
   }
 
-  Future<void> _updateMemoContent(
+  Future<MemosListMutationResult> _updateMemoContent(
     LocalMemo memo,
     String content, {
     bool preserveUpdateTime = false,
     bool triggerSync = true,
   }) async {
-    if (content == memo.content) return;
-    await ref
-        .read(memosListControllerProvider)
-        .updateMemoContent(
-          memo,
-          content,
-          preserveUpdateTime: preserveUpdateTime,
-        );
-    if (triggerSync) {
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
-              ),
-            ),
-      );
-    }
+    return _mutationCoordinator.updateMemoContent(
+      memo,
+      content,
+      preserveUpdateTime: preserveUpdateTime,
+      triggerSync: triggerSync,
+    );
   }
 
   Future<void> _toggleMemoCheckbox(
@@ -3214,72 +3131,79 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         false;
     if (!confirmed) return;
 
-    try {
-      await ref
-          .read(memosListControllerProvider)
-          .deleteMemo(
-            memo,
-            onMovedToRecycleBin: () => _removeMemoWithAnimation(memo),
-          );
-      unawaited(
-        ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.memos,
-                reason: SyncRequestReason.manual,
-              ),
-            ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_delete_failed(e: e)),
-        ),
-      );
+    final result = await _mutationCoordinator.deleteMemo(
+      memo,
+      onMovedToRecycleBin: () => _removeMemoWithAnimation(memo),
+    );
+    if (!mounted) return;
+    switch (result.kind) {
+      case MemosListMutationResultKind.handled:
+      case MemosListMutationResultKind.noop:
+        return;
+      case MemosListMutationResultKind.failed:
+        final error = result.error ?? '';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.t.strings.legacy.msg_delete_failed(e: error)),
+          ),
+        );
+        return;
     }
   }
 
   Future<void> _restoreMemo(LocalMemo memo) async {
-    try {
-      await _updateMemo(memo, state: 'NORMAL');
-      if (!mounted) return;
-      final message = context.t.strings.legacy.msg_restored;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => MemosListScreen(
-            title: 'MemoFlow',
-            state: 'NORMAL',
-            showDrawer: true,
-            enableCompose: true,
-            toastMessage: message,
+    final result = await _updateMemo(memo, state: 'NORMAL');
+    if (!mounted) return;
+    switch (result.kind) {
+      case MemosListMutationResultKind.handled:
+        final message = context.t.strings.legacy.msg_restored;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => MemosListScreen(
+              title: 'MemoFlow',
+              state: 'NORMAL',
+              showDrawer: true,
+              enableCompose: true,
+              toastMessage: message,
+            ),
           ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_restore_failed(e: e)),
-        ),
-      );
+        );
+        return;
+      case MemosListMutationResultKind.noop:
+        return;
+      case MemosListMutationResultKind.failed:
+        final error = result.error ?? '';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.t.strings.legacy.msg_restore_failed(e: error),
+            ),
+          ),
+        );
+        return;
     }
   }
 
   Future<void> _archiveMemo(LocalMemo memo) async {
-    try {
-      await _updateMemo(memo, state: 'ARCHIVED');
-      _removeMemoWithAnimation(memo);
-      if (!mounted) return;
-      showTopToast(context, context.t.strings.legacy.msg_archived);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_archive_failed(e: e)),
-        ),
-      );
+    final result = await _updateMemo(memo, state: 'ARCHIVED');
+    if (!mounted) return;
+    switch (result.kind) {
+      case MemosListMutationResultKind.handled:
+        _removeMemoWithAnimation(memo);
+        showTopToast(context, context.t.strings.legacy.msg_archived);
+        return;
+      case MemosListMutationResultKind.noop:
+        return;
+      case MemosListMutationResultKind.failed:
+        final error = result.error ?? '';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              context.t.strings.legacy.msg_archive_failed(e: error),
+            ),
+          ),
+        );
+        return;
     }
   }
 
