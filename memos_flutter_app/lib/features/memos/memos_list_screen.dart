@@ -28,7 +28,6 @@ import '../../core/platform_layout.dart';
 import '../../core/scene_micro_guide_widgets.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
-import '../../core/tag_colors.dart';
 import '../../core/tags.dart';
 import '../../core/top_toast.dart';
 import '../../core/uid.dart';
@@ -39,7 +38,6 @@ import '../../state/tags/tag_color_lookup.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
-import '../../data/models/memo_template_settings.dart';
 import '../../data/models/shortcut.dart';
 import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../state/settings/app_lock_provider.dart';
@@ -81,6 +79,7 @@ import 'memo_markdown.dart';
 import 'advanced_search_sheet.dart';
 import 'memos_list_audio_playback_coordinator.dart';
 import 'memos_list_inline_compose_coordinator.dart';
+import 'memos_list_screen_view_state.dart';
 import 'recycle_bin_screen.dart';
 import 'note_input_sheet.dart';
 import 'widgets/floating_collapse_button.dart';
@@ -232,15 +231,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   int? get _activeLoadMoreRequestId =>
       _loadMoreController.activeLoadMoreRequestId;
   String? get _activeLoadMoreSource => _loadMoreController.activeLoadMoreSource;
-
-  ({int startSec, int endSecExclusive}) _dayRangeSeconds(DateTime day) {
-    final localDay = DateTime(day.year, day.month, day.day);
-    final nextDay = localDay.add(const Duration(days: 1));
-    return (
-      startSec: localDay.toUtc().millisecondsSinceEpoch ~/ 1000,
-      endSecExclusive: nextDay.toUtc().millisecondsSinceEpoch ~/ 1000,
-    );
-  }
 
   @override
   void initState() {
@@ -1028,12 +1018,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         _stopScrollToTopFlow(snapToTop: true);
       }
     });
-  }
-
-  bool _shouldEnableHomeSort({required bool useRemoteSearch}) {
-    if (_searching || useRemoteSearch) return false;
-    if (widget.state != 'NORMAL') return false;
-    return widget.showDrawer;
   }
 
   String _sortOptionLabel(BuildContext context, _MemoSortOption option) {
@@ -2319,80 +2303,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
   }
 
-  Shortcut? _findShortcutById(List<Shortcut> shortcuts) {
-    final id = _selectedShortcutId;
-    if (id == null || id.isEmpty) return null;
-    for (final shortcut in shortcuts) {
-      if (shortcut.shortcutId == id) return shortcut;
-    }
-    return null;
-  }
-
   void _markSceneGuideSeen(SceneMicroGuideId id) {
     unawaited(ref.read(sceneMicroGuideProvider.notifier).markSeen(id));
-  }
-
-  bool _isListGuideEligible(
-    SceneMicroGuideId id, {
-    required SceneMicroGuideState guideState,
-    required bool hasVisibleMemos,
-    required bool canShowSearchShortcutGuide,
-    required bool canShowDesktopShortcutGuide,
-  }) {
-    if (!guideState.loaded || guideState.isSeen(id)) return false;
-    switch (id) {
-      case SceneMicroGuideId.desktopGlobalShortcuts:
-        return canShowDesktopShortcutGuide;
-      case SceneMicroGuideId.memoListSearchAndShortcuts:
-        return canShowSearchShortcutGuide;
-      case SceneMicroGuideId.memoListGestures:
-        return !_searching && hasVisibleMemos;
-      case SceneMicroGuideId.memoEditorTagAutocomplete:
-      case SceneMicroGuideId.attachmentGalleryControls:
-        return false;
-    }
-  }
-
-  SceneMicroGuideId? _resolveListRouteGuide({
-    required SceneMicroGuideState guideState,
-    required bool hasVisibleMemos,
-    required bool canShowSearchShortcutGuide,
-    required bool canShowDesktopShortcutGuide,
-  }) {
-    final presented = _presentedListGuideId;
-    if (presented != null) {
-      return _isListGuideEligible(
-            presented,
-            guideState: guideState,
-            hasVisibleMemos: hasVisibleMemos,
-            canShowSearchShortcutGuide: canShowSearchShortcutGuide,
-            canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
-          )
-          ? presented
-          : null;
-    }
-    final candidates = <SceneMicroGuideId>[
-      SceneMicroGuideId.desktopGlobalShortcuts,
-      SceneMicroGuideId.memoListSearchAndShortcuts,
-      SceneMicroGuideId.memoListGestures,
-    ];
-    for (final candidate in candidates) {
-      if (!_isListGuideEligible(
-        candidate,
-        guideState: guideState,
-        hasVisibleMemos: hasVisibleMemos,
-        canShowSearchShortcutGuide: canShowSearchShortcutGuide,
-        canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
-      )) {
-        continue;
-      }
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _presentedListGuideId != null) return;
-        setState(() => _presentedListGuideId = candidate);
-      });
-      return candidate;
-    }
-    return null;
   }
 
   String _desktopGlobalShortcutsGuideMessage(BuildContext context) {
@@ -3838,38 +3750,45 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   Widget build(BuildContext context) {
     final searchQuery = _searchController.text;
     final filterDay = widget.dayFilter;
-    final dayRange = filterDay == null ? null : _dayRangeSeconds(filterDay);
-    final startTimeSec = dayRange?.startSec;
-    final endTimeSecExclusive = dayRange?.endSecExclusive;
     final shortcutsAsync = ref.watch(shortcutsProvider);
     final shortcuts = shortcutsAsync.valueOrNull ?? const <Shortcut>[];
-    final selectedShortcut = _findShortcutById(shortcuts);
-    final shortcutFilter = selectedShortcut?.filter ?? '';
-    final useShortcutFilter = shortcutFilter.trim().isNotEmpty;
-    final selectedQuickSearchKind = _selectedQuickSearchKind;
-    final resolvedTag = _activeTagFilter;
-    final advancedFilters = _advancedSearchFilters.normalized();
-    final useQuickSearch =
-        !useShortcutFilter && selectedQuickSearchKind != null;
-    final useRemoteSearch =
-        !useShortcutFilter && !useQuickSearch && searchQuery.trim().isNotEmpty;
-    final quickSearchQuery = selectedQuickSearchKind == null
-        ? null
-        : (
-            kind: selectedQuickSearchKind,
-            searchQuery: searchQuery,
-            state: widget.state,
-            tag: resolvedTag,
-            startTimeSec: startTimeSec,
-            endTimeSecExclusive: endTimeSecExclusive,
-            advancedFilters: advancedFilters,
-            pageSize: _pageSize,
-          );
-    final queryKey =
-        '${widget.state}|${resolvedTag ?? ''}|${searchQuery.trim()}|${shortcutFilter.trim()}|'
-        '${startTimeSec ?? ''}|${endTimeSecExclusive ?? ''}|${useShortcutFilter ? 1 : 0}|'
-        '${selectedQuickSearchKind?.name ?? ''}|${useQuickSearch ? 1 : 0}|'
-        '${useRemoteSearch ? 1 : 0}|${advancedFilters.signature}';
+    final mediaQuery = MediaQuery.of(context);
+    final bottomInset = mediaQuery.padding.bottom;
+    final screenWidth = mediaQuery.size.width;
+    final queryState = buildMemosListScreenQueryState(
+      searchQuery: searchQuery,
+      filterDay: filterDay,
+      state: widget.state,
+      pageSize: _pageSize,
+      shortcuts: shortcuts,
+      selectedShortcutId: _selectedShortcutId,
+      selectedQuickSearchKind: _selectedQuickSearchKind,
+      resolvedTag: _activeTagFilter,
+      advancedFilters: _advancedSearchFilters,
+      searching: _searching,
+      showDrawer: widget.showDrawer,
+    );
+    final layoutState = buildMemosListScreenLayoutState(
+      query: queryState,
+      state: widget.state,
+      showDrawer: widget.showDrawer,
+      showPillActions: widget.showPillActions,
+      showFilterTagChip: widget.showFilterTagChip,
+      enableCompose: widget.enableCompose,
+      searching: _searching,
+      screenWidth: screenWidth,
+      isWindowsDesktop: Platform.isWindows,
+    );
+    final resolvedTag = queryState.resolvedTag;
+    final advancedFilters = queryState.advancedFilters;
+    final useShortcutFilter = queryState.useShortcutFilter;
+    final useQuickSearch = queryState.useQuickSearch;
+    final useRemoteSearch = queryState.useRemoteSearch;
+    final shortcutFilter = queryState.shortcutFilter;
+    final selectedQuickSearchKind = queryState.selectedQuickSearchKind;
+    final shortcutQuery = queryState.shortcutQuery;
+    final quickSearchQuery = queryState.quickSearchQuery;
+    final queryKey = queryState.queryKey;
     final previousQueryKey = _paginationKey;
     if (_loadMoreController.syncQueryKey(
       queryKey,
@@ -3893,43 +3812,16 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         context: {'fromKey': previousQueryKey, 'toKey': queryKey},
       );
     }
-    final shortcutQuery = (
-      searchQuery: searchQuery,
-      state: widget.state,
-      tag: resolvedTag,
-      shortcutFilter: shortcutFilter,
-      startTimeSec: startTimeSec,
-      endTimeSecExclusive: endTimeSecExclusive,
-      advancedFilters: advancedFilters,
-      pageSize: _pageSize,
-    );
-    final memosAsync = useShortcutFilter
-        ? ref.watch(shortcutMemosProvider(shortcutQuery))
-        : useQuickSearch
-        ? ref.watch(quickSearchMemosProvider(quickSearchQuery!))
-        : useRemoteSearch
-        ? ref.watch(
-            remoteSearchMemosProvider((
-              searchQuery: searchQuery,
-              state: widget.state,
-              tag: resolvedTag,
-              startTimeSec: startTimeSec,
-              endTimeSecExclusive: endTimeSecExclusive,
-              advancedFilters: advancedFilters,
-              pageSize: _pageSize,
-            )),
-          )
-        : ref.watch(
-            memosStreamProvider((
-              searchQuery: searchQuery,
-              state: widget.state,
-              tag: resolvedTag,
-              startTimeSec: startTimeSec,
-              endTimeSecExclusive: endTimeSecExclusive,
-              advancedFilters: advancedFilters,
-              pageSize: _pageSize,
-            )),
-          );
+    final memosAsync = switch (queryState.sourceKind) {
+      MemosListMemoSourceKind.shortcut =>
+        ref.watch(shortcutMemosProvider(shortcutQuery!)),
+      MemosListMemoSourceKind.quickSearch =>
+        ref.watch(quickSearchMemosProvider(quickSearchQuery!)),
+      MemosListMemoSourceKind.remoteSearch =>
+        ref.watch(remoteSearchMemosProvider(queryState.baseQuery)),
+      MemosListMemoSourceKind.stream =>
+        ref.watch(memosStreamProvider(queryState.baseQuery)),
+    };
     final syncState = ref.watch(syncCoordinatorProvider).memos;
     final syncQueueSnapshot = ref
         .watch(syncQueueProgressTrackerProvider)
@@ -3941,13 +3833,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final tagStats =
         ref.watch(tagStatsProvider).valueOrNull ?? const <TagStat>[];
     final tagColorLookup = ref.watch(tagColorLookupProvider);
-    final activeTagStat = (resolvedTag ?? '').trim().isEmpty
-        ? null
-        : tagColorLookup.resolveTag(resolvedTag!.trim());
     final templateSettings = ref.watch(memoTemplateSettingsProvider);
-    final availableTemplates = templateSettings.enabled
-        ? templateSettings.templates
-        : const <MemoTemplate>[];
     final toolbarPreferences = ref.watch(
       appPreferencesProvider.select((p) => p.memoToolbarPreferences),
     );
@@ -3956,22 +3842,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       context,
       inlineVisibility,
     );
-    final recommendedTags = [...tagStats]
-      ..sort((a, b) {
-        if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-        return b.count.compareTo(a.count);
-      });
-    final tagPresentationSignature = tagStats
-        .map(
-          (tag) =>
-              '${tag.path}|${tag.parentId ?? ''}|${tag.pinned ? 1 : 0}|${normalizeTagColorHex(tag.colorHex) ?? ''}',
-        )
-        .join(',');
-    final showSearchLanding =
-        _searching &&
-        searchQuery.trim().isEmpty &&
-        !useQuickSearch &&
-        advancedFilters.isEmpty;
+    final tagPresentationSignature = buildMemosListTagPresentationSignature(
+      tagStats,
+    );
     final memosValue = memosAsync.valueOrNull;
     final memosLoading = memosAsync.isLoading;
     final memosError = memosAsync.whenOrNull(error: (e, _) => e);
@@ -3983,9 +3856,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final bootstrapElapsed = _bootstrapImportStartedAt == null
         ? null
         : DateTime.now().difference(_bootstrapImportStartedAt!);
-    final enableHomeSort = _shouldEnableHomeSort(
-      useRemoteSearch: useRemoteSearch,
-    );
     final hasProviderValue = memosValue != null;
 
     final nextResultCount = hasProviderValue
@@ -3999,7 +3869,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       hasProviderValue: hasProviderValue,
       resultCount: nextResultCount,
       providerLoading: memosLoading,
-      showSearchLanding: showSearchLanding,
+      showSearchLanding: queryState.showSearchLanding,
     );
     if (hasProviderValue && _currentResultCount != previousCount) {
       if (wasLoadingMore) {
@@ -4031,20 +3901,54 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
 
     if (memosValue != null) {
-      final sortedMemos = enableHomeSort
+      final sortedMemos = queryState.enableHomeSort
           ? _applyHomeSort(memosValue)
           : memosValue;
       final listSignature =
           '${widget.state}|${resolvedTag ?? ''}|${searchQuery.trim()}|${shortcutFilter.trim()}|'
           '${useShortcutFilter ? 1 : 0}|${selectedQuickSearchKind?.name ?? ''}|'
-          '${useQuickSearch ? 1 : 0}|${startTimeSec ?? ''}|${endTimeSecExclusive ?? ''}|'
-          '${enableHomeSort ? _sortOption.name : 'default'}|$tagPresentationSignature|'
+          '${useQuickSearch ? 1 : 0}|${queryState.startTimeSec ?? ''}|${queryState.endTimeSecExclusive ?? ''}|'
+          '${queryState.enableHomeSort ? _sortOption.name : 'default'}|$tagPresentationSignature|'
           '${advancedFilters.signature}';
       _syncAnimatedMemos(sortedMemos, listSignature);
     }
     final visibleMemos = _animatedMemos;
     _syncMemoCardKeys(visibleMemos);
     _scheduleFloatingCollapseRecompute();
+    final prefs = ref.watch(appPreferencesProvider);
+    final hapticsEnabled = prefs.hapticsEnabled;
+    final screenshotModeEnabled = kDebugMode
+        ? ref.watch(debugScreenshotModeProvider)
+        : false;
+    final session = ref.watch(appSessionProvider).valueOrNull;
+    final currentLocalLibrary = ref.watch(currentLocalLibraryProvider);
+    final sceneGuideState = ref.watch(sceneMicroGuideProvider);
+    final guideState = buildMemosListScreenGuideState(
+      isAllMemos: _isAllMemos,
+      enableSearch: widget.enableSearch,
+      enableTitleMenu: widget.enableTitleMenu,
+      searching: _searching,
+      sessionHasAccount: session?.currentAccount != null,
+      desktopShortcutEnabled: isDesktopShortcutEnabled(),
+      hasVisibleMemos: visibleMemos.isNotEmpty,
+      guideState: sceneGuideState,
+      presentedListGuideId: _presentedListGuideId,
+    );
+    final viewState = buildMemosListScreenViewState(
+      query: queryState,
+      layout: layoutState,
+      guide: guideState,
+      tagStats: tagStats,
+      tagColorLookup: tagColorLookup,
+      templateSettings: templateSettings,
+    );
+    final activeListGuideId = viewState.guide.activeListGuideId;
+    if (_presentedListGuideId == null && activeListGuideId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _presentedListGuideId != null) return;
+        setState(() => _presentedListGuideId = activeListGuideId);
+      });
+    }
     _maybeLogMemosLoadingPhase(
       queryKey: queryKey,
       memosLoading: memosLoading,
@@ -4070,13 +3974,15 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       useShortcutFilter: useShortcutFilter,
       useQuickSearch: useQuickSearch,
       useRemoteSearch: useRemoteSearch,
-      startTimeSec: startTimeSec,
-      endTimeSecExclusive: endTimeSecExclusive,
+      startTimeSec: queryState.startTimeSec,
+      endTimeSecExclusive: queryState.endTimeSecExclusive,
       shortcutFilter: shortcutFilter,
       quickSearchKind: selectedQuickSearchKind,
     );
     final showLoadMoreHint =
-        memosError == null && visibleMemos.isNotEmpty && !showSearchLanding;
+        memosError == null &&
+        visibleMemos.isNotEmpty &&
+        !viewState.query.showSearchLanding;
     final loadMoreBusy = _loadingMore || _currentLoading;
     final touchPullLoadEnabled = _isTouchPullLoadPlatform();
     final loadMoreHintText = loadMoreBusy
@@ -4099,32 +4005,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                 ? MemoFlowPalette.backgroundDark
                 : MemoFlowPalette.backgroundLight)
             .withValues(alpha: 0.9);
-    final showHeaderPillActions =
-        widget.showPillActions && widget.state == 'NORMAL';
-    final listTopPadding = showHeaderPillActions ? 0.0 : 16.0;
-    final listVisualOffset = showHeaderPillActions ? 6.0 : 0.0;
-    final prefs = ref.watch(appPreferencesProvider);
-    final hapticsEnabled = prefs.hapticsEnabled;
-    final screenshotModeEnabled = kDebugMode
-        ? ref.watch(debugScreenshotModeProvider)
-        : false;
-    final session = ref.watch(appSessionProvider).valueOrNull;
-    final currentLocalLibrary = ref.watch(currentLocalLibraryProvider);
-    final sceneGuideState = ref.watch(sceneMicroGuideProvider);
-    final canShowSearchShortcutGuide =
-        _isAllMemos &&
-        widget.enableSearch &&
-        widget.enableTitleMenu &&
-        !_searching &&
-        session?.currentAccount != null;
-    final canShowDesktopShortcutGuide =
-        isDesktopShortcutEnabled() && _isAllMemos && !_searching;
-    final activeListGuideId = _resolveListRouteGuide(
-      guideState: sceneGuideState,
-      hasVisibleMemos: visibleMemos.isNotEmpty,
-      canShowSearchShortcutGuide: canShowSearchShortcutGuide,
-      canShowDesktopShortcutGuide: canShowDesktopShortcutGuide,
-    );
     final activeListGuideMessage = switch (activeListGuideId) {
       SceneMicroGuideId.desktopGlobalShortcuts =>
         _desktopGlobalShortcutsGuideMessage(context),
@@ -4170,36 +4050,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       }
     }
     final debugApiVersionText = ref.watch(memosListDebugApiVersionTextProvider);
-    final mediaQuery = MediaQuery.of(context);
-    final bottomInset = mediaQuery.padding.bottom;
-    final screenWidth = mediaQuery.size.width;
-    final supportsDesktopSidePane =
-        widget.showDrawer && shouldUseDesktopSidePaneLayout(screenWidth);
-    final useDesktopSidePane = supportsDesktopSidePane;
-    final useInlineCompose =
-        widget.enableCompose &&
-        !_searching &&
-        shouldUseInlineComposeLayout(screenWidth);
-    final useWindowsDesktopHeader = Platform.isWindows;
-    final headerToolbarHeight = useWindowsDesktopHeader && !_searching
-        ? 0.0
-        : kToolbarHeight;
-    final headerBottomHeight = useWindowsDesktopHeader && !_searching
-        ? 0.0
-        : _searching
-        ? (useShortcutFilter ? 0.0 : 46.0)
-        : (showHeaderPillActions
-              ? 46.0
-              : (widget.showFilterTagChip &&
-                        (resolvedTag?.trim().isNotEmpty ?? false)
-                    ? 48.0
-                    : 0.0));
-    final floatingCollapseTopPadding =
-        headerToolbarHeight +
-        headerBottomHeight +
-        listTopPadding +
-        listVisualOffset +
-        10;
     final drawerPanel = widget.showDrawer
         ? AppDrawer(
             selected: widget.state == 'ARCHIVED'
@@ -4208,15 +4058,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             onSelect: _navigateDrawer,
             onSelectTag: _openTagFromDrawer,
             onOpenNotifications: _openNotifications,
-            embedded: useDesktopSidePane,
+            embedded: viewState.layout.useDesktopSidePane,
             selectedTagPath: (resolvedTag ?? '').trim().isEmpty
                 ? null
                 : resolvedTag!.trim(),
           )
         : null;
-    final showComposeFab =
-        widget.enableCompose && !_searching && !useInlineCompose;
-    final backToTopBaseOffset = showComposeFab ? 104.0 : 24.0;
     void maybeHaptic() {
       if (!hapticsEnabled) return;
       HapticFeedback.selectionClick();
@@ -4242,11 +4089,15 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       },
       child: Scaffold(
         key: _scaffoldKey,
-        drawer: useDesktopSidePane ? null : drawerPanel,
+        drawer: viewState.layout.useDesktopSidePane ? null : drawerPanel,
         drawerEnableOpenDragGesture:
-            !useDesktopSidePane && widget.showDrawer && !_searching,
+            !viewState.layout.useDesktopSidePane &&
+            widget.showDrawer &&
+            !_searching,
         drawerEdgeDragWidth:
-            !useDesktopSidePane && widget.showDrawer && !_searching
+            !viewState.layout.useDesktopSidePane &&
+                widget.showDrawer &&
+                !_searching
             ? screenWidth
             : null,
         body: (() {
@@ -4329,7 +4180,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                     succeeded: syncStatus.lastError == null,
                   );
                   if (useShortcutFilter) {
-                    ref.invalidate(shortcutMemosProvider(shortcutQuery));
+                    ref.invalidate(shortcutMemosProvider(shortcutQuery!));
                   } else if (useQuickSearch && quickSearchQuery != null) {
                     ref.invalidate(quickSearchMemosProvider(quickSearchQuery));
                   }
@@ -4348,15 +4199,20 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                           elevation: 0,
                           scrolledUnderElevation: 0,
                           surfaceTintColor: Colors.transparent,
-                          toolbarHeight: useWindowsDesktopHeader && !_searching
+                          toolbarHeight:
+                              viewState.layout.useWindowsDesktopHeader &&
+                                  !_searching
                               ? 0
                               : kToolbarHeight,
-                          titleSpacing: useWindowsDesktopHeader && !_searching
+                          titleSpacing:
+                              viewState.layout.useWindowsDesktopHeader &&
+                                  !_searching
                               ? 0
                               : NavigationToolbar.kMiddleSpacing,
                           automaticallyImplyLeading:
-                              !useWindowsDesktopHeader && !_searching,
-                          leading: useWindowsDesktopHeader
+                              !viewState.layout.useWindowsDesktopHeader &&
+                              !_searching,
+                          leading: viewState.layout.useWindowsDesktopHeader
                               ? null
                               : (_searching
                                     ? IconButton(
@@ -4366,7 +4222,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                         onPressed: _closeSearch,
                                       )
                                     : null),
-                          title: useWindowsDesktopHeader && !_searching
+                          title:
+                              viewState.layout.useWindowsDesktopHeader &&
+                                  !_searching
                               ? null
                               : (_searching
                                     ? _buildTopSearchField(
@@ -4382,18 +4240,20 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                         context,
                                         maybeHaptic: maybeHaptic,
                                       )),
-                          actions: useWindowsDesktopHeader && !_searching
+                          actions:
+                              viewState.layout.useWindowsDesktopHeader &&
+                                  !_searching
                               ? null
                               : [
                                   if (!_searching &&
-                                      activeTagStat?.tagId != null)
+                                      viewState.activeTagStat?.tagId != null)
                                     IconButton(
                                       tooltip:
                                           context.t.strings.legacy.msg_edit_tag,
                                       onPressed: () async {
                                         await TagEditSheet.showEditorDialog(
                                           context,
-                                          tag: activeTagStat,
+                                          tag: viewState.activeTagStat,
                                         );
                                       },
                                       icon: const Icon(Icons.edit),
@@ -4464,12 +4324,16 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                             : null)
                                       : (widget.enableSearch
                                             ? [
-                                                if (enableHomeSort)
+                                                if (viewState
+                                                    .query
+                                                    .enableHomeSort)
                                                   _buildSortMenuButton(
                                                     context,
                                                     isDark: isDark,
                                                   ),
-                                                if (!useWindowsDesktopHeader)
+                                                if (!viewState
+                                                    .layout
+                                                    .useWindowsDesktopHeader)
                                                   IconButton(
                                                     tooltip: context
                                                         .t
@@ -4484,7 +4348,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                               ]
                                             : null),
                                 ],
-                          bottom: useWindowsDesktopHeader && !_searching
+                          bottom:
+                              viewState.layout.useWindowsDesktopHeader &&
+                                  !_searching
                               ? null
                               : _searching
                               ? (useShortcutFilter
@@ -4504,14 +4370,16 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                             ),
                                             child: MemosListSearchQuickFilterBar(
                                               selectedKind:
-                                                  _selectedQuickSearchKind,
+                                                  viewState
+                                                      .query
+                                                      .selectedQuickSearchKind,
                                               onSelectKind:
                                                   _toggleQuickSearchKind,
                                             ),
                                           ),
                                         ),
                                       ))
-                              : (showHeaderPillActions
+                              : (viewState.layout.showHeaderPillActions
                                     ? PreferredSize(
                                         preferredSize: const Size.fromHeight(
                                           46,
@@ -4589,7 +4457,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                               ),
                             ),
                           ),
-                        if (useInlineCompose)
+                        if (viewState.layout.useInlineCompose)
                           SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
@@ -4607,7 +4475,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                 visibilityColor: inlineVisibilityStyle.$3,
                                 isDark: isDark,
                                 tagStats: tagStats,
-                                availableTemplates: availableTemplates,
+                                availableTemplates:
+                                    viewState.availableTemplates,
                                 tagColorLookup: tagColorLookup,
                                 toolbarPreferences: toolbarPreferences,
                                 editorFieldKey: _inlineEditorFieldKey,
@@ -4647,7 +4516,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                         .openTemplateMenuFromKey(
                                           context,
                                           _inlineTemplateMenuKey,
-                                          availableTemplates,
+                                          viewState.availableTemplates,
                                         ),
                                   );
                                 },
@@ -4704,10 +4573,10 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                           ),
                         if (widget.showTagFilters &&
                             !_searching &&
-                            recommendedTags.isNotEmpty)
+                            viewState.recommendedTags.isNotEmpty)
                           SliverToBoxAdapter(
                             child: MemosListTagFilterBar(
-                              tags: recommendedTags
+                              tags: viewState.recommendedTags
                                   .take(12)
                                   .map((e) => e.tag)
                                   .toList(growable: false),
@@ -4736,7 +4605,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                               ),
                             ),
                           )
-                        else if (showSearchLanding)
+                        else if (viewState.query.showSearchLanding)
                           SliverToBoxAdapter(
                             child: MemosListSearchLanding(
                               history: searchHistory,
@@ -4747,7 +4616,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                                   .read(searchHistoryProvider.notifier)
                                   .remove(value),
                               onSelectHistory: _applySearchQuery,
-                              tags: recommendedTags
+                              tags: viewState.recommendedTags
                                   .map((e) => e.tag)
                                   .toList(growable: false),
                               tagColors: tagColorLookup,
@@ -4784,7 +4653,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                           SliverPadding(
                             padding: EdgeInsets.fromLTRB(
                               16,
-                              listTopPadding + listVisualOffset,
+                              viewState.layout.listTopPadding +
+                                  viewState.layout.listVisualOffset,
                               16,
                               showLoadMoreHint ? 20 : 140,
                             ),
@@ -4852,14 +4722,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
                   label: context.t.strings.legacy.msg_collapse,
                   onPressed: _collapseActiveMemoFromFloatingButton,
                   padding: EdgeInsets.only(
-                    top: floatingCollapseTopPadding,
+                    top: viewState.layout.floatingCollapseTopPadding,
                     right: 16,
                   ),
                 ),
               ),
               Positioned(
                 right: 16,
-                bottom: backToTopBaseOffset + bottomInset,
+                bottom: viewState.layout.backToTopBaseOffset + bottomInset,
                 child: BackToTopButton(
                   visible: _showBackToTop,
                   hapticsEnabled: hapticsEnabled,
@@ -4879,7 +4749,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             ],
           );
           final bodyContent = () {
-            if (!useDesktopSidePane || drawerPanel == null) {
+            if (!viewState.layout.useDesktopSidePane || drawerPanel == null) {
               return memoListBody;
             }
             final dividerColor = isDark
@@ -4908,14 +4778,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
               ],
             );
           }();
-          if (useWindowsDesktopHeader && !_searching) {
+          if (viewState.layout.useWindowsDesktopHeader && !_searching) {
             return Column(
               children: [
                 _buildWindowsDesktopTitleBar(
                   context,
                   isDark: isDark,
-                  enableHomeSort: enableHomeSort,
-                  showPillActions: showHeaderPillActions,
+                  enableHomeSort: viewState.query.enableHomeSort,
+                  showPillActions: viewState.layout.showHeaderPillActions,
                   maybeHaptic: maybeHaptic,
                   screenshotModeEnabled: screenshotModeEnabled,
                   debugApiVersionText: debugApiVersionText,
@@ -4927,7 +4797,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
           return bodyContent;
         })(),
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-        floatingActionButton: showComposeFab
+        floatingActionButton: viewState.layout.showComposeFab
             ? MemoFlowFab(
                 onPressed: _openNoteInput,
                 onLongPressStart: _handleVoiceFabLongPressStart,
