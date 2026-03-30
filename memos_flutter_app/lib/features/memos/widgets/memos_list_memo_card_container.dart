@@ -1,0 +1,196 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+
+import '../../../core/url.dart';
+import '../../../data/models/app_preferences.dart';
+import '../../../data/models/local_memo.dart';
+import '../../../state/memos/memos_list_providers.dart';
+import '../../../state/memos/memos_providers.dart';
+import '../../../state/settings/location_settings_provider.dart';
+import '../../../state/settings/reminder_settings_provider.dart';
+import '../../../state/system/reminder_providers.dart';
+import '../../../state/system/reminder_utils.dart';
+import '../../../state/system/session_provider.dart';
+import '../../../state/tags/tag_color_lookup.dart';
+import '../memo_image_grid.dart';
+import '../memo_media_grid.dart';
+import '../memo_video_grid.dart';
+import 'memos_list_memo_card.dart';
+
+final DateFormat _memoDateFormatter = DateFormat('yyyy-MM-dd HH:mm');
+
+class MemosListMemoCardContainer extends ConsumerWidget {
+  const MemosListMemoCardContainer({
+    super.key,
+    required this.memoCardKey,
+    required this.memo,
+    required this.prefs,
+    required this.outboxStatus,
+    required this.tagColors,
+    required this.removing,
+    required this.searching,
+    required this.windowsHeaderSearchExpanded,
+    required this.selectedQuickSearchKind,
+    required this.searchQuery,
+    required this.playingMemoUid,
+    required this.audioPlaying,
+    required this.audioLoading,
+    required this.audioPositionListenable,
+    required this.audioDurationListenable,
+    required this.onAudioSeek,
+    required this.onAudioTap,
+    required this.onSyncStatusTap,
+    required this.onToggleTask,
+    required this.onTap,
+    this.onLongPress,
+    this.onDoubleTap,
+    this.onFloatingStateChanged,
+    required this.onAction,
+  });
+
+  final GlobalKey<MemoListCardState> memoCardKey;
+  final LocalMemo memo;
+  final AppPreferences prefs;
+  final OutboxMemoStatus outboxStatus;
+  final TagColorLookup tagColors;
+  final bool removing;
+  final bool searching;
+  final bool windowsHeaderSearchExpanded;
+  final QuickSearchKind? selectedQuickSearchKind;
+  final String searchQuery;
+  final String? playingMemoUid;
+  final bool audioPlaying;
+  final bool audioLoading;
+  final ValueListenable<Duration> audioPositionListenable;
+  final ValueListenable<Duration?> audioDurationListenable;
+  final ValueChanged<Duration>? onAudioSeek;
+  final VoidCallback? onAudioTap;
+  final ValueChanged<MemoSyncStatus>? onSyncStatusTap;
+  final ValueChanged<int> onToggleTask;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
+  final VoidCallback? onFloatingStateChanged;
+  final ValueChanged<MemoCardAction> onAction;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final displayTime = memo.createTime.millisecondsSinceEpoch > 0
+        ? memo.createTime
+        : memo.updateTime;
+    final isAudioActive = playingMemoUid == memo.uid;
+    final isAudioPlaying = isAudioActive && audioPlaying;
+    final isAudioLoading = isAudioActive && audioLoading;
+    final session = ref.watch(appSessionProvider).valueOrNull;
+    final account = session?.currentAccount;
+    final baseUrl = account?.baseUrl;
+    final sessionController = ref.read(appSessionProvider.notifier);
+    final serverVersion = account == null
+        ? ''
+        : sessionController.resolveEffectiveServerVersionForAccount(
+            account: account,
+          );
+    final rebaseAbsoluteFileUrlForV024 = isServerVersion024(serverVersion);
+    final attachAuthForSameOriginAbsolute = isServerVersion021(serverVersion);
+    final token = account?.personalAccessToken ?? '';
+    final authHeader = token.trim().isEmpty ? null : 'Bearer $token';
+    final imageEntries = collectMemoImageEntries(
+      content: memo.content,
+      attachments: memo.attachments,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    final videoEntries = collectMemoVideoEntries(
+      attachments: memo.attachments,
+      baseUrl: baseUrl,
+      authHeader: authHeader,
+      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
+      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
+    );
+    final mediaEntries = buildMemoMediaEntries(
+      images: imageEntries,
+      videos: videoEntries,
+    );
+    final locationProvider = ref.watch(
+      locationSettingsProvider.select((value) => value.provider),
+    );
+    final syncStatus = _resolveMemoSyncStatus(memo, outboxStatus);
+    final reminderMap = ref.watch(memoReminderMapProvider);
+    final reminderSettings = ref.watch(reminderSettingsProvider);
+    final reminder = reminderMap[memo.uid];
+    final nextReminderTime = reminder == null
+        ? null
+        : nextEffectiveReminderTime(
+            now: DateTime.now(),
+            times: reminder.times,
+            settings: reminderSettings,
+          );
+    final reminderText = nextReminderTime == null
+        ? null
+        : _formatReminderTime(context, nextReminderTime);
+    final trimmedSearchQuery = searchQuery.trim();
+    final inSearchContext =
+        searching ||
+        windowsHeaderSearchExpanded ||
+        trimmedSearchQuery.isNotEmpty ||
+        selectedQuickSearchKind != null;
+
+    return MemoListCard(
+      key: memoCardKey,
+      memo: memo,
+      dateText: _memoDateFormatter.format(displayTime),
+      reminderText: reminderText,
+      tagColors: tagColors,
+      initiallyExpanded: inSearchContext,
+      highlightQuery: trimmedSearchQuery.isEmpty ? null : trimmedSearchQuery,
+      collapseLongContent: prefs.collapseLongContent,
+      collapseReferences: prefs.collapseReferences,
+      isAudioPlaying: removing ? false : isAudioPlaying,
+      isAudioLoading: removing ? false : isAudioLoading,
+      audioPositionListenable: removing || !isAudioActive
+          ? null
+          : audioPositionListenable,
+      audioDurationListenable: removing || !isAudioActive
+          ? null
+          : audioDurationListenable,
+      imageEntries: imageEntries,
+      mediaEntries: mediaEntries,
+      locationProvider: locationProvider,
+      onAudioSeek: removing || !isAudioActive ? null : onAudioSeek,
+      onAudioTap: removing ? null : onAudioTap,
+      syncStatus: syncStatus,
+      onSyncStatusTap: syncStatus == MemoSyncStatus.none
+          ? null
+          : () => onSyncStatusTap?.call(syncStatus),
+      onToggleTask: removing ? (_) {} : onToggleTask,
+      onTap: removing ? () {} : onTap,
+      onDoubleTap: removing || memo.state == 'ARCHIVED' ? () {} : onDoubleTap,
+      onLongPress: removing ? () {} : onLongPress,
+      onFloatingStateChanged: onFloatingStateChanged,
+      onAction: removing ? (_) {} : onAction,
+    );
+  }
+}
+
+MemoSyncStatus _resolveMemoSyncStatus(LocalMemo memo, OutboxMemoStatus status) {
+  final uid = memo.uid.trim();
+  if (uid.isEmpty) return MemoSyncStatus.none;
+  if (status.failed.contains(uid)) return MemoSyncStatus.failed;
+  if (status.pending.contains(uid)) return MemoSyncStatus.pending;
+  return switch (memo.syncState) {
+    SyncState.error => MemoSyncStatus.failed,
+    SyncState.pending => MemoSyncStatus.pending,
+    _ => MemoSyncStatus.none,
+  };
+}
+
+String _formatReminderTime(BuildContext context, DateTime time) {
+  final locale = Localizations.localeOf(context).toString();
+  final datePart = DateFormat.Md(locale).format(time);
+  final timePart = DateFormat.Hm(locale).format(time);
+  return '$datePart $timePart';
+}

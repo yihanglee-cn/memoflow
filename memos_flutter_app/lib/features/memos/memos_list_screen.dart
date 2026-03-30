@@ -50,14 +50,11 @@ import '../../state/system/debug_screenshot_mode_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/local_library_scanner.dart';
-import '../../state/settings/location_settings_provider.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/memos/note_draft_provider.dart';
 import '../../state/settings/preferences_provider.dart';
-import '../../state/system/reminder_providers.dart';
-import '../../state/settings/reminder_settings_provider.dart';
 import '../../state/memos/search_history_provider.dart';
 import '../../state/system/scene_micro_guide_provider.dart';
 import '../../state/system/session_provider.dart';
@@ -66,7 +63,6 @@ import '../about/about_screen.dart';
 import '../explore/explore_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../reminders/memo_reminder_editor_screen.dart';
-import '../../state/system/reminder_utils.dart';
 import '../resources/resources_screen.dart';
 import '../review/ai_summary_screen.dart';
 import '../review/daily_review_screen.dart';
@@ -82,19 +78,17 @@ import '../voice/voice_record_screen.dart';
 import '../desktop/quick_input/desktop_quick_input_dialog.dart';
 import 'memo_detail_screen.dart';
 import 'memo_editor_screen.dart';
-import 'memo_image_grid.dart';
 import 'memo_versions_screen.dart';
-import 'memo_media_grid.dart';
 import 'memo_markdown.dart';
 import 'advanced_search_sheet.dart';
 import 'memos_list_inline_compose_coordinator.dart';
 import 'recycle_bin_screen.dart';
-import 'memo_video_grid.dart';
 import 'note_input_sheet.dart';
 import 'widgets/floating_collapse_button.dart';
 import 'widgets/memos_list_floating_actions.dart';
 import 'widgets/memos_list_inline_compose_card.dart';
 import 'widgets/memos_list_memo_card.dart';
+import 'widgets/memos_list_memo_card_container.dart';
 import 'widgets/memos_list_search_widgets.dart';
 import 'widgets/memos_list_title_menu.dart';
 import '../../i18n/strings.g.dart';
@@ -109,21 +103,6 @@ enum _AdvancedSearchChipKind {
   attachmentNameContains,
   attachmentType,
   hasRelations,
-}
-
-MemoSyncStatus _resolveMemoSyncStatus(
-  LocalMemo memo,
-  OutboxMemoStatus status,
-) {
-  final uid = memo.uid.trim();
-  if (uid.isEmpty) return MemoSyncStatus.none;
-  if (status.failed.contains(uid)) return MemoSyncStatus.failed;
-  if (status.pending.contains(uid)) return MemoSyncStatus.pending;
-  return switch (memo.syncState) {
-    SyncState.error => MemoSyncStatus.failed,
-    SyncState.pending => MemoSyncStatus.pending,
-    _ => MemoSyncStatus.none,
-  };
 }
 
 class MemosListScreen extends ConsumerStatefulWidget {
@@ -174,7 +153,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   static const double _scrollToTopDistanceSpeedFactor = 90;
   static const Duration _scrollToTopTick = Duration(milliseconds: 16);
   static const double _scrollToTopTickSeconds = 0.016;
-  final _dateFmt = DateFormat('yyyy-MM-dd HH:mm');
   final _dayDateFmt = DateFormat('yyyy-MM-dd');
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
@@ -2220,13 +2198,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     return '${hh.toString().padLeft(2, '0')}:${mm.toString().padLeft(2, '0')}:${ss.toString().padLeft(2, '0')}';
   }
 
-  String _formatReminderTime(DateTime time) {
-    final locale = Localizations.localeOf(context).toString();
-    final datePart = DateFormat.Md(locale).format(time);
-    final timePart = DateFormat.Hm(locale).format(time);
-    return '$datePart $timePart';
-  }
-
   void _startAudioProgressTimer() {
     if (_audioProgressTimer != null) return;
     _audioProgressBase = _audioPlayer.position;
@@ -4133,13 +4104,67 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     required TagColorLookup tagColors,
   }) {
     final curved = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
-    Widget memoCard = _buildMemoCard(
-      context,
-      memo,
+    Widget memoCard = MemosListMemoCardContainer(
+      memoCardKey: _memoCardKeyFor(memo.uid),
+      memo: memo,
       prefs: prefs,
       outboxStatus: outboxStatus,
-      removing: removing,
       tagColors: tagColors,
+      removing: removing,
+      searching: _searching,
+      windowsHeaderSearchExpanded: _windowsHeaderSearchExpanded,
+      selectedQuickSearchKind: _selectedQuickSearchKind,
+      searchQuery: _searchController.text,
+      playingMemoUid: _playingMemoUid,
+      audioPlaying: _audioPlayer.playing,
+      audioLoading: _audioLoading,
+      audioPositionListenable: _audioPositionNotifier,
+      audioDurationListenable: _audioDurationNotifier,
+      onAudioSeek: (pos) => _seekAudioPosition(memo, pos),
+      onAudioTap: () => _toggleAudioPlayback(memo),
+      onSyncStatusTap: (status) =>
+          unawaited(_handleMemoSyncStatusTap(status, memo.uid)),
+      onToggleTask: (index) {
+        unawaited(
+          _toggleMemoCheckbox(
+            memo,
+            index,
+            skipQuotedLines: prefs.collapseReferences,
+          ),
+        );
+      },
+      onTap: () {
+        if (prefs.hapticsEnabled) {
+          HapticFeedback.selectionClick();
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => MemoDetailScreen(initialMemo: memo),
+          ),
+        );
+      },
+      onDoubleTap: () {
+        if (prefs.hapticsEnabled) {
+          HapticFeedback.selectionClick();
+        }
+        _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
+        unawaited(_handleMemoAction(memo, MemoCardAction.edit));
+      },
+      onLongPress: () async {
+        if (prefs.hapticsEnabled) {
+          HapticFeedback.selectionClick();
+        }
+        _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
+        await Clipboard.setData(ClipboardData(text: memo.content));
+        if (!context.mounted) return;
+        showTopToast(
+          context,
+          context.t.strings.legacy.msg_memo_copied,
+          duration: const Duration(milliseconds: 1200),
+        );
+      },
+      onFloatingStateChanged: _scheduleFloatingCollapseRecompute,
+      onAction: (action) async => _handleMemoAction(memo, action),
     );
     if (Platform.isWindows) {
       memoCard = Align(
@@ -4160,162 +4185,6 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         padding: const EdgeInsets.only(bottom: 10),
         child: memoCard,
       ),
-    );
-  }
-
-  Widget _buildMemoCard(
-    BuildContext context,
-    LocalMemo memo, {
-    required AppPreferences prefs,
-    required OutboxMemoStatus outboxStatus,
-    required bool removing,
-    required TagColorLookup tagColors,
-  }) {
-    final displayTime = memo.createTime.millisecondsSinceEpoch > 0
-        ? memo.createTime
-        : memo.updateTime;
-    final isAudioActive = _playingMemoUid == memo.uid;
-    final isAudioPlaying = isAudioActive && _audioPlayer.playing;
-    final isAudioLoading = isAudioActive && _audioLoading;
-    final audioPositionListenable = isAudioActive
-        ? _audioPositionNotifier
-        : null;
-    final audioDurationListenable = isAudioActive
-        ? _audioDurationNotifier
-        : null;
-    final account = ref.read(appSessionProvider).valueOrNull?.currentAccount;
-    final baseUrl = account?.baseUrl;
-    final sessionController = ref.read(appSessionProvider.notifier);
-    final serverVersion = account == null
-        ? ''
-        : sessionController.resolveEffectiveServerVersionForAccount(
-            account: account,
-          );
-    final rebaseAbsoluteFileUrlForV024 = isServerVersion024(serverVersion);
-    final attachAuthForSameOriginAbsolute = isServerVersion021(serverVersion);
-    final token = account?.personalAccessToken ?? '';
-    final authHeader = token.trim().isEmpty ? null : 'Bearer $token';
-    final imageEntries = collectMemoImageEntries(
-      content: memo.content,
-      attachments: memo.attachments,
-      baseUrl: baseUrl,
-      authHeader: authHeader,
-      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
-      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
-    );
-    final videoEntries = collectMemoVideoEntries(
-      attachments: memo.attachments,
-      baseUrl: baseUrl,
-      authHeader: authHeader,
-      rebaseAbsoluteFileUrlForV024: rebaseAbsoluteFileUrlForV024,
-      attachAuthForSameOriginAbsolute: attachAuthForSameOriginAbsolute,
-    );
-    final mediaEntries = buildMemoMediaEntries(
-      images: imageEntries,
-      videos: videoEntries,
-    );
-    final hapticsEnabled = prefs.hapticsEnabled;
-    final locationProvider = ref.watch(
-      locationSettingsProvider.select((value) => value.provider),
-    );
-
-    void maybeHaptic() {
-      if (hapticsEnabled) {
-        HapticFeedback.selectionClick();
-      }
-    }
-
-    final syncStatus = _resolveMemoSyncStatus(memo, outboxStatus);
-    final reminderMap = ref.watch(memoReminderMapProvider);
-    final reminderSettings = ref.watch(reminderSettingsProvider);
-    final reminder = reminderMap[memo.uid];
-    final nextReminderTime = reminder == null
-        ? null
-        : nextEffectiveReminderTime(
-            now: DateTime.now(),
-            times: reminder.times,
-            settings: reminderSettings,
-          );
-    final reminderText = nextReminderTime == null
-        ? null
-        : _formatReminderTime(nextReminderTime);
-    final inSearchContext =
-        _searching ||
-        _windowsHeaderSearchExpanded ||
-        _searchController.text.trim().isNotEmpty ||
-        _selectedQuickSearchKind != null;
-    final highlightQuery = _searchController.text.trim();
-
-    return MemoListCard(
-      key: _memoCardKeyFor(memo.uid),
-      memo: memo,
-      dateText: _dateFmt.format(displayTime),
-      reminderText: reminderText,
-      tagColors: tagColors,
-      initiallyExpanded: inSearchContext,
-      highlightQuery: highlightQuery.isEmpty ? null : highlightQuery,
-      collapseLongContent: prefs.collapseLongContent,
-      collapseReferences: prefs.collapseReferences,
-      isAudioPlaying: removing ? false : isAudioPlaying,
-      isAudioLoading: removing ? false : isAudioLoading,
-      audioPositionListenable: removing ? null : audioPositionListenable,
-      audioDurationListenable: removing ? null : audioDurationListenable,
-      imageEntries: imageEntries,
-      mediaEntries: mediaEntries,
-      locationProvider: locationProvider,
-      onAudioSeek: removing || !isAudioActive
-          ? null
-          : (pos) => _seekAudioPosition(memo, pos),
-      onAudioTap: removing ? null : () => _toggleAudioPlayback(memo),
-      syncStatus: syncStatus,
-      onSyncStatusTap: syncStatus == MemoSyncStatus.none
-          ? null
-          : () => unawaited(_handleMemoSyncStatusTap(syncStatus, memo.uid)),
-      onToggleTask: removing
-          ? (_) {}
-          : (index) {
-              unawaited(
-                _toggleMemoCheckbox(
-                  memo,
-                  index,
-                  skipQuotedLines: prefs.collapseReferences,
-                ),
-              );
-            },
-      onTap: removing
-          ? () {}
-          : () {
-              maybeHaptic();
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => MemoDetailScreen(initialMemo: memo),
-                ),
-              );
-            },
-      onDoubleTap: removing || memo.state == 'ARCHIVED'
-          ? () {}
-          : () {
-              maybeHaptic();
-              _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
-              unawaited(_handleMemoAction(memo, MemoCardAction.edit));
-            },
-      onLongPress: removing
-          ? () {}
-          : () async {
-              maybeHaptic();
-              _markSceneGuideSeen(SceneMicroGuideId.memoListGestures);
-              await Clipboard.setData(ClipboardData(text: memo.content));
-              if (!context.mounted) return;
-              showTopToast(
-                context,
-                context.t.strings.legacy.msg_memo_copied,
-                duration: const Duration(milliseconds: 1200),
-              );
-            },
-      onFloatingStateChanged: _scheduleFloatingCollapseRecompute,
-      onAction: removing
-          ? (_) {}
-          : (action) async => _handleMemoAction(memo, action),
     );
   }
 
