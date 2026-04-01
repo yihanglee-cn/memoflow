@@ -2740,16 +2740,13 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       await ref.read(noteDraftProvider.notifier).clear();
       _activeDraftId = null;
       if (submittedDraftId != null && submittedDraftId.isNotEmpty) {
+        final keepPaths = pendingUploads
+            .map((attachment) => attachment.filePath.trim())
+            .where((path) => path.isNotEmpty)
+            .toSet();
         await ref
             .read(composeDraftRepositoryProvider)
-            .deleteDraft(submittedDraftId);
-      }
-      for (final attachment in pendingUploads) {
-        unawaited(
-          ref
-              .read(queuedAttachmentStagerProvider)
-              .deleteManagedFile(attachment.filePath),
-        );
+            .deleteDraft(submittedDraftId, keepPaths: keepPaths);
       }
 
       if (!mounted) return;

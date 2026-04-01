@@ -26,7 +26,6 @@ import '../../data/models/compose_draft.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/shortcut.dart';
 import '../../data/repositories/scene_micro_guide_repository.dart';
-import '../../state/attachments/queued_attachment_stager_provider.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/memos/compose_draft_provider.dart';
@@ -1142,16 +1141,13 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         _inlineComposeCoordinator.resetAfterSuccessfulSubmit();
         _inlineComposeActiveDraftId = null;
         if (submittedDraftId != null && submittedDraftId.isNotEmpty) {
+          final keepPaths = draft.pendingAttachments
+              .map((attachment) => attachment.filePath.trim())
+              .where((path) => path.isNotEmpty)
+              .toSet();
           await ref
               .read(composeDraftRepositoryProvider)
-              .deleteDraft(submittedDraftId);
-        }
-        for (final attachment in draft.pendingAttachments) {
-          unawaited(
-            ref
-                .read(queuedAttachmentStagerProvider)
-                .deleteManagedFile(attachment.filePath),
-          );
+              .deleteDraft(submittedDraftId, keepPaths: keepPaths);
         }
         _suppressInlineComposeDraftSave = false;
         if (mounted) {

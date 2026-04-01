@@ -201,6 +201,40 @@ void main() {
     );
     expect(await reopenedRepository.latestDraft(), isNull);
   });
+
+  test(
+    'deleteDraft preserves managed attachments kept for pending upload',
+    () async {
+      final harness = await _createHarness(support);
+      addTearDown(harness.dispose);
+
+      final attachment = await harness.createManagedAttachment(
+        uid: 'attachment-keep',
+        filename: 'keep.txt',
+        content: 'keep me for upload',
+      );
+      final managedFile = File(attachment.filePath);
+      expect(await managedFile.exists(), isTrue);
+
+      final draftId = await harness.repository.saveSnapshot(
+        snapshot: ComposeDraftSnapshot(
+          content: 'draft with upload pending',
+          visibility: 'PRIVATE',
+          attachments: <ComposeDraftAttachment>[attachment],
+        ),
+      );
+
+      expect(draftId, isNotNull);
+
+      await harness.repository.deleteDraft(
+        draftId!,
+        keepPaths: <String>{attachment.filePath},
+      );
+
+      expect(await harness.repository.listDrafts(), isEmpty);
+      expect(await managedFile.exists(), isTrue);
+    },
+  );
 }
 
 Future<_ComposeDraftRepositoryHarness> _createHarness(

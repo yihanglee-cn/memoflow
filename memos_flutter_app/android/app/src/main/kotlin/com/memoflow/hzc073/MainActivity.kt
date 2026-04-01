@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.memoflow.hzc073.audio.QuickSpectrumRecorderChannel
 import com.memoflow.hzc073.widgets.DailyReviewWidgetProvider
 import com.memoflow.hzc073.widgets.QuickInputWidgetProvider
 import com.memoflow.hzc073.widgets.StatsWidgetProvider
@@ -47,6 +48,7 @@ class MainActivity : FlutterActivity() {
     private val ringtoneRequestCode = 1001
     private val settingsChannelName = "memoflow/system_settings"
     private var settingsChannel: MethodChannel? = null
+    private var quickSpectrumRecorderChannel: QuickSpectrumRecorderChannel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         logStartup("MainActivity.onCreate")
@@ -74,6 +76,11 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        quickSpectrumRecorderChannel = QuickSpectrumRecorderChannel(
+            context = this,
+            messenger = flutterEngine.dartExecutor.binaryMessenger,
+        )
 
         val widgetChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, widgetChannelName)
         this.widgetChannel = widgetChannel
@@ -428,6 +435,12 @@ class MainActivity : FlutterActivity() {
                 },
             )
         }
+    }
+
+    override fun onDestroy() {
+        quickSpectrumRecorderChannel?.dispose()
+        quickSpectrumRecorderChannel = null
+        super.onDestroy()
     }
 
     private fun parseCalendarHeatScores(raw: List<*>?): List<WidgetCalendarHeatScore> {

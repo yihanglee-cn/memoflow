@@ -128,11 +128,17 @@ class ComposeDraftRepository {
     return uid;
   }
 
-  Future<void> deleteDraft(String uid) async {
+  Future<void> deleteDraft(
+    String uid, {
+    Set<String> keepPaths = const <String>{},
+  }) async {
     final existing = await getByUidWithoutLegacyImport(uid);
     if (existing == null) return;
     await _database.deleteComposeDraft(existing.uid);
-    await _deleteAttachmentFiles(existing.snapshot.attachments);
+    await _deleteAttachmentFiles(
+      existing.snapshot.attachments,
+      keepPaths: keepPaths,
+    );
     await _syncLegacyDraftMirrorFromLatest();
   }
 

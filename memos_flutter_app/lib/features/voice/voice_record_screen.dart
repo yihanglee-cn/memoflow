@@ -6,6 +6,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:record/record.dart';
@@ -16,6 +17,9 @@ import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../i18n/strings.g.dart';
+import 'android_quick_spectrum_recorder.dart';
+import 'quick_spectrum_animator.dart';
+import 'quick_spectrum_frame.dart';
 
 class VoiceRecordResult {
   const VoiceRecordResult({
@@ -127,6 +131,7 @@ class VoiceRecordScreen extends ConsumerStatefulWidget {
     this.dragSession,
     this.mode = VoiceRecordMode.standard,
     this.recorder,
+    this.quickSpectrumRecorder,
     this.documentsDirectoryResolver,
     this.nowProvider,
     this.onComplete,
@@ -137,6 +142,7 @@ class VoiceRecordScreen extends ConsumerStatefulWidget {
   final VoiceRecordOverlayDragSession? dragSession;
   final VoiceRecordMode mode;
   final VoiceRecordRecorder? recorder;
+  final AndroidQuickSpectrumRecorder? quickSpectrumRecorder;
   final VoiceRecordDocumentsDirectoryResolver? documentsDirectoryResolver;
   final VoiceRecordNowProvider? nowProvider;
   final VoiceRecordCompletionHandler? onComplete;
@@ -219,14 +225,18 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
   static const Duration _standardAmplitudeInterval = Duration(
     milliseconds: 120,
   );
-  static const Duration _quickAmplitudeInterval = Duration(milliseconds: 50);
-  static const double _quickWaveformMaxAmplitudeFactor = 0.44;
-  static const double _quickNoiseFloorDb = -42.0;
-  static const double _quickVoiceActivityGate = 0.24;
+  static const Duration _quickAmplitudeInterval = Duration(milliseconds: 36);
+  static const double _quickWaveformMaxAmplitudeFactor = 0.56;
+  static const double _quickWaveformMinBarHalfHeight = 4.0;
+  static const double _quickWaveformResponseExponent = 1.2;
+  static const double _quickNoiseFloorDb = -50.0;
+  static const double _quickVoiceActivityGate = 0.22;
   static const double _quickSilenceGate = 0.12;
-  static const double _quickAmplitudeGamma = 0.65;
-  static const double _quickSmoothingRetain = 0.45;
-  static const double _quickPeakDecay = 0.88;
+  static const double _quickSpectrumDisplayGate = 0.18;
+  static const double _quickAmplitudeGamma = 0.95;
+  static const double _quickSmoothingRetain = 0.24;
+  static const double _quickPeakDecay = 0.82;
+  static const double _quickVisualizerRawBlend = 0.72;
   static const double _defaultHorizontalQuickActionThreshold = 72.0;
   static const double _defaultVerticalQuickActionThreshold = 68.0;
   static const double _compactHorizontalQuickActionThreshold = 56.0;
@@ -241,13 +251,23 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
 
   late final VoiceRecordRecorder _recorder =
       widget.recorder ?? AudioRecorderVoiceRecordRecorder();
+  late final AndroidQuickSpectrumRecorder? _quickSpectrumRecorder =
+      widget.mode == VoiceRecordMode.quickFabCompose
+      ? (widget.quickSpectrumRecorder ??
+            (Platform.isAndroid ? AndroidQuickSpectrumRecorder() : null))
+      : null;
   final _filenameFmt = DateFormat('yyyyMMdd_HHmmss');
   final _stopwatch = Stopwatch();
+  final QuickSpectrumAnimator _quickSpectrumAnimator = QuickSpectrumAnimator(
+    barCount: QuickSpectrumFrame.barCount,
+  );
 
   late final AnimationController _blink;
   late final Animation<double> _blinkOpacity;
+  late final Ticker _spectrumTicker;
   Timer? _ticker;
   StreamSubscription<Amplitude>? _amplitudeSub;
+  StreamSubscription<QuickSpectrumFrame>? _quickSpectrumFrameSub;
 
   Duration _elapsed = Duration.zero;
   String? _filePath;
@@ -257,6 +277,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
   double _ampLevel = 0.0;
   double _ampPeak = 0.0;
   bool _voiceActive = false;
+  Duration? _lastSpectrumTickElapsed;
   final List<double> _visualizerSamples = List<double>.filled(
     _visualizerHistoryLength,
     0.0,
@@ -271,6 +292,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
 
   bool get _isQuickFabComposeMode =>
       widget.mode == VoiceRecordMode.quickFabCompose;
+  bool get _usesNativeQuickSpectrum => _quickSpectrumRecorder != null;
   bool get _supportsDraftQuickAction => !_isQuickFabComposeMode;
 
   void _finish([VoiceRecordResult? result]) {
@@ -294,6 +316,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
       begin: 1.0,
       end: 0.3,
     ).animate(CurvedAnimation(parent: _blink, curve: Curves.easeInOut));
+    _spectrumTicker = createTicker(_handleSpectrumTick);
     if (widget.autoStart) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -317,8 +340,13 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     _detachDragSessionListener(widget.dragSession);
     _ticker?.cancel();
     _amplitudeSub?.cancel();
+    _quickSpectrumFrameSub?.cancel();
+    _spectrumTicker.dispose();
     _stopwatch.stop();
     _blink.dispose();
+    if (widget.quickSpectrumRecorder == null) {
+      _quickSpectrumRecorder?.dispose();
+    }
     _recorder.dispose();
     super.dispose();
   }
@@ -366,6 +394,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
       ..reset();
     _stopMeter();
     _resetVisualizer();
+    _resetSpectrum(hard: true);
     if (!mounted) return;
     setState(() {
       _recording = false;
@@ -389,6 +418,60 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
       _visualizerSamples[i] = 0.0;
     }
     _visualizerCursor = 0;
+  }
+
+  void _resetSpectrum({required bool hard}) {
+    _quickSpectrumAnimator.reset(hard: hard);
+    _lastSpectrumTickElapsed = null;
+    if (hard) {
+      _spectrumTicker.stop();
+    } else if (!_spectrumTicker.isActive) {
+      _spectrumTicker.start();
+    }
+  }
+
+  void _startSpectrumFeed() {
+    _quickSpectrumFrameSub?.cancel();
+    if (!_usesNativeQuickSpectrum) {
+      _resetSpectrum(hard: true);
+      return;
+    }
+    _resetSpectrum(hard: true);
+    _spectrumTicker.start();
+    _quickSpectrumFrameSub = _quickSpectrumRecorder!.frames.listen((frame) {
+      _quickSpectrumAnimator.setTargetBars(frame.bars);
+      _ampLevel = frame.rmsLevel;
+      _ampPeak = frame.peakLevel;
+      _voiceActive = frame.hasVoice;
+    });
+  }
+
+  void _stopSpectrumFeed({required bool hard}) {
+    _quickSpectrumFrameSub?.cancel();
+    _quickSpectrumFrameSub = null;
+    _resetSpectrum(hard: hard);
+  }
+
+  void _handleSpectrumTick(Duration elapsed) {
+    if (!_usesNativeQuickSpectrum) return;
+    final previousElapsed = _lastSpectrumTickElapsed;
+    _lastSpectrumTickElapsed = elapsed;
+    if (previousElapsed == null) return;
+
+    final deltaSeconds =
+        ((elapsed - previousElapsed).inMicroseconds /
+                Duration.microsecondsPerSecond)
+            .clamp(1 / 240, 1 / 20);
+    final changed = _quickSpectrumAnimator.tick(deltaSeconds);
+
+    if (changed && mounted) {
+      setState(() {});
+      return;
+    }
+
+    if (!_quickSpectrumAnimator.hasVisibleBars && !_recording) {
+      _spectrumTicker.stop();
+    }
   }
 
   void _pushVisualizerSample(double value) {
@@ -419,7 +502,11 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     if (_processing) return;
     if (_recording) {
       try {
-        await _recorder.cancel();
+        if (_usesNativeQuickSpectrum) {
+          await _quickSpectrumRecorder!.cancel();
+        } else {
+          await _recorder.cancel();
+        }
       } catch (_) {}
     }
     final path = _filePath;
@@ -473,7 +560,8 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     }
 
     final now = (widget.nowProvider ?? DateTime.now)();
-    final fileName = 'voice_${_filenameFmt.format(now)}.m4a';
+    final fileExtension = 'm4a';
+    final fileName = 'voice_${_filenameFmt.format(now)}.$fileExtension';
     final filePath = p.join(recordingsDir.path, fileName);
 
     setState(() {
@@ -486,7 +574,11 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     });
 
     try {
-      await _recorder.start(path: filePath);
+      if (_usesNativeQuickSpectrum) {
+        await _quickSpectrumRecorder!.start(path: filePath);
+      } else {
+        await _recorder.start(path: filePath);
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -513,6 +605,9 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
       ..start();
     _blink.repeat(reverse: true);
     _startMeter();
+    if (_usesNativeQuickSpectrum) {
+      _startSpectrumFeed();
+    }
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_recording || _paused) return;
@@ -542,7 +637,9 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     final elapsed = _stopwatch.elapsed;
     String? stoppedPath;
     try {
-      stoppedPath = await _recorder.stop();
+      stoppedPath = _usesNativeQuickSpectrum
+          ? await _quickSpectrumRecorder!.stop()
+          : await _recorder.stop();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -704,6 +801,12 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
   }
 
   void _startMeter() {
+    if (_usesNativeQuickSpectrum) {
+      _ampLevel = 0.0;
+      _ampPeak = 0.0;
+      _voiceActive = false;
+      return;
+    }
     _amplitudeSub?.cancel();
     _amplitudeSub = _recorder
         .onAmplitudeChanged(
@@ -730,11 +833,20 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
           final peak = math.max(_ampPeak * peakDecay, smoothed);
           final nextLevel = smoothed < silenceGate ? 0.0 : smoothed;
           final nextPeak = peak < silenceGate ? 0.0 : peak;
-          final hasVoice = nextLevel > 0.0;
+          final hasVoice = quickMode
+              ? nextLevel >= _quickSpectrumDisplayGate
+              : nextLevel > 0.0;
           final visualLevel = hasVoice ? nextLevel : 0.0;
           final visualPeak = hasVoice ? nextPeak : 0.0;
+          final visualSample = hasVoice
+              ? quickMode
+                    ? (gated * _quickVisualizerRawBlend +
+                              nextLevel * (1.0 - _quickVisualizerRawBlend))
+                          .clamp(0.0, 1.0)
+                    : visualLevel
+              : 0.0;
           if (mounted) {
-            _pushVisualizerSample(visualLevel);
+            _pushVisualizerSample(visualSample);
             setState(() {
               _ampLevel = visualLevel;
               _ampPeak = visualPeak;
@@ -751,6 +863,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     _ampPeak = 0.0;
     _voiceActive = false;
     _resetVisualizer();
+    _stopSpectrumFeed(hard: !_usesNativeQuickSpectrum);
   }
 
   Future<void> _saveAndReturn() async {
@@ -2102,12 +2215,18 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
     required double peak,
     required bool showVoiceBars,
   }) {
-    if (_isQuickFabComposeMode) {
-      final waveformColor = const Color(0xFF22C55E);
-      final baselineColor = isDark
-          ? Colors.white.withValues(alpha: 0.16)
-          : MemoFlowPalette.textLight.withValues(alpha: 0.14);
-      final samples = _visualizerHistory();
+    final samples = _visualizerHistory();
+    final silenceGate = _isQuickFabComposeMode
+        ? _quickSilenceGate
+        : _silenceGate;
+
+    if (_usesNativeQuickSpectrum) {
+      const spectrumBarColor = Color(0xFF8DB7F7);
+      final baselineColor = spectrumBarColor.withValues(alpha: 0.16);
+      final guideColor = Colors.white.withValues(alpha: 0.22);
+      final guideStrength =
+          (showVoiceBars ? math.max(level, peak) : peak * 0.38).clamp(0.0, 1.0);
+
       return LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth.isFinite
@@ -2117,313 +2236,374 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
               ? constraints.maxHeight
               : 70.0;
           return CustomPaint(
-            key: const ValueKey('voice_record_quick_waveform'),
+            key: const ValueKey('voice_record_quick_spectrum'),
             size: Size(width, height),
-            painter: _QuickOscilloscopePainter(
-              samples: samples,
-              lineColor: waveformColor,
+            painter: _AudioSpectrumPainter(
+              bars: _quickSpectrumAnimator.displayBars,
+              barColor: spectrumBarColor,
               baselineColor: baselineColor,
-              silenceGate: _silenceGate,
-              maxAmplitudeFactor: _quickWaveformMaxAmplitudeFactor,
+              guideColor: guideColor,
+              minBarHeight: 1.2,
+              maxBarHeightFactor: 0.86,
+              guideStrength: guideStrength,
             ),
           );
         },
       );
     }
 
-    final leftBars = isDark
-        ? const [32.0, 48.0, 80.0, 56.0, 112.0]
-        : const [24.0, 48.0, 80.0, 32.0, 56.0, 128.0, 40.0, 64.0];
-    final centerBars = isDark
-        ? const [144.0, 192.0, 128.0, 96.0]
-        : const [96.0, 160.0, 112.0, 192.0, 80.0];
-    final rightBars = isDark
-        ? const [16.0, 16.0, 16.0, 16.0, 16.0]
-        : const [16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0];
+    final waveformColor = isDark
+        ? const Color(0xFFF4F2EE)
+        : MemoFlowPalette.textLight.withValues(alpha: 0.92);
+    final baselineColor = isDark
+        ? Colors.white.withValues(alpha: 0.22)
+        : MemoFlowPalette.textLight.withValues(alpha: 0.18);
+    final playheadColor = const Color(0xFFC8D27C);
+    final playheadStrength =
+        (showVoiceBars ? math.max(level, peak) : peak * 0.4).clamp(0.0, 1.0);
+    final maxAmplitudeFactor = _isQuickFabComposeMode
+        ? _quickWaveformMaxAmplitudeFactor
+        : 0.42;
+    final minBarHalfHeight = _isQuickFabComposeMode
+        ? _quickWaveformMinBarHalfHeight
+        : 7.0;
+    final responseCurve = _isQuickFabComposeMode
+        ? Curves.linear
+        : Curves.easeOutCubic;
+    final responseExponent = _isQuickFabComposeMode
+        ? _quickWaveformResponseExponent
+        : 1.0;
 
-    final leftColor = isDark
-        ? const Color(0xFF8E8E8E).withValues(alpha: 0.4)
-        : MemoFlowPalette.textLight.withValues(alpha: 0.3);
-    final centerColor = isDark
-        ? const Color(0xFFD1D1D1)
-        : MemoFlowPalette.textLight;
-    final rightColor = isDark
-        ? const Color(0xFF8E8E8E).withValues(alpha: 0.2)
-        : MemoFlowPalette.textLight.withValues(alpha: 0.1);
-    final idleDashColor = isDark
-        ? const Color(0xFF8E8E8E).withValues(alpha: 0.65)
-        : MemoFlowPalette.textLight.withValues(alpha: 0.28);
-
-    Widget buildVoiceBars() {
-      double scaleFor(
-        double base,
-        double sampleLevel,
-        double minScale,
-        double maxScale,
-      ) {
-        final scale =
-            minScale + (maxScale - minScale) * sampleLevel.clamp(0.0, 1.0);
-        return math.max(4.0, base * scale);
-      }
-
-      final bars = <Widget>[];
-      final totalBars = leftBars.length + centerBars.length + rightBars.length;
-      var sampleIndex = 0;
-      double nextSample() {
-        final value = _visualizerSampleAt(sampleIndex, totalBars);
-        sampleIndex += 1;
-        return value;
-      }
-
-      void addBars(
-        List<double> heights,
-        Color color,
-        double minScale,
-        double maxScale,
-      ) {
-        for (final h in heights) {
-          final sample = nextSample();
-          final scaled = scaleFor(h, sample, minScale, maxScale);
-          bars.add(_buildWaveBar(height: scaled, color: color));
-          bars.add(const SizedBox(width: 4));
-        }
-      }
-
-      addBars(leftBars, leftColor, 0.25, 0.95);
-      addBars(centerBars, centerColor, 0.35, 1.15);
-      addBars(rightBars, rightColor, 0.2, 0.7);
-
-      if (bars.isNotEmpty) {
-        bars.removeLast();
-      }
-      return Row(mainAxisSize: MainAxisSize.min, children: bars);
-    }
-
-    Widget buildIdleDashes() {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          const dashWidth = 2.0;
-          const dashHeight = 12.0;
-          const dashGap = 4.0;
-          final maxWidth = constraints.maxWidth.isFinite
-              ? constraints.maxWidth
-              : 260.0;
-          final dashCount = math.max(
-            16,
-            (maxWidth / (dashWidth + dashGap)).floor(),
-          );
-          final dashes = <Widget>[];
-          for (var i = 0; i < dashCount; i++) {
-            dashes.add(
-              Container(
-                width: dashWidth,
-                height: dashHeight,
-                decoration: BoxDecoration(
-                  color: idleDashColor,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            );
-            if (i != dashCount - 1) {
-              dashes.add(const SizedBox(width: dashGap));
-            }
-          }
-          return Row(mainAxisSize: MainAxisSize.min, children: dashes);
-        },
-      );
-    }
-
-    final lineColor = const Color(0xFF22C55E);
-    final lineHeight = 80.0 + 140.0 * math.max(level, peak);
-    final line = SizedBox(
-      width: 2,
-      height: lineHeight,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: isDark ? lineColor : lineColor.withValues(alpha: 0.8),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : 260.0;
+        final height = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 70.0;
+        return CustomPaint(
+          key: ValueKey(
+            _isQuickFabComposeMode
+                ? 'voice_record_quick_waveform'
+                : 'voice_record_standard_waveform',
           ),
-          Positioned(
-            top: -4,
-            left: -3,
-            child: Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: lineColor,
-                shape: BoxShape.circle,
-                boxShadow: isDark
-                    ? [
-                        BoxShadow(
-                          blurRadius: 8,
-                          color: lineColor.withValues(alpha: 0.6),
-                        ),
-                      ]
-                    : null,
-              ),
-            ),
+          size: Size(width, height),
+          painter: _CenteredBarWaveformPainter(
+            samples: samples,
+            barColor: waveformColor,
+            baselineColor: baselineColor,
+            playheadColor: playheadColor,
+            silenceGate: silenceGate,
+            maxAmplitudeFactor: maxAmplitudeFactor,
+            minBarHalfHeight: minBarHalfHeight,
+            playheadStrength: playheadStrength,
+            responseCurve: responseCurve,
+            responseExponent: responseExponent,
           ),
-        ],
-      ),
-    );
-
-    return KeyedSubtree(
-      key: const ValueKey('voice_record_standard_waveform'),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [showVoiceBars ? buildVoiceBars() : buildIdleDashes(), line],
-      ),
-    );
-  }
-
-  Widget _buildWaveBar({required double height, required Color color}) {
-    return Container(
-      width: 4,
-      height: height,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(999),
-      ),
+        );
+      },
     );
   }
 }
 
-class _QuickOscilloscopePainter extends CustomPainter {
-  const _QuickOscilloscopePainter({
+class _CenteredBarWaveformPainter extends CustomPainter {
+  const _CenteredBarWaveformPainter({
     required this.samples,
-    required this.lineColor,
+    required this.barColor,
     required this.baselineColor,
+    required this.playheadColor,
     required this.silenceGate,
     required this.maxAmplitudeFactor,
+    required this.minBarHalfHeight,
+    required this.playheadStrength,
+    required this.responseCurve,
+    required this.responseExponent,
   });
 
   final List<double> samples;
-  final Color lineColor;
+  final Color barColor;
   final Color baselineColor;
+  final Color playheadColor;
   final double silenceGate;
   final double maxAmplitudeFactor;
+  final double minBarHalfHeight;
+  final double playheadStrength;
+  final Curve responseCurve;
+  final double responseExponent;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
 
     final baselineY = size.height / 2;
-    final baselinePaint = Paint()
-      ..color = baselineColor
-      ..strokeWidth = 1.0
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(
-      Offset(0, baselineY),
-      Offset(size.width, baselineY),
-      baselinePaint,
+    _drawDashedBaseline(
+      canvas: canvas,
+      width: size.width,
+      baselineY: baselineY,
     );
-
-    if (samples.isEmpty) return;
-
-    final path = _buildWavePath(
-      samples: samples,
-      size: size,
-      silenceGate: silenceGate,
-      maxAmplitudeFactor: maxAmplitudeFactor,
-    );
-
-    final glowPaint = Paint()
-      ..color = lineColor.withValues(alpha: 0.18)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.0
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final linePaint = Paint()
-      ..color = lineColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    canvas.drawPath(path, glowPaint);
-    canvas.drawPath(path, linePaint);
+    _drawWaveformBars(canvas: canvas, size: size, baselineY: baselineY);
+    _drawPlayhead(canvas: canvas, size: size);
   }
 
   @override
-  bool shouldRepaint(covariant _QuickOscilloscopePainter oldDelegate) {
+  bool shouldRepaint(covariant _CenteredBarWaveformPainter oldDelegate) {
     return !listEquals(oldDelegate.samples, samples) ||
-        oldDelegate.lineColor != lineColor ||
+        oldDelegate.barColor != barColor ||
         oldDelegate.baselineColor != baselineColor ||
+        oldDelegate.playheadColor != playheadColor ||
         oldDelegate.silenceGate != silenceGate ||
-        oldDelegate.maxAmplitudeFactor != maxAmplitudeFactor;
-  }
-}
-
-Path _buildWavePath({
-  required List<double> samples,
-  required Size size,
-  required double silenceGate,
-  required double maxAmplitudeFactor,
-}) {
-  final points = _buildOscilloscopePoints(
-    samples: samples,
-    size: size,
-    silenceGate: silenceGate,
-    maxAmplitudeFactor: maxAmplitudeFactor,
-  );
-  final path = Path();
-  if (points.isEmpty) {
-    return path;
-  }
-  if (points.length == 1) {
-    path.moveTo(points.first.dx, points.first.dy);
-    return path;
+        oldDelegate.maxAmplitudeFactor != maxAmplitudeFactor ||
+        oldDelegate.minBarHalfHeight != minBarHalfHeight ||
+        oldDelegate.playheadStrength != playheadStrength ||
+        oldDelegate.responseCurve != responseCurve ||
+        oldDelegate.responseExponent != responseExponent;
   }
 
-  path.moveTo(points.first.dx, points.first.dy);
-  for (var i = 1; i < points.length - 1; i++) {
-    final current = points[i];
-    final next = points[i + 1];
-    final midPoint = Offset(
-      (current.dx + next.dx) / 2,
-      (current.dy + next.dy) / 2,
-    );
-    path.quadraticBezierTo(current.dx, current.dy, midPoint.dx, midPoint.dy);
-  }
-  path.lineTo(points.last.dx, points.last.dy);
-  return path;
-}
-
-List<Offset> _buildOscilloscopePoints({
-  required List<double> samples,
-  required Size size,
-  required double silenceGate,
-  required double maxAmplitudeFactor,
-}) {
-  if (samples.isEmpty || size.isEmpty) {
-    return const <Offset>[];
-  }
-
-  final baselineY = size.height / 2;
-  final maxAmplitude = size.height * maxAmplitudeFactor;
-  final dxStep = samples.length == 1 ? 0.0 : size.width / (samples.length - 1);
-
-  double smoothedSampleAt(int index) {
-    final prev = samples[index == 0 ? index : index - 1];
-    final current = samples[index];
-    final next = samples[index == samples.length - 1 ? index : index + 1];
-    final averaged = (prev + current * 2 + next) / 4;
-    if (averaged < silenceGate) {
-      return 0.0;
+  void _drawDashedBaseline({
+    required Canvas canvas,
+    required double width,
+    required double baselineY,
+  }) {
+    final dashPaint = Paint()
+      ..color = baselineColor
+      ..strokeWidth = 3.0
+      ..strokeCap = StrokeCap.round;
+    const dashWidth = 4.5;
+    const gap = 6.0;
+    for (double x = 0.0; x < width; x += dashWidth + gap) {
+      final endX = math.min(width, x + dashWidth);
+      canvas.drawLine(Offset(x, baselineY), Offset(endX, baselineY), dashPaint);
     }
-    return Curves.easeOut.transform(averaged.clamp(0.0, 1.0));
   }
 
-  return List<Offset>.generate(samples.length, (index) {
-    final sample = smoothedSampleAt(index);
-    final direction = index.isEven ? -1.0 : 1.0;
-    final y = baselineY + direction * maxAmplitude * sample;
-    return Offset(dxStep * index, y);
+  void _drawWaveformBars({
+    required Canvas canvas,
+    required Size size,
+    required double baselineY,
+  }) {
+    if (samples.isEmpty) return;
+
+    final barWidth = size.width < 240 ? 3.0 : 3.4;
+    final gap = size.width < 240 ? 4.0 : 4.8;
+    final barCount = math.max(
+      18,
+      ((size.width + gap) / (barWidth + gap)).floor(),
+    );
+    final resampled = _resampleWaveformSamples(
+      samples: samples,
+      count: barCount,
+      silenceGate: silenceGate,
+      responseCurve: responseCurve,
+      responseExponent: responseExponent,
+    );
+    if (resampled.isEmpty) return;
+
+    final spacing = size.width / resampled.length;
+    final maxBarHalfHeight = math.max(
+      16.0,
+      math.min(size.height * maxAmplitudeFactor, baselineY - 6.0),
+    );
+    final shadowPaint = Paint()
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = barWidth + 1.8;
+    final barPaint = Paint()
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = barWidth;
+
+    for (var index = 0; index < resampled.length; index++) {
+      final sample = resampled[index];
+      if (sample <= 0.0) continue;
+
+      final positionRatio = ((index + 0.5) / resampled.length - 0.5).abs() * 2;
+      final edgeFade = 0.78 + (1.0 - positionRatio) * 0.22;
+      final halfHeight =
+          minBarHalfHeight + (maxBarHalfHeight - minBarHalfHeight) * sample;
+      final x = spacing * index + spacing / 2;
+      final top = math.max(4.0, baselineY - halfHeight);
+      final bottom = math.min(size.height - 4.0, baselineY + halfHeight);
+
+      shadowPaint.color = barColor.withValues(
+        alpha: (0.06 + sample * 0.08) * edgeFade,
+      );
+      barPaint.color = barColor.withValues(
+        alpha: (0.84 + sample * 0.16) * edgeFade,
+      );
+
+      canvas.drawLine(Offset(x, top), Offset(x, bottom), shadowPaint);
+      canvas.drawLine(Offset(x, top), Offset(x, bottom), barPaint);
+    }
+  }
+
+  void _drawPlayhead({required Canvas canvas, required Size size}) {
+    final centerX = size.width / 2;
+    final glowPaint = Paint()
+      ..color = playheadColor.withValues(
+        alpha: 0.16 + (playheadStrength * 0.14),
+      )
+      ..strokeWidth = 4.0
+      ..strokeCap = StrokeCap.round;
+    final linePaint = Paint()
+      ..color = playheadColor.withValues(
+        alpha: 0.72 + (playheadStrength * 0.22),
+      )
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(
+      Offset(centerX, 2.0),
+      Offset(centerX, size.height - 2.0),
+      glowPaint,
+    );
+    canvas.drawLine(
+      Offset(centerX, 2.0),
+      Offset(centerX, size.height - 2.0),
+      linePaint,
+    );
+  }
+}
+
+class _AudioSpectrumPainter extends CustomPainter {
+  _AudioSpectrumPainter({
+    required List<double> bars,
+    required this.barColor,
+    required this.baselineColor,
+    required this.guideColor,
+    required this.minBarHeight,
+    required this.maxBarHeightFactor,
+    required this.guideStrength,
+  }) : bars = List<double>.unmodifiable(bars);
+
+  final List<double> bars;
+  final Color barColor;
+  final Color baselineColor;
+  final Color guideColor;
+  final double minBarHeight;
+  final double maxBarHeightFactor;
+  final double guideStrength;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || bars.isEmpty) return;
+
+    final baselineY = size.height - 2.0;
+    _drawBaseline(canvas: canvas, size: size, baselineY: baselineY);
+    _drawBars(canvas: canvas, size: size, baselineY: baselineY);
+    _drawCenterGuide(canvas: canvas, size: size, baselineY: baselineY);
+  }
+
+  @override
+  bool shouldRepaint(covariant _AudioSpectrumPainter oldDelegate) {
+    return !listEquals(oldDelegate.bars, bars) ||
+        oldDelegate.barColor != barColor ||
+        oldDelegate.baselineColor != baselineColor ||
+        oldDelegate.guideColor != guideColor ||
+        oldDelegate.minBarHeight != minBarHeight ||
+        oldDelegate.maxBarHeightFactor != maxBarHeightFactor ||
+        oldDelegate.guideStrength != guideStrength;
+  }
+
+  void _drawBaseline({
+    required Canvas canvas,
+    required Size size,
+    required double baselineY,
+  }) {
+    final paint = Paint()
+      ..color = baselineColor
+      ..strokeWidth = 1.0
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(0, baselineY), Offset(size.width, baselineY), paint);
+  }
+
+  void _drawBars({
+    required Canvas canvas,
+    required Size size,
+    required double baselineY,
+  }) {
+    final count = bars.length;
+    if (count == 0) return;
+
+    final gap = size.width < 260 ? 1.8 : 2.2;
+    final totalGapWidth = gap * (count - 1);
+    final barWidth = ((size.width - totalGapWidth) / count).clamp(1.6, 4.0);
+    final totalBarsWidth = count * barWidth + totalGapWidth;
+    final startX = (size.width - totalBarsWidth) / 2;
+    final maxBarHeight = math.max(
+      14.0,
+      math.min(size.height * maxBarHeightFactor, baselineY - 6.0),
+    );
+    final radius = Radius.circular(barWidth * 0.45);
+    final paint = Paint()..style = PaintingStyle.fill;
+
+    for (var index = 0; index < count; index++) {
+      final value = bars[index].clamp(0.0, 1.0);
+      final height = minBarHeight + (maxBarHeight - minBarHeight) * value;
+      final left = startX + index * (barWidth + gap);
+      final top = baselineY - height;
+      paint.color = barColor.withValues(alpha: 0.24 + value * 0.66);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(left, top, barWidth, height),
+          radius,
+        ),
+        paint,
+      );
+    }
+  }
+
+  void _drawCenterGuide({
+    required Canvas canvas,
+    required Size size,
+    required double baselineY,
+  }) {
+    final paint = Paint()
+      ..color = guideColor.withValues(alpha: 0.14 + guideStrength * 0.18)
+      ..strokeWidth = 1.0
+      ..strokeCap = StrokeCap.round;
+    final centerX = size.width / 2;
+    canvas.drawLine(
+      Offset(centerX, 1.0),
+      Offset(centerX, baselineY - 4),
+      paint,
+    );
+  }
+}
+
+List<double> _resampleWaveformSamples({
+  required List<double> samples,
+  required int count,
+  required double silenceGate,
+  required Curve responseCurve,
+  required double responseExponent,
+}) {
+  if (samples.isEmpty || count <= 0) {
+    return const <double>[];
+  }
+
+  return List<double>.generate(count, (index) {
+    final start = index * samples.length / count;
+    final end = (index + 1) * samples.length / count;
+    final from = start.floor().clamp(0, samples.length - 1);
+    final to = math.max(from + 1, end.ceil()).clamp(1, samples.length);
+
+    double sum = 0.0;
+    double peak = 0.0;
+    var sampleCount = 0;
+    for (var i = from; i < to; i++) {
+      final sample = samples[i].clamp(0.0, 1.0);
+      sum += sample;
+      peak = math.max(peak, sample);
+      sampleCount += 1;
+    }
+
+    if (sampleCount == 0) return 0.0;
+    final average = sum / sampleCount;
+    final blended = average * 0.55 + peak * 0.45;
+    if (blended < silenceGate) return 0.0;
+    final curved = responseCurve.transform(blended.clamp(0.0, 1.0));
+    if (responseExponent == 1.0) {
+      return curved;
+    }
+    return math.pow(curved, responseExponent).toDouble().clamp(0.0, 1.0);
   }, growable: false);
 }
