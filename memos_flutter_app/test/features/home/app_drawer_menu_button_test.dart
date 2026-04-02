@@ -18,12 +18,16 @@ void main() {
   Future<void> pumpButton(
     WidgetTester tester, {
     required int unreadCount,
+    required int pendingCount,
     required int attentionCount,
   }) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           unreadNotificationCountProvider.overrideWith((ref) => unreadCount),
+          syncQueuePendingCountProvider.overrideWith(
+            (ref) => Stream<int>.value(pendingCount),
+          ),
           syncQueueAttentionCountProvider.overrideWith(
             (ref) => Stream<int>.value(attentionCount),
           ),
@@ -53,20 +57,46 @@ void main() {
   }
 
   testWidgets('hides badge when no unread or attention items', (tester) async {
-    await pumpButton(tester, unreadCount: 0, attentionCount: 0);
+    await pumpButton(
+      tester,
+      unreadCount: 0,
+      pendingCount: 0,
+      attentionCount: 0,
+    );
 
     expect(find.byKey(const ValueKey('drawer-menu-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('drawer-menu-badge')), findsNothing);
   });
 
   testWidgets('shows badge when unread notifications exist', (tester) async {
-    await pumpButton(tester, unreadCount: 2, attentionCount: 0);
+    await pumpButton(
+      tester,
+      unreadCount: 2,
+      pendingCount: 0,
+      attentionCount: 0,
+    );
+
+    expect(find.byKey(const ValueKey('drawer-menu-badge')), findsOneWidget);
+  });
+
+  testWidgets('shows badge when pending sync items exist', (tester) async {
+    await pumpButton(
+      tester,
+      unreadCount: 0,
+      pendingCount: 1,
+      attentionCount: 0,
+    );
 
     expect(find.byKey(const ValueKey('drawer-menu-badge')), findsOneWidget);
   });
 
   testWidgets('shows badge when attention items exist', (tester) async {
-    await pumpButton(tester, unreadCount: 0, attentionCount: 1);
+    await pumpButton(
+      tester,
+      unreadCount: 0,
+      pendingCount: 0,
+      attentionCount: 1,
+    );
 
     expect(find.byKey(const ValueKey('drawer-menu-badge')), findsOneWidget);
   });
@@ -74,13 +104,23 @@ void main() {
   testWidgets('still renders a single badge when both signals exist', (
     tester,
   ) async {
-    await pumpButton(tester, unreadCount: 3, attentionCount: 4);
+    await pumpButton(
+      tester,
+      unreadCount: 3,
+      pendingCount: 2,
+      attentionCount: 4,
+    );
 
     expect(find.byKey(const ValueKey('drawer-menu-badge')), findsOneWidget);
   });
 
   testWidgets('opens the scaffold drawer when tapped', (tester) async {
-    await pumpButton(tester, unreadCount: 0, attentionCount: 0);
+    await pumpButton(
+      tester,
+      unreadCount: 0,
+      pendingCount: 0,
+      attentionCount: 0,
+    );
 
     expect(find.text('drawer content'), findsNothing);
 

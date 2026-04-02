@@ -21,9 +21,12 @@ class AppDrawerMenuButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final unreadNotificationCount = ref.watch(unreadNotificationCountProvider);
+    final pendingCountAsync = ref.watch(syncQueuePendingCountProvider);
+    final pendingCount = pendingCountAsync.valueOrNull ?? 0;
     final attentionCountAsync = ref.watch(syncQueueAttentionCountProvider);
     final attentionCount = attentionCountAsync.valueOrNull ?? 0;
-    final showBadge = unreadNotificationCount > 0 || attentionCount > 0;
+    final showBadge =
+        unreadNotificationCount > 0 || pendingCount > 0 || attentionCount > 0;
 
     return IconButton(
       key: const ValueKey('drawer-menu-button'),
