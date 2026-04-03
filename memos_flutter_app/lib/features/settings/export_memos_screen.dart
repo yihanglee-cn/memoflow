@@ -14,7 +14,10 @@ import 'package:saf_stream/saf_stream.dart';
 import '../../core/attachment_url.dart';
 import '../../core/app_localization.dart';
 import '../../core/memoflow_palette.dart';
+import '../../core/memo_relations.dart';
 import '../../core/top_toast.dart';
+import '../../data/local_library/local_library_markdown.dart';
+import '../../data/local_library/local_library_memo_sidecar.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../i18n/strings.g.dart';
@@ -88,23 +91,6 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
         .padRight(8, '_')
         .substring(0, 8);
     return '${ts}_$safeUid.md';
-  }
-
-  String _memoMarkdown(LocalMemo memo) {
-    final tags = memo.tags.isEmpty ? '' : memo.tags.map((t) => '#$t').join(' ');
-    final header = <String>[
-      '---',
-      'uid: ${memo.uid}',
-      'created: ${memo.createTime.toIso8601String()}',
-      'updated: ${memo.updateTime.toIso8601String()}',
-      'visibility: ${memo.visibility}',
-      'pinned: ${memo.pinned}',
-      if (memo.state.isNotEmpty) 'state: ${memo.state}',
-      if (tags.isNotEmpty) 'tags: $tags',
-      '---',
-      '',
-    ].join('\n');
-    return '$header${memo.content.trimRight()}\n';
   }
 
   String _sanitizePathSegment(String raw, {String fallback = 'attachment'}) {
@@ -222,14 +208,20 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
     try {
       final db = ref.read(databaseProvider);
       final (startSec, endSecExclusive) = _rangeToUtcSec(_range);
-      final rows = await db.listMemosForExport(
+      final rows = await db.listMemosForLosslessExport(
         startTimeSec: startSec,
         endTimeSecExclusive: endSecExclusive,
         includeArchived: _includeArchived,
       );
       final memos = rows
-          .map(LocalMemo.fromDb)
-          .where((m) => m.uid.isNotEmpty)
+          .map(
+            (row) => (
+              row: row,
+              memo: LocalMemo.fromDb(row),
+              relationsJson: row['relations_json'] as String?,
+            ),
+          )
+          .where((entry) => entry.memo.uid.isNotEmpty)
           .toList(growable: false);
       final totalMemoCount = rows.length;
       final exportedMemoCount = memos.length;
@@ -248,9 +240,10 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
       final indexBytes = utf8.encode(indexLines.join('\n'));
       archive.addFile(ArchiveFile('index.md', indexBytes.length, indexBytes));
 
-      for (final memo in memos) {
+      for (final memoEntry in memos) {
+        final memo = memoEntry.memo;
         final filename = _memoFilename(memo);
-        final content = utf8.encode(_memoMarkdown(memo));
+        final content = utf8.encode(buildLocalLibraryMarkdown(memo));
         archive.addFile(
           ArchiveFile('memos/$filename', content.length, content),
         );
@@ -259,10 +252,13 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
       var exportedAttachmentCount = 0;
       var skippedAttachmentCount = 0;
       final usedAttachmentPaths = <String>{};
+      final sidecarsByUid = <String, LocalLibraryMemoSidecar>{};
       final httpClient = Dio();
-      for (final memo in memos) {
+      for (final memoEntry in memos) {
+        final memo = memoEntry.memo;
         if (memo.attachments.isEmpty) continue;
         final memoDir = _sanitizePathSegment(memo.uid, fallback: 'memo');
+        final sidecarAttachments = <LocalLibraryAttachmentExportMeta>[];
         for (final attachment in memo.attachments) {
           try {
             final bytes = await _readAttachmentBytes(
@@ -288,11 +284,46 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
             }
             usedAttachmentPaths.add(entryPath);
             archive.addFile(ArchiveFile(entryPath, bytes.length, bytes));
+            sidecarAttachments.add(
+              LocalLibraryAttachmentExportMeta.fromAttachment(
+                attachment: attachment,
+                archiveName: p.basename(entryPath),
+              ),
+            );
             exportedAttachmentCount++;
           } catch (_) {
             skippedAttachmentCount++;
           }
         }
+
+        final relationsJson = memoEntry.relationsJson;
+        final hasRelations = relationsJson != null;
+        sidecarsByUid[memo.uid] = LocalLibraryMemoSidecar.fromMemo(
+          memo: memo,
+          hasRelations: hasRelations,
+          relations: hasRelations
+              ? decodeMemoRelationsJson(relationsJson)
+              : const [],
+          attachments: sidecarAttachments,
+        );
+      }
+
+      for (final memoEntry in memos) {
+        final memo = memoEntry.memo;
+        final sidecar =
+            sidecarsByUid[memo.uid] ??
+            LocalLibraryMemoSidecar.fromMemo(
+              memo: memo,
+              hasRelations: memoEntry.relationsJson != null,
+              relations: memoEntry.relationsJson != null
+                  ? decodeMemoRelationsJson(memoEntry.relationsJson!)
+                  : const [],
+              attachments: const [],
+            );
+        final content = utf8.encode(sidecar.encodeJson());
+        archive.addFile(
+          ArchiveFile('memos/_meta/${memo.uid}.json', content.length, content),
+        );
       }
 
       final zipData = ZipEncoder().encode(archive);

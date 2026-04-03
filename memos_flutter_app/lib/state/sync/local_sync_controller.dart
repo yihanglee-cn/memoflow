@@ -9,18 +9,21 @@ import 'package:saf_stream/saf_stream.dart';
 import '../../application/attachments/attachment_preprocessor.dart';
 import '../../application/attachments/queued_attachment_stager.dart';
 import '../../application/sync/local_library_scan_service.dart';
+import '../../core/memo_relations.dart';
 import '../../application/sync/sync_error.dart';
 import '../../application/sync/sync_types.dart';
 import '../../data/db/app_database.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
 import '../../data/local_library/local_library_markdown.dart';
+import '../../data/local_library/local_library_memo_sidecar.dart';
 import '../../data/local_library/local_library_naming.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memoflow_bridge_settings.dart';
+import '../../data/models/memo_relation.dart';
 import '../../data/repositories/memoflow_bridge_settings_repository.dart';
 import '../../data/logs/sync_status_tracker.dart';
 import 'sync_controller_base.dart';
@@ -1036,8 +1039,30 @@ class LocalSyncController extends SyncControllerBase {
       throw StateError('Memo not found: $memoUid');
     }
     final memo = LocalMemo.fromDb(row);
+    final relationsJson = await db.getMemoRelationsCacheJson(memoUid);
+    final hasRelations = relationsJson != null;
+    final relations = hasRelations
+        ? decodeMemoRelationsJson(relationsJson)
+        : const <MemoRelation>[];
+    final sidecar = LocalLibraryMemoSidecar.fromMemo(
+      memo: memo,
+      hasRelations: hasRelations,
+      relations: relations,
+      attachments: memo.attachments
+          .map(
+            (attachment) => LocalLibraryAttachmentExportMeta.fromAttachment(
+              attachment: attachment,
+              archiveName: attachmentArchiveName(attachment),
+            ),
+          )
+          .toList(growable: false),
+    );
     final markdown = buildLocalLibraryMarkdown(memo);
     await fileSystem.writeMemo(uid: memoUid, content: markdown);
+    await fileSystem.writeMemoSidecar(
+      uid: memoUid,
+      content: sidecar.encodeJson(),
+    );
     return memo;
   }
 
@@ -1047,6 +1072,7 @@ class LocalSyncController extends SyncControllerBase {
       throw const FormatException('delete_memo missing uid');
     }
     await fileSystem.deleteMemo(uid.trim());
+    await fileSystem.deleteMemoSidecar(uid.trim());
     await fileSystem.deleteAttachmentsDir(uid.trim());
     await attachmentStore.deleteMemoDir(uid.trim());
   }
@@ -1149,6 +1175,7 @@ class LocalSyncController extends SyncControllerBase {
       await fileSystem.deleteAttachment(memoUid, archiveName);
       await attachmentStore.deleteAttachment(memoUid, archiveName);
     }
+    await _writeMemoFromDb(memoUid);
   }
 
   Future<void> _upsertAttachment(String memoUid, Attachment attachment) async {
@@ -1174,6 +1201,7 @@ class LocalSyncController extends SyncControllerBase {
       memoUid,
       attachmentsJson: jsonEncode(next),
     );
+    await _writeMemoFromDb(memoUid);
   }
 
   Future<void> _copyToPrivate(String src, String destPath) async {

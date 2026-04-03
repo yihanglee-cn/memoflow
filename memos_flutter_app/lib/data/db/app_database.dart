@@ -13,7 +13,7 @@ class AppDatabase {
   AppDatabase({String dbName = 'memos_app.db'}) : _dbName = dbName;
 
   final String _dbName;
-  static const _dbVersion = 19;
+  static const _dbVersion = 20;
   static const int outboxStatePending = 0;
   static const int outboxStateRunning = 1;
   static const int outboxStateRetry = 2;
@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS memos (
   pinned INTEGER NOT NULL DEFAULT 0,
   state TEXT NOT NULL DEFAULT 'NORMAL',
   create_time INTEGER NOT NULL,
+  display_time INTEGER,
   update_time INTEGER NOT NULL,
   tags TEXT NOT NULL DEFAULT '',
   attachments_json TEXT NOT NULL DEFAULT '[]',
@@ -434,6 +435,17 @@ CREATE TABLE IF NOT EXISTS outbox (
               definition: 'quarantined_at INTEGER',
             );
             await _migrateLegacyOutboxErrors(db);
+          }
+          if (oldVersion < 20) {
+            await _ensureColumnExists(
+              db,
+              table: 'memos',
+              column: 'display_time',
+              definition: 'display_time INTEGER',
+            );
+            await db.execute(
+              'UPDATE memos SET display_time = create_time WHERE display_time IS NULL;',
+            );
           }
         },
         onOpen: (db) async {
@@ -1004,6 +1016,7 @@ WHERE id = 1;
     required bool pinned,
     required String state,
     required int createTimeSec,
+    int? displayTimeSec,
     required int updateTimeSec,
     required List<String> tags,
     required List<Map<String, dynamic>> attachments,
@@ -1038,6 +1051,7 @@ WHERE id = 1;
           'pinned': pinned ? 1 : 0,
           'state': state,
           'create_time': createTimeSec,
+          'display_time': displayTimeSec,
           'update_time': updateTimeSec,
           'tags': tagsText,
           'attachments_json': attachmentsJson,
@@ -1061,6 +1075,7 @@ WHERE id = 1;
           'pinned': pinned ? 1 : 0,
           'state': state,
           'create_time': createTimeSec,
+          'display_time': displayTimeSec,
           'update_time': updateTimeSec,
           'tags': tagsText,
           'attachments_json': attachmentsJson,
@@ -2594,11 +2609,11 @@ WHERE id = ?
       baseWhereArgs.add('% $normalizedTag %');
     }
     if (startTimeSec != null) {
-      baseWhereClauses.add('create_time >= ?');
+      baseWhereClauses.add('COALESCE(display_time, create_time) >= ?');
       baseWhereArgs.add(startTimeSec);
     }
     if (endTimeSecExclusive != null) {
-      baseWhereClauses.add('create_time < ?');
+      baseWhereClauses.add('COALESCE(display_time, create_time) < ?');
       baseWhereArgs.add(endTimeSecExclusive);
     }
 
@@ -2607,7 +2622,7 @@ WHERE id = ?
         'memos',
         where: baseWhereClauses.isEmpty ? null : baseWhereClauses.join(' AND '),
         whereArgs: baseWhereArgs.isEmpty ? null : baseWhereArgs,
-        orderBy: 'pinned DESC, create_time DESC',
+        orderBy: 'pinned DESC, COALESCE(display_time, create_time) DESC',
         limit: normalizedLimit,
       );
     }
@@ -2631,11 +2646,11 @@ WHERE id = ?
       whereArgs.add('% $normalizedTag %');
     }
     if (startTimeSec != null) {
-      whereClauses.add('m.create_time >= ?');
+      whereClauses.add('COALESCE(m.display_time, m.create_time) >= ?');
       whereArgs.add(startTimeSec);
     }
     if (endTimeSecExclusive != null) {
-      whereClauses.add('m.create_time < ?');
+      whereClauses.add('COALESCE(m.display_time, m.create_time) < ?');
       whereArgs.add(endTimeSecExclusive);
     }
     final sqlLimitClause = normalizedLimit == null ? '' : '\nLIMIT ?';
@@ -2649,7 +2664,7 @@ SELECT m.*
 FROM memos m
 JOIN memos_fts ON memos_fts.rowid = m.id
 WHERE ${whereClauses.join(' AND ')}
-ORDER BY m.pinned DESC, m.create_time DESC
+ORDER BY m.pinned DESC, COALESCE(m.display_time, m.create_time) DESC
 $sqlLimitClause;
 ''', whereArgs);
     } on DatabaseException {
@@ -2663,7 +2678,7 @@ $sqlLimitClause;
         'memos',
         where: fallbackClauses.join(' AND '),
         whereArgs: fallbackArgs,
-        orderBy: 'pinned DESC, create_time DESC',
+        orderBy: 'pinned DESC, COALESCE(display_time, create_time) DESC',
         limit: normalizedLimit,
       );
     }
@@ -2778,11 +2793,11 @@ $sqlLimitClause;
       whereClauses.add("state = 'NORMAL'");
     }
     if (startTimeSec != null) {
-      whereClauses.add('create_time >= ?');
+      whereClauses.add('COALESCE(display_time, create_time) >= ?');
       whereArgs.add(startTimeSec);
     }
     if (endTimeSecExclusive != null) {
-      whereClauses.add('create_time < ?');
+      whereClauses.add('COALESCE(display_time, create_time) < ?');
       whereArgs.add(endTimeSecExclusive);
     }
 
@@ -2790,9 +2805,43 @@ $sqlLimitClause;
       'memos',
       where: whereClauses.isEmpty ? null : whereClauses.join(' AND '),
       whereArgs: whereArgs.isEmpty ? null : whereArgs,
-      orderBy: 'create_time ASC',
+      orderBy: 'COALESCE(display_time, create_time) ASC',
       limit: 20000,
     );
+  }
+
+  Future<List<Map<String, dynamic>>> listMemosForLosslessExport({
+    int? startTimeSec,
+    int? endTimeSecExclusive,
+    bool includeArchived = false,
+  }) async {
+    final db = await this.db;
+    final whereClauses = <String>[];
+    final whereArgs = <Object?>[];
+
+    if (!includeArchived) {
+      whereClauses.add("m.state = 'NORMAL'");
+    }
+    if (startTimeSec != null) {
+      whereClauses.add('COALESCE(m.display_time, m.create_time) >= ?');
+      whereArgs.add(startTimeSec);
+    }
+    if (endTimeSecExclusive != null) {
+      whereClauses.add('COALESCE(m.display_time, m.create_time) < ?');
+      whereArgs.add(endTimeSecExclusive);
+    }
+
+    final whereClause = whereClauses.isEmpty
+        ? ''
+        : 'WHERE ${whereClauses.join(' AND ')}';
+    return db.rawQuery('''
+SELECT m.*, r.relations_json
+FROM memos m
+LEFT JOIN memo_relations_cache r ON r.memo_uid = m.uid
+$whereClause
+ORDER BY COALESCE(m.display_time, m.create_time) ASC
+LIMIT 20000;
+''', whereArgs);
   }
 
   Stream<List<Map<String, dynamic>>> watchMemos({

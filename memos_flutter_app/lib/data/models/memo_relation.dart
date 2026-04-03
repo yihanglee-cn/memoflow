@@ -1,8 +1,5 @@
 class MemoRelationMemo {
-  const MemoRelationMemo({
-    required this.name,
-    required this.snippet,
-  });
+  const MemoRelationMemo({required this.name, required this.snippet});
 
   final String name;
   final String snippet;
@@ -12,6 +9,10 @@ class MemoRelationMemo {
       name: (json['name'] as String?) ?? '',
       snippet: (json['snippet'] as String?) ?? '',
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'name': name, 'snippet': snippet};
   }
 }
 
@@ -30,11 +31,21 @@ class MemoRelation {
     final memoRaw = json['memo'];
     final relatedRaw = json['relatedMemo'] ?? json['related_memo'];
     return MemoRelation(
-      memo: memoRaw is Map ? MemoRelationMemo.fromJson(memoRaw.cast<String, dynamic>()) : const MemoRelationMemo(name: '', snippet: ''),
+      memo: memoRaw is Map
+          ? MemoRelationMemo.fromJson(memoRaw.cast<String, dynamic>())
+          : const MemoRelationMemo(name: '', snippet: ''),
       relatedMemo: relatedRaw is Map
           ? MemoRelationMemo.fromJson(relatedRaw.cast<String, dynamic>())
           : const MemoRelationMemo(name: '', snippet: ''),
       type: (json['type'] as String?) ?? '',
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'memo': memo.toJson(),
+      'relatedMemo': relatedMemo.toJson(),
+      'type': type,
+    };
   }
 }

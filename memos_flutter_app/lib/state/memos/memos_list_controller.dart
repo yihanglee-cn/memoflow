@@ -202,6 +202,15 @@ class MemosListController {
       attachments: attachments,
       pendingAttachments: attachmentPayloads,
     );
+    final cachedRelations = mergeOutgoingReferenceRelations(
+      memoUid: uid,
+      existingRelations: const [],
+      nextRelations: relations,
+    );
+    final relationCount = countReferenceRelations(
+      memoUid: uid,
+      relations: cachedRelations,
+    );
 
     await db.upsertMemo(
       uid: uid,
@@ -214,9 +223,17 @@ class MemosListController {
       tags: tags,
       attachments: localAttachments,
       location: location,
-      relationCount: 0,
+      relationCount: relationCount,
       syncState: 1,
     );
+    if (cachedRelations.isEmpty) {
+      await db.deleteMemoRelationsCache(uid);
+    } else {
+      await db.upsertMemoRelationsCache(
+        uid,
+        relationsJson: encodeMemoRelationsJson(cachedRelations),
+      );
+    }
 
     final hasAttachments = pendingAttachments.isNotEmpty;
     await enqueueCreateMemoWithAttachmentUploads(

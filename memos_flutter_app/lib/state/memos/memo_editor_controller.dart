@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/memo_relations.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_relation.dart';
@@ -123,6 +124,22 @@ class MemoEditorController {
     final syncPolicy = resolveMemoSyncMutationPolicy(
       currentLastError: existing?.lastError,
     );
+    List<MemoRelation>? cachedRelations;
+    var nextRelationCount = relationCount;
+    if (includeRelations) {
+      final existingRelationsJson = await db.getMemoRelationsCacheJson(uid);
+      cachedRelations = mergeOutgoingReferenceRelations(
+        memoUid: uid,
+        existingRelations: existingRelationsJson == null
+            ? const <MemoRelation>[]
+            : decodeMemoRelationsJson(existingRelationsJson),
+        nextRelations: relations,
+      );
+      nextRelationCount = countReferenceRelations(
+        memoUid: uid,
+        relations: cachedRelations,
+      );
+    }
 
     await db.upsertMemo(
       uid: uid,
@@ -135,10 +152,20 @@ class MemoEditorController {
       tags: tags,
       attachments: localAttachments,
       location: location,
-      relationCount: relationCount,
+      relationCount: nextRelationCount,
       syncState: syncPolicy.syncState,
       lastError: syncPolicy.lastError,
     );
+    if (includeRelations) {
+      if (cachedRelations!.isEmpty) {
+        await db.deleteMemoRelationsCache(uid);
+      } else {
+        await db.upsertMemoRelationsCache(
+          uid,
+          relationsJson: encodeMemoRelationsJson(cachedRelations),
+        );
+      }
+    }
 
     if (existing == null) {
       await enqueueCreateMemoWithAttachmentUploads(

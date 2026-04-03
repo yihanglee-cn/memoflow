@@ -17,6 +17,7 @@ class LocalMemo {
     required this.pinned,
     required this.state,
     required this.createTime,
+    this.displayTime,
     required this.updateTime,
     required this.tags,
     required this.attachments,
@@ -33,6 +34,7 @@ class LocalMemo {
   final bool pinned;
   final String state;
   final DateTime createTime;
+  final DateTime? displayTime;
   final DateTime updateTime;
   final List<String> tags;
   final List<Attachment> attachments;
@@ -40,6 +42,8 @@ class LocalMemo {
   final MemoLocation? location;
   final SyncState syncState;
   final String? lastError;
+
+  DateTime get effectiveDisplayTime => displayTime ?? createTime;
 
   factory LocalMemo.fromRemote(Memo memo) {
     return LocalMemo(
@@ -50,6 +54,7 @@ class LocalMemo {
       pinned: memo.pinned,
       state: memo.state,
       createTime: memo.createTime.toLocal(),
+      displayTime: memo.displayTime?.toLocal(),
       updateTime: memo.updateTime.toLocal(),
       tags: memo.tags,
       attachments: memo.attachments,
@@ -106,6 +111,7 @@ class LocalMemo {
         ((row['create_time'] as int?) ?? 0) * 1000,
         isUtc: true,
       ).toLocal(),
+      displayTime: _parseOptionalTime(row['display_time']),
       updateTime: DateTime.fromMillisecondsSinceEpoch(
         ((row['update_time'] as int?) ?? 0) * 1000,
         isUtc: true,
@@ -144,5 +150,22 @@ class LocalMemo {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value.trim());
     return null;
+  }
+
+  static DateTime? _parseOptionalTime(dynamic value) {
+    if (value == null) return null;
+    int? seconds;
+    if (value is int) {
+      seconds = value;
+    } else if (value is num) {
+      seconds = value.toInt();
+    } else if (value is String) {
+      seconds = int.tryParse(value.trim());
+    }
+    if (seconds == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(
+      seconds * 1000,
+      isUtc: true,
+    ).toLocal();
   }
 }

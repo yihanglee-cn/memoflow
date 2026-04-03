@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/memo_relations.dart';
 import '../sync/sync_request.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
@@ -112,6 +113,15 @@ class QuickInputService {
         .where((relation) => relation.isNotEmpty)
         .toList(growable: false);
     final hasAttachments = attachments.isNotEmpty;
+    final cachedRelations = mergeOutgoingReferenceRelations(
+      memoUid: uid,
+      existingRelations: const [],
+      nextRelations: normalizedRelations,
+    );
+    final relationCount = countReferenceRelations(
+      memoUid: uid,
+      relations: cachedRelations,
+    );
 
     await db.upsertMemo(
       uid: uid,
@@ -124,9 +134,17 @@ class QuickInputService {
       tags: tags,
       attachments: attachments,
       location: location,
-      relationCount: 0,
+      relationCount: relationCount,
       syncState: 1,
     );
+    if (cachedRelations.isEmpty) {
+      await db.deleteMemoRelationsCache(uid);
+    } else {
+      await db.upsertMemoRelationsCache(
+        uid,
+        relationsJson: encodeMemoRelationsJson(cachedRelations),
+      );
+    }
 
     await enqueueCreateMemoWithAttachmentUploads(
       read: ref.read,

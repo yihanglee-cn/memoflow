@@ -30,6 +30,7 @@ class LocalLibraryFileEntry {
 
 class LocalLibraryFileSystem {
   static const String scanManifestFilename = '.memoflow_scan_manifest.json';
+  static const String memoMetaDirRelativePath = 'memos/_meta';
 
   LocalLibraryFileSystem(this.library, {SafUtil? safUtil, SafStream? safStream})
     : _saf = safUtil ?? SafUtil(),
@@ -46,6 +47,7 @@ class LocalLibraryFileSystem {
 
   Future<void> ensureStructure() async {
     await _ensureDir(['memos']);
+    await _ensureDir(['memos', '_meta']);
     await _ensureDir(['attachments']);
   }
 
@@ -122,6 +124,21 @@ class LocalLibraryFileSystem {
     await _writeTextFile(['memos', '$uid.md'], content);
   }
 
+  Future<void> writeMemoSidecar({
+    required String uid,
+    required String content,
+  }) async {
+    await _writeTextFile(['memos', '_meta', '$uid.json'], content);
+  }
+
+  Future<String?> readMemoSidecar(String uid) async {
+    return _readTextFile(['memos', '_meta', '$uid.json']);
+  }
+
+  Future<void> deleteMemoSidecar(String uid) async {
+    await _deleteFile(['memos', '_meta', '$uid.json']);
+  }
+
   Future<void> deleteMemo(String uid) async {
     await _deleteFile(['memos', '$uid.md']);
   }
@@ -134,6 +151,44 @@ class LocalLibraryFileSystem {
 
   Future<List<LocalLibraryFileEntry>> listAttachments(String memoUid) async {
     return _listFilesInDir(['attachments', memoUid]);
+  }
+
+  Future<LocalLibraryFileEntry?> getFileEntry(String relativePath) async {
+    final segments = _normalizeSegments(relativePath);
+    if (segments.isEmpty) return null;
+    if (isSaf) {
+      final target = await _findFile(segments);
+      if (target == null) return null;
+      final leaf = await _saf.stat(target, false);
+      if (leaf == null || leaf.isDir) return null;
+      return LocalLibraryFileEntry(
+        relativePath: segments.join('/'),
+        name: leaf.name,
+        isDir: false,
+        length: leaf.length,
+        lastModified: leaf.lastModified == 0
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                leaf.lastModified,
+                isUtc: true,
+              ).toLocal(),
+        uri: leaf.uri,
+      );
+    }
+
+    final target = await _findFile(segments);
+    if (target == null) return null;
+    final file = File(target);
+    if (!file.existsSync()) return null;
+    final stat = await file.stat();
+    return LocalLibraryFileEntry(
+      relativePath: segments.join('/'),
+      name: p.basename(target),
+      isDir: false,
+      length: stat.size,
+      lastModified: stat.modified,
+      path: target,
+    );
   }
 
   Future<void> writeAttachmentFromFile({

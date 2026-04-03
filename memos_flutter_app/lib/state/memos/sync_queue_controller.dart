@@ -145,6 +145,9 @@ class SyncQueueController {
           visibility: memo.visibility,
           pinned: memo.pinned,
           createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+          displayTimeSec: memo.displayTime == null
+              ? null
+              : memo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000,
           hasAttachments: memo.attachments.isNotEmpty,
           location: memo.location,
           relations: relations,

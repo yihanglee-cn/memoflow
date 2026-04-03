@@ -1,16 +1,19 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../core/memo_relations.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../data/db/app_database.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
+import '../../data/local_library/local_library_memo_sidecar.dart';
 import '../../data/local_library/local_library_naming.dart';
 import '../../data/local_library/local_library_parser.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
+import '../../data/models/memo_location.dart';
 import 'sync_error.dart';
 import 'sync_types.dart';
 
@@ -65,7 +68,7 @@ class LocalLibraryScanService {
     );
     await fileSystem.ensureStructure();
     final memoEntries = await fileSystem.listMemos();
-    final diskMemos = <String, LocalLibraryParsedMemo>{};
+    final diskMemos = <String, _DiskMemoImportData>{};
     final diskAttachments = <String, List<Attachment>>{};
     var parsedMemoCount = 0;
     var skippedEmptyFileCount = 0;
@@ -94,8 +97,13 @@ class LocalLibraryScanService {
         skippedMissingUidCount++;
         continue;
       }
-      final attachments = await _loadDiskAttachments(uid);
-      diskMemos[uid] = parsed;
+      final sidecar = await _readMemoSidecar(uid);
+      final attachments = await _loadDiskAttachments(uid, sidecar: sidecar);
+      diskMemos[uid] = _DiskMemoImportData(
+        uid: uid,
+        parsed: parsed,
+        sidecar: sidecar,
+      );
       diskAttachments[uid] = attachments;
       parsedMemoCount++;
     }
@@ -140,7 +148,8 @@ class LocalLibraryScanService {
     if (conflictDecisions == null) {
       for (final entry in diskMemos.entries) {
         final uid = entry.key;
-        final parsed = entry.value;
+        final diskMemo = entry.value;
+        final parsed = diskMemo.parsed;
         final attachments = diskAttachments[uid] ?? const <Attachment>[];
         final row = dbByUid[uid];
         if (row == null) continue;
@@ -152,6 +161,11 @@ class LocalLibraryScanService {
           parsed: parsed,
           diskAttachments: attachments,
           mergedTags: mergedTags,
+          sidecar: diskMemo.sidecar,
+          existingRelationsJson: await _existingRelationsJsonForSidecar(
+            uid: uid,
+            sidecar: diskMemo.sidecar,
+          ),
         );
         if (!needsUpdate) continue;
 
@@ -159,9 +173,7 @@ class LocalLibraryScanService {
             localMemo.syncState != SyncState.synced ||
             pendingUids.contains(uid);
         if (!effectiveForceDisk && hasConflict) {
-          conflicts.add(
-            LocalScanConflict(memoUid: uid, isDeletion: false),
-          );
+          conflicts.add(LocalScanConflict(memoUid: uid, isDeletion: false));
         }
       }
 
@@ -198,11 +210,26 @@ class LocalLibraryScanService {
 
     for (final entry in diskMemos.entries) {
       final uid = entry.key;
-      final parsed = entry.value;
+      final diskMemo = entry.value;
+      final parsed = diskMemo.parsed;
       final attachments = diskAttachments[uid] ?? const <Attachment>[];
       final row = dbByUid[uid];
       if (row == null) {
-        await _upsertMemoFromDisk(uid, parsed, attachments, relationCount: 0);
+        await _upsertMemoFromDisk(
+          uid,
+          parsed,
+          attachments,
+          displayTime: _resolvedDisplayTimeForInsert(
+            parsed: parsed,
+            sidecar: diskMemo.sidecar,
+          ),
+          location: _resolvedLocationForInsert(sidecar: diskMemo.sidecar),
+          relationCount: _resolvedRelationCountForInsert(
+            uid: uid,
+            sidecar: diskMemo.sidecar,
+          ),
+        );
+        await _applySidecarToDb(uid: uid, sidecar: diskMemo.sidecar);
         insertedCount++;
         if (insertedSampleUids.length < 8) {
           insertedSampleUids.add(uid);
@@ -217,6 +244,11 @@ class LocalLibraryScanService {
         parsed: parsed,
         diskAttachments: attachments,
         mergedTags: mergedTags,
+        sidecar: diskMemo.sidecar,
+        existingRelationsJson: await _existingRelationsJsonForSidecar(
+          uid: uid,
+          sidecar: diskMemo.sidecar,
+        ),
       );
       if (!needsUpdate) {
         unchangedCount++;
@@ -250,8 +282,22 @@ class LocalLibraryScanService {
         uid,
         parsed,
         attachments,
-        relationCount: localMemo.relationCount,
+        displayTime: _resolvedDisplayTimeForUpdate(
+          localMemo: localMemo,
+          parsed: parsed,
+          sidecar: diskMemo.sidecar,
+        ),
+        location: _resolvedLocationForUpdate(
+          localMemo: localMemo,
+          sidecar: diskMemo.sidecar,
+        ),
+        relationCount: _resolvedRelationCountForUpdate(
+          uid: uid,
+          localMemo: localMemo,
+          sidecar: diskMemo.sidecar,
+        ),
       );
+      await _applySidecarToDb(uid: uid, sidecar: diskMemo.sidecar);
       updatedCount++;
       if (updatedSampleUids.length < 8) {
         updatedSampleUids.add(uid);
@@ -413,11 +459,18 @@ class LocalLibraryScanService {
       final path = entry.relativePath;
       currentPaths.add(path);
       final cached = previousManifest.entriesByPath[path];
+      final cachedSidecarEntry = cached == null || cached.uid.trim().isEmpty
+          ? null
+          : await fileSystem.getFileEntry(memoSidecarRelativePath(cached.uid));
       final canReuse =
           !effectiveForceDisk &&
           cached != null &&
           !cached.needsRecheck &&
-          _manifestEntryMatchesFile(cached, entry);
+          _manifestEntryMatchesFile(
+            cached,
+            entry,
+            sidecarEntry: cachedSidecarEntry,
+          );
       if (canReuse) {
         reusedByManifestCount++;
         nextManifestByPath[path] = cached;
@@ -449,12 +502,30 @@ class LocalLibraryScanService {
         continue;
       }
 
-      final attachments = await _loadDiskAttachments(uid);
+      final sidecar = await _readMemoSidecar(uid);
+      final sidecarEntry = await fileSystem.getFileEntry(
+        memoSidecarRelativePath(uid),
+      );
+      final attachments = await _loadDiskAttachments(uid, sidecar: sidecar);
       final row = await db.getMemoByUid(uid);
       var shouldPersistCurrentManifest = true;
 
       if (row == null) {
-        await _upsertMemoFromDisk(uid, parsed, attachments, relationCount: 0);
+        await _upsertMemoFromDisk(
+          uid,
+          parsed,
+          attachments,
+          displayTime: _resolvedDisplayTimeForInsert(
+            parsed: parsed,
+            sidecar: sidecar,
+          ),
+          location: _resolvedLocationForInsert(sidecar: sidecar),
+          relationCount: _resolvedRelationCountForInsert(
+            uid: uid,
+            sidecar: sidecar,
+          ),
+        );
+        await _applySidecarToDb(uid: uid, sidecar: sidecar);
         insertedCount++;
         if (insertedSampleUids.length < 8) {
           insertedSampleUids.add(uid);
@@ -467,6 +538,11 @@ class LocalLibraryScanService {
           parsed: parsed,
           diskAttachments: attachments,
           mergedTags: mergedTags,
+          sidecar: sidecar,
+          existingRelationsJson: await _existingRelationsJsonForSidecar(
+            uid: uid,
+            sidecar: sidecar,
+          ),
         );
         if (!needsUpdate) {
           unchangedCount++;
@@ -493,8 +569,22 @@ class LocalLibraryScanService {
               uid,
               parsed,
               attachments,
-              relationCount: localMemo.relationCount,
+              displayTime: _resolvedDisplayTimeForUpdate(
+                localMemo: localMemo,
+                parsed: parsed,
+                sidecar: sidecar,
+              ),
+              location: _resolvedLocationForUpdate(
+                localMemo: localMemo,
+                sidecar: sidecar,
+              ),
+              relationCount: _resolvedRelationCountForUpdate(
+                uid: uid,
+                localMemo: localMemo,
+                sidecar: sidecar,
+              ),
             );
+            await _applySidecarToDb(uid: uid, sidecar: sidecar);
             updatedCount++;
             if (updatedSampleUids.length < 8) {
               updatedSampleUids.add(uid);
@@ -508,6 +598,8 @@ class LocalLibraryScanService {
           uid: uid,
           length: entry.length,
           modifiedMs: _entryModifiedMs(entry),
+          sidecarLength: sidecarEntry?.length,
+          sidecarModifiedMs: _entryModifiedMs(sidecarEntry),
           needsRecheck: false,
         );
         nextManifestByPath[path] = manifestEntry;
@@ -650,14 +742,17 @@ class LocalLibraryScanService {
 
   bool _manifestEntryMatchesFile(
     _ScanManifestEntry manifestEntry,
-    LocalLibraryFileEntry fileEntry,
-  ) {
+    LocalLibraryFileEntry fileEntry, {
+    LocalLibraryFileEntry? sidecarEntry,
+  }) {
     return manifestEntry.length == fileEntry.length &&
-        manifestEntry.modifiedMs == _entryModifiedMs(fileEntry);
+        manifestEntry.modifiedMs == _entryModifiedMs(fileEntry) &&
+        manifestEntry.sidecarLength == sidecarEntry?.length &&
+        manifestEntry.sidecarModifiedMs == _entryModifiedMs(sidecarEntry);
   }
 
-  int? _entryModifiedMs(LocalLibraryFileEntry entry) {
-    return entry.lastModified?.toUtc().millisecondsSinceEpoch;
+  int? _entryModifiedMs(LocalLibraryFileEntry? entry) {
+    return entry?.lastModified?.toUtc().millisecondsSinceEpoch;
   }
 
   String _resolveMemoUid({
@@ -682,6 +777,8 @@ class LocalLibraryScanService {
     required LocalLibraryParsedMemo parsed,
     required List<Attachment> diskAttachments,
     required List<String> mergedTags,
+    required LocalLibraryMemoSidecar? sidecar,
+    required String? existingRelationsJson,
   }) {
     final dbUpdateSec =
         localMemo.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000;
@@ -696,6 +793,31 @@ class LocalLibraryScanService {
     if (localMemo.state != parsed.state) return true;
     if (!_listEquals(localMemo.tags, mergedTags)) return true;
     if (!_attachmentsEqual(localMemo.attachments, diskAttachments)) return true;
+    if (sidecar != null) {
+      if (sidecar.hasDisplayTime) {
+        final localDisplayTimeSec = localMemo.displayTime == null
+            ? null
+            : localMemo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000;
+        final sidecarDisplayTimeSec = sidecar.displayTime == null
+            ? null
+            : sidecar.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000;
+        if (localDisplayTimeSec != sidecarDisplayTimeSec) return true;
+      }
+      if (sidecar.hasLocation &&
+          !_locationsEqual(localMemo.location, sidecar.location)) {
+        return true;
+      }
+      if (sidecar.hasRelations) {
+        final relationCount = countReferenceRelations(
+          memoUid: localMemo.uid,
+          relations: sidecar.relations,
+        );
+        if (localMemo.relationCount != relationCount) return true;
+        final nextRelationsJson = encodeMemoRelationsJson(sidecar.relations);
+        final currentRelationsJson = (existingRelationsJson ?? '').trim();
+        if (currentRelationsJson != nextRelationsJson.trim()) return true;
+      }
+    }
     return false;
   }
 
@@ -703,6 +825,8 @@ class LocalLibraryScanService {
     String uid,
     LocalLibraryParsedMemo parsed,
     List<Attachment> attachments, {
+    required DateTime? displayTime,
+    required MemoLocation? location,
     required int relationCount,
   }) async {
     final mergedTags = _mergeTags(parsed.tags, parsed.content);
@@ -713,10 +837,13 @@ class LocalLibraryScanService {
       pinned: parsed.pinned,
       state: parsed.state,
       createTimeSec: parsed.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+      displayTimeSec: displayTime == null
+          ? null
+          : displayTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       updateTimeSec: parsed.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: mergedTags,
       attachments: attachments.map((a) => a.toJson()).toList(growable: false),
-      location: null,
+      location: location,
       relationCount: relationCount,
       syncState: 0,
       lastError: null,
@@ -761,9 +888,27 @@ class LocalLibraryScanService {
     return true;
   }
 
-  Future<List<Attachment>> _loadDiskAttachments(String memoUid) async {
+  Future<List<Attachment>> _loadDiskAttachments(
+    String memoUid, {
+    required LocalLibraryMemoSidecar? sidecar,
+  }) async {
     final entries = await fileSystem.listAttachments(memoUid);
     if (entries.isEmpty) return const <Attachment>[];
+    if (sidecar != null &&
+        sidecar.hasAttachments &&
+        sidecar.attachments.isEmpty) {
+      return const <Attachment>[];
+    }
+    final sidecarAttachments = sidecar?.hasAttachments == true
+        ? sidecar!.attachments
+        : const <LocalLibraryAttachmentExportMeta>[];
+    if (sidecarAttachments.isNotEmpty) {
+      return _loadSidecarAttachments(
+        memoUid,
+        entries,
+        sidecarAttachments: sidecarAttachments,
+      );
+    }
     final attachments = <Attachment>[];
     for (final entry in entries) {
       final uid = parseAttachmentUidFromFilename(entry.name) ?? generateUid();
@@ -792,6 +937,144 @@ class LocalLibraryScanService {
       );
     }
     return attachments;
+  }
+
+  Future<List<Attachment>> _loadSidecarAttachments(
+    String memoUid,
+    List<LocalLibraryFileEntry> entries, {
+    required List<LocalLibraryAttachmentExportMeta> sidecarAttachments,
+  }) async {
+    final entriesByName = <String, LocalLibraryFileEntry>{};
+    for (final entry in entries) {
+      entriesByName[entry.name] = entry;
+    }
+    final attachments = <Attachment>[];
+    final consumedNames = <String>{};
+    for (final meta in sidecarAttachments) {
+      final archiveName = meta.archiveName.trim();
+      if (archiveName.isEmpty) continue;
+      final entry = entriesByName[archiveName];
+      if (entry == null) continue;
+      consumedNames.add(archiveName);
+      final privatePath = await attachmentStore.resolveAttachmentPath(
+        memoUid,
+        archiveName,
+      );
+      final file = File(privatePath);
+      if (!file.existsSync() || file.lengthSync() != entry.length) {
+        await fileSystem.copyToLocal(entry, privatePath);
+      }
+      final attachmentUid = meta.uid.trim().isEmpty
+          ? (parseAttachmentUidFromFilename(entry.name) ?? generateUid())
+          : meta.uid.trim();
+      final attachmentName = meta.name.trim().isNotEmpty
+          ? meta.name.trim()
+          : 'attachments/$attachmentUid';
+      final filename = meta.filename.trim().isNotEmpty
+          ? meta.filename.trim()
+          : stripAttachmentUidPrefix(entry.name, attachmentUid);
+      attachments.add(
+        Attachment(
+          name: attachmentName,
+          filename: filename,
+          type: meta.type.trim().isNotEmpty
+              ? meta.type.trim()
+              : _guessMimeType(filename),
+          size: entry.length,
+          externalLink: Uri.file(privatePath).toString(),
+        ),
+      );
+    }
+    if (attachments.isNotEmpty) {
+      return attachments;
+    }
+    return _loadDiskAttachments(memoUid, sidecar: null);
+  }
+
+  Future<LocalLibraryMemoSidecar?> _readMemoSidecar(String memoUid) async {
+    final raw = await fileSystem.readMemoSidecar(memoUid);
+    return LocalLibraryMemoSidecar.tryParse(raw);
+  }
+
+  Future<String?> _existingRelationsJsonForSidecar({
+    required String uid,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) async {
+    if (sidecar == null || !sidecar.hasRelations) return null;
+    return db.getMemoRelationsCacheJson(uid);
+  }
+
+  Future<void> _applySidecarToDb({
+    required String uid,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) async {
+    if (sidecar == null || !sidecar.hasRelations) return;
+    await db.upsertMemoRelationsCache(
+      uid,
+      relationsJson: encodeMemoRelationsJson(sidecar.relations),
+    );
+  }
+
+  DateTime? _resolvedDisplayTimeForInsert({
+    required LocalLibraryParsedMemo parsed,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null) return parsed.createTime.toUtc();
+    if (!sidecar.hasDisplayTime) return parsed.createTime.toUtc();
+    return sidecar.displayTime?.toUtc();
+  }
+
+  DateTime? _resolvedDisplayTimeForUpdate({
+    required LocalMemo localMemo,
+    required LocalLibraryParsedMemo parsed,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null || !sidecar.hasDisplayTime) {
+      return localMemo.displayTime?.toUtc();
+    }
+    return sidecar.displayTime?.toUtc();
+  }
+
+  MemoLocation? _resolvedLocationForInsert({
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null || !sidecar.hasLocation) return null;
+    return sidecar.location;
+  }
+
+  MemoLocation? _resolvedLocationForUpdate({
+    required LocalMemo localMemo,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null || !sidecar.hasLocation) return localMemo.location;
+    return sidecar.location;
+  }
+
+  int _resolvedRelationCountForInsert({
+    required String uid,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null || !sidecar.hasRelations) return 0;
+    return countReferenceRelations(memoUid: uid, relations: sidecar.relations);
+  }
+
+  int _resolvedRelationCountForUpdate({
+    required String uid,
+    required LocalMemo localMemo,
+    required LocalLibraryMemoSidecar? sidecar,
+  }) {
+    if (sidecar == null || !sidecar.hasRelations) {
+      return localMemo.relationCount;
+    }
+    return countReferenceRelations(memoUid: uid, relations: sidecar.relations);
+  }
+
+  bool _locationsEqual(MemoLocation? a, MemoLocation? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return a == b;
+    return a.placeholder.trim() == b.placeholder.trim() &&
+        a.latitude == b.latitude &&
+        a.longitude == b.longitude;
   }
 
   String _guessMimeType(String filename) {
@@ -837,24 +1120,32 @@ class _ScanManifestEntry {
     required this.uid,
     required this.length,
     required this.modifiedMs,
+    this.sidecarLength,
+    this.sidecarModifiedMs,
     this.needsRecheck = false,
   });
 
   final String uid;
   final int length;
   final int? modifiedMs;
+  final int? sidecarLength;
+  final int? sidecarModifiedMs;
   final bool needsRecheck;
 
   _ScanManifestEntry copyWith({
     String? uid,
     int? length,
     int? modifiedMs,
+    int? sidecarLength,
+    int? sidecarModifiedMs,
     bool? needsRecheck,
   }) {
     return _ScanManifestEntry(
       uid: uid ?? this.uid,
       length: length ?? this.length,
       modifiedMs: modifiedMs ?? this.modifiedMs,
+      sidecarLength: sidecarLength ?? this.sidecarLength,
+      sidecarModifiedMs: sidecarModifiedMs ?? this.sidecarModifiedMs,
       needsRecheck: needsRecheck ?? this.needsRecheck,
     );
   }
@@ -863,6 +1154,8 @@ class _ScanManifestEntry {
     'uid': uid,
     'length': length,
     'modifiedMs': modifiedMs,
+    'sidecarLength': sidecarLength,
+    'sidecarModifiedMs': sidecarModifiedMs,
     'needsRecheck': needsRecheck,
   };
 
@@ -883,6 +1176,14 @@ class _ScanManifestEntry {
       return null;
     }
 
+    int? readOptionalInt(String key) {
+      final raw = json[key];
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      if (raw is String) return int.tryParse(raw.trim());
+      return null;
+    }
+
     bool readNeedsRecheck() {
       final raw = json['needsRecheck'];
       if (raw is bool) return raw;
@@ -896,9 +1197,23 @@ class _ScanManifestEntry {
       uid: uid,
       length: readLength(),
       modifiedMs: readModifiedMs(),
+      sidecarLength: readOptionalInt('sidecarLength'),
+      sidecarModifiedMs: readOptionalInt('sidecarModifiedMs'),
       needsRecheck: readNeedsRecheck(),
     );
   }
+}
+
+class _DiskMemoImportData {
+  const _DiskMemoImportData({
+    required this.uid,
+    required this.parsed,
+    required this.sidecar,
+  });
+
+  final String uid;
+  final LocalLibraryParsedMemo parsed;
+  final LocalLibraryMemoSidecar? sidecar;
 }
 
 class _ScanManifest {

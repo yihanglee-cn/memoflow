@@ -702,8 +702,8 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
             language: context.appLanguage,
             raw: memo.lastError!.trim(),
           );
-    final displayTime = memo.createTime.millisecondsSinceEpoch > 0
-        ? memo.createTime
+    final displayTime = memo.effectiveDisplayTime.millisecondsSinceEpoch > 0
+        ? memo.effectiveDisplayTime
         : memo.updateTime;
     final header = PointerDoubleTapListener(
       key: const ValueKey('memo-detail-edit-hit-area'),

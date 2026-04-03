@@ -415,4 +415,75 @@ CREATE TABLE IF NOT EXISTS outbox (
     final row = await appDb.getMemoByUid('memo-open-race');
     expect(row?['content'], 'opened once');
   });
+
+  test('upgrade to v20 backfills display_time from create_time', () async {
+    final dbName = uniqueDbName('app_database_v19_display_time_backfill');
+
+    addTearDown(() async {
+      await AppDatabase.deleteDatabaseFile(dbName: dbName);
+    });
+
+    final dbDir = await resolveDatabasesDirectoryPath();
+    final path = p.join(dbDir, dbName);
+
+    final legacyDb = await openDatabase(
+      path,
+      version: 19,
+      onCreate: (db, version) async {
+        await db.execute('''
+CREATE TABLE IF NOT EXISTS memos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  state TEXT NOT NULL DEFAULT 'NORMAL',
+  create_time INTEGER NOT NULL,
+  update_time INTEGER NOT NULL,
+  tags TEXT NOT NULL DEFAULT '',
+  attachments_json TEXT NOT NULL DEFAULT '[]',
+  location_placeholder TEXT,
+  location_lat REAL,
+  location_lng REAL,
+  relation_count INTEGER NOT NULL DEFAULT 0,
+  sync_state INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+);
+''');
+        await db.insert('memos', <String, Object?>{
+          'uid': 'memo-display',
+          'content': 'legacy memo',
+          'visibility': 'PRIVATE',
+          'pinned': 0,
+          'state': 'NORMAL',
+          'create_time': 1735689600,
+          'update_time': 1735689700,
+          'tags': '',
+          'attachments_json': '[]',
+          'relation_count': 0,
+          'sync_state': 0,
+        });
+      },
+    );
+    await legacyDb.close();
+
+    final appDb = AppDatabase(dbName: dbName);
+    addTearDown(() async {
+      await appDb.close();
+    });
+
+    final upgradedDb = await appDb.db;
+    final columns = await upgradedDb.rawQuery('PRAGMA table_info("memos");');
+    expect(columns.any((row) => row['name'] == 'display_time'), isTrue);
+
+    final rows = await upgradedDb.query(
+      'memos',
+      columns: const <String>['uid', 'create_time', 'display_time'],
+      where: 'uid = ?',
+      whereArgs: const <Object?>['memo-display'],
+    );
+    expect(rows, hasLength(1));
+    expect(rows.single['create_time'], 1735689600);
+    expect(rows.single['display_time'], 1735689600);
+  });
 }

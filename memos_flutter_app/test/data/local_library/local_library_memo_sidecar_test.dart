@@ -1,0 +1,104 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:memos_flutter_app/data/local_library/local_library_memo_sidecar.dart';
+import 'package:memos_flutter_app/data/models/attachment.dart';
+import 'package:memos_flutter_app/data/models/content_fingerprint.dart';
+import 'package:memos_flutter_app/data/models/local_memo.dart';
+import 'package:memos_flutter_app/data/models/memo_location.dart';
+import 'package:memos_flutter_app/data/models/memo_relation.dart';
+
+void main() {
+  test('sidecar round trips lossless memo metadata', () {
+    final memo = LocalMemo(
+      uid: 'memo-1',
+      content: 'hello [[memo-2]]',
+      contentFingerprint: computeContentFingerprint('hello [[memo-2]]'),
+      visibility: 'PRIVATE',
+      pinned: true,
+      state: 'NORMAL',
+      createTime: DateTime.utc(2026, 1, 1, 8),
+      displayTime: DateTime.utc(2026, 1, 2, 9),
+      updateTime: DateTime.utc(2026, 1, 3, 10),
+      tags: const <String>['tag-a'],
+      attachments: const <Attachment>[
+        Attachment(
+          name: 'attachments/att-1',
+          filename: 'photo.jpg',
+          type: 'image/jpeg',
+          size: 12,
+          externalLink: 'file:///tmp/photo.jpg',
+        ),
+      ],
+      relationCount: 1,
+      location: const MemoLocation(
+        placeholder: 'Shanghai',
+        latitude: 31.2304,
+        longitude: 121.4737,
+      ),
+      syncState: SyncState.synced,
+      lastError: null,
+    );
+    final sidecar = LocalLibraryMemoSidecar.fromMemo(
+      memo: memo,
+      hasRelations: true,
+      relations: const <MemoRelation>[
+        MemoRelation(
+          memo: MemoRelationMemo(name: 'memos/memo-1', snippet: 'hello'),
+          relatedMemo: MemoRelationMemo(name: 'memos/memo-2', snippet: 'world'),
+          type: 'REFERENCE',
+        ),
+      ],
+      attachments: const <LocalLibraryAttachmentExportMeta>[
+        LocalLibraryAttachmentExportMeta(
+          archiveName: 'att-1_photo.jpg',
+          uid: 'att-1',
+          name: 'attachments/att-1',
+          filename: 'photo.jpg',
+          type: 'image/jpeg',
+          size: 12,
+          externalLink: 'file:///tmp/photo.jpg',
+        ),
+      ],
+    );
+
+    final decoded = LocalLibraryMemoSidecar.tryParse(sidecar.encodeJson());
+
+    expect(decoded, isNotNull);
+    expect(decoded!.memoUid, memo.uid);
+    expect(decoded.contentFingerprint, memo.contentFingerprint);
+    expect(decoded.hasDisplayTime, isTrue);
+    expect(decoded.displayTime, DateTime.utc(2026, 1, 2, 9));
+    expect(decoded.hasLocation, isTrue);
+    expect(decoded.location?.placeholder, 'Shanghai');
+    expect(decoded.hasRelations, isTrue);
+    expect(decoded.relations, hasLength(1));
+    expect(decoded.relations.single.relatedMemo.name, 'memos/memo-2');
+    expect(decoded.hasAttachments, isTrue);
+    expect(decoded.attachments.single.archiveName, 'att-1_photo.jpg');
+  });
+
+  test('sidecar preserves missing versus null and empty semantics', () {
+    final missing = LocalLibraryMemoSidecar.tryParse(
+      '{"schemaVersion":1,"memoUid":"memo-1","contentFingerprint":"fp"}',
+    );
+    final explicit = LocalLibraryMemoSidecar.tryParse(
+      '{"schemaVersion":1,"memoUid":"memo-1","contentFingerprint":"fp","displayTime":null,"location":null,"relations":[],"attachments":[]}',
+    );
+
+    expect(missing, isNotNull);
+    expect(missing!.hasDisplayTime, isFalse);
+    expect(missing.hasLocation, isFalse);
+    expect(missing.hasRelations, isFalse);
+    expect(missing.hasAttachments, isFalse);
+
+    expect(explicit, isNotNull);
+    expect(explicit!.hasDisplayTime, isTrue);
+    expect(explicit.displayTime, isNull);
+    expect(explicit.hasLocation, isTrue);
+    expect(explicit.location, isNull);
+    expect(explicit.hasRelations, isTrue);
+    expect(explicit.relations, isEmpty);
+    expect(explicit.hasAttachments, isTrue);
+    expect(explicit.attachments, isEmpty);
+  });
+}

@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/memo_relations.dart';
 import '../../core/tags.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
@@ -82,6 +83,15 @@ class NoteInputController {
       attachments: attachments,
       pendingAttachments: attachmentPayloads,
     );
+    final cachedRelations = mergeOutgoingReferenceRelations(
+      memoUid: uid,
+      existingRelations: const [],
+      nextRelations: relations,
+    );
+    final relationCount = countReferenceRelations(
+      memoUid: uid,
+      relations: cachedRelations,
+    );
 
     await db.upsertMemo(
       uid: uid,
@@ -94,9 +104,17 @@ class NoteInputController {
       tags: tags,
       attachments: localAttachments,
       location: location,
-      relationCount: 0,
+      relationCount: relationCount,
       syncState: 1,
     );
+    if (cachedRelations.isEmpty) {
+      await db.deleteMemoRelationsCache(uid);
+    } else {
+      await db.upsertMemoRelationsCache(
+        uid,
+        relationsJson: encodeMemoRelationsJson(cachedRelations),
+      );
+    }
 
     for (final payload in attachmentPayloads) {
       NoteInputPendingAttachment? matchedAttachment;

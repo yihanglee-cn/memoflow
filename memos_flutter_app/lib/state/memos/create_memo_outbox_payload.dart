@@ -6,6 +6,7 @@ Map<String, dynamic> buildCreateMemoOutboxPayload({
   required String visibility,
   required bool pinned,
   required int createTimeSec,
+  int? displayTimeSec,
   required bool hasAttachments,
   MemoLocation? location,
   List<Map<String, dynamic>> relations = const <Map<String, dynamic>>[],
@@ -17,7 +18,7 @@ Map<String, dynamic> buildCreateMemoOutboxPayload({
     'pinned': pinned,
     'has_attachments': hasAttachments,
     'create_time': createTimeSec,
-    'display_time': createTimeSec,
+    'display_time': displayTimeSec ?? createTimeSec,
     if (location != null) 'location': location.toJson(),
     if (relations.isNotEmpty) 'relations': relations,
   };

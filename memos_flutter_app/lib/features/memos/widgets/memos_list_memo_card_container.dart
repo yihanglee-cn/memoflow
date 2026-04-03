@@ -77,8 +77,8 @@ class MemosListMemoCardContainer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final displayTime = memo.createTime.millisecondsSinceEpoch > 0
-        ? memo.createTime
+    final displayTime = memo.effectiveDisplayTime.millisecondsSinceEpoch > 0
+        ? memo.effectiveDisplayTime
         : memo.updateTime;
     final isAudioActive = playingMemoUid == memo.uid;
     final isAudioPlaying = isAudioActive && audioPlaying;

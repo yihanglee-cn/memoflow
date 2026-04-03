@@ -104,6 +104,9 @@ extension _RemoteSyncStateSync on RemoteSyncController {
       state: localMemo.state,
       createTimeSec:
           localMemo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+      displayTimeSec: localMemo.displayTime == null
+          ? null
+          : localMemo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000,
       updateTimeSec:
           localMemo.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: localMemo.tags,
@@ -136,6 +139,9 @@ extension _RemoteSyncStateSync on RemoteSyncController {
             pinned: localMemo.pinned,
             createTimeSec:
                 localMemo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+            displayTimeSec: localMemo.displayTime == null
+                ? null
+                : localMemo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000,
             hasAttachments: false,
             location: localMemo.location,
           ),
@@ -375,6 +381,12 @@ extension _RemoteSyncStateSync on RemoteSyncController {
               ? draftMemo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000
               : preserveLocalCreateTime
               ? localMemo!.createTime.toUtc().millisecondsSinceEpoch ~/ 1000
+              : memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000;
+          final displayTimeSec = draftMemo != null
+              ? (draftMemo.displayTime == null
+                    ? null
+                    : draftMemo.displayTime!.toUtc().millisecondsSinceEpoch ~/
+                          1000)
               : (memo.displayTime ?? memo.createTime)
                         .toUtc()
                         .millisecondsSinceEpoch ~/
@@ -385,6 +397,12 @@ extension _RemoteSyncStateSync on RemoteSyncController {
           final location = draftMemo != null
               ? draftMemo.location
               : memo.location;
+          if (draftMemo == null) {
+            await db.upsertMemoRelationsCache(
+              memo.uid,
+              relationsJson: encodeMemoRelationsJson(memo.relations),
+            );
+          }
 
           await db.upsertMemo(
             uid: memo.uid,
@@ -393,6 +411,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
             pinned: pinned,
             state: memoState,
             createTimeSec: createTimeSec,
+            displayTimeSec: displayTimeSec,
             updateTimeSec: updateTimeSec,
             tags: tags,
             attachments: mergedAttachments,

@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memos_flutter_app/application/attachments/queued_attachment_stager.dart';
+import 'package:memos_flutter_app/core/memo_relations.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
+import 'package:memos_flutter_app/data/models/local_memo.dart';
+import 'package:memos_flutter_app/data/models/memo_relation.dart';
 import 'package:memos_flutter_app/state/memos/memo_editor_providers.dart';
 import 'package:memos_flutter_app/state/memos/memo_timeline_provider.dart';
 import 'package:memos_flutter_app/state/system/database_provider.dart';
@@ -103,6 +106,118 @@ void main() {
       expect(
         payload['file_path'] as String,
         contains(QueuedAttachmentStager.managedRootDirName),
+      );
+    },
+  );
+
+  test(
+    'MemoEditorController preserves inbound relations in local cache',
+    () async {
+      final dbName = uniqueDbName('memo_editor_relations_cache');
+      final db = AppDatabase(dbName: dbName);
+      final container = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          memoTimelineServiceProvider.overrideWithValue(
+            MemoTimelineService(
+              db: db,
+              account: null,
+              triggerSync: () async {},
+            ),
+          ),
+        ],
+      );
+      final controller = container.read(memoEditorControllerProvider);
+      final createdAt = DateTime.utc(2026, 3, 13, 18, 0);
+      final updatedAt = createdAt.add(const Duration(minutes: 5));
+
+      addTearDown(() async {
+        container.dispose();
+        await db.close();
+        await deleteTestDatabase(dbName);
+      });
+
+      await db.upsertMemo(
+        uid: 'memo-1',
+        content: 'memo one',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTimeSec: createdAt.millisecondsSinceEpoch ~/ 1000,
+        updateTimeSec: createdAt.millisecondsSinceEpoch ~/ 1000,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        relationCount: 1,
+        syncState: 1,
+      );
+      await db.upsertMemoRelationsCache(
+        'memo-1',
+        relationsJson: encodeMemoRelationsJson(const <MemoRelation>[
+          MemoRelation(
+            memo: MemoRelationMemo(name: 'memos/memo-3', snippet: 'memo three'),
+            relatedMemo: MemoRelationMemo(
+              name: 'memos/memo-1',
+              snippet: 'memo one',
+            ),
+            type: 'REFERENCE',
+          ),
+        ]),
+      );
+
+      final existingRow = await db.getMemoByUid('memo-1');
+      expect(existingRow, isNotNull);
+
+      await controller.saveMemo(
+        existing: LocalMemo.fromDb(existingRow!),
+        uid: 'memo-1',
+        content: 'memo one updated',
+        visibility: 'PRIVATE',
+        pinned: false,
+        state: 'NORMAL',
+        createTime: createdAt,
+        now: updatedAt,
+        tags: const <String>[],
+        attachments: const <Map<String, dynamic>>[],
+        location: null,
+        locationChanged: false,
+        relationCount: 0,
+        hasPrimaryChanges: false,
+        attachmentsToDelete: const [],
+        includeRelations: true,
+        relations: const <Map<String, dynamic>>[
+          {
+            'relatedMemo': {'name': 'memos/memo-2', 'snippet': 'memo two'},
+            'type': 'REFERENCE',
+          },
+        ],
+        shouldSyncAttachments: false,
+        hasPendingAttachments: false,
+        pendingAttachments: const [],
+      );
+
+      final row = await db.getMemoByUid('memo-1');
+      expect(row, isNotNull);
+      expect(row?['relation_count'], 2);
+
+      final relationsJson = await db.getMemoRelationsCacheJson('memo-1');
+      final cachedRelations = decodeMemoRelationsJson(relationsJson ?? '');
+      expect(cachedRelations, hasLength(2));
+      expect(
+        cachedRelations.any(
+          (relation) =>
+              relation.memo.name == 'memos/memo-1' &&
+              relation.relatedMemo.name == 'memos/memo-2',
+        ),
+        isTrue,
+      );
+      expect(
+        cachedRelations.any(
+          (relation) =>
+              relation.memo.name == 'memos/memo-3' &&
+              relation.relatedMemo.name == 'memos/memo-1',
+        ),
+        isTrue,
       );
     },
   );

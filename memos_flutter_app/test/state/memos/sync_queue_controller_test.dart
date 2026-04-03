@@ -30,6 +30,7 @@ void main() {
     );
     final controller = container.read(syncQueueControllerProvider);
     final now = DateTime.utc(2026, 3, 13, 18, 0);
+    final displayTime = now.add(const Duration(hours: 6));
 
     addTearDown(() async {
       container.dispose();
@@ -44,6 +45,7 @@ void main() {
       pinned: false,
       state: 'NORMAL',
       createTimeSec: now.millisecondsSinceEpoch ~/ 1000,
+      displayTimeSec: displayTime.millisecondsSinceEpoch ~/ 1000,
       updateTimeSec: now.millisecondsSinceEpoch ~/ 1000,
       tags: const <String>[],
       attachments: const <Map<String, dynamic>>[],
@@ -93,6 +95,7 @@ void main() {
     final payload = jsonDecode(rows.single['payload'] as String) as Map;
     expect(payload['uid'], 'memo-remote-missing');
     expect(payload['content'], 'memo content');
+    expect(payload['display_time'], displayTime.millisecondsSinceEpoch ~/ 1000);
   });
 
   test('retry falls back to requeue when memo cannot be rebuilt', () async {

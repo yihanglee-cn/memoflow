@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memos_flutter_app/application/attachments/queued_attachment_stager.dart';
 import 'package:memos_flutter_app/application/sync/sync_error.dart';
+import 'package:memos_flutter_app/core/memo_relations.dart';
 import 'package:memos_flutter_app/data/api/memo_api_facade.dart';
 import 'package:memos_flutter_app/data/api/memo_api_version.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
@@ -64,6 +65,21 @@ void main() {
     expect(payload['relations'], isA<List<dynamic>>());
   });
 
+  test('buildCreateMemoOutboxPayload preserves explicit display time', () {
+    final payload = buildCreateMemoOutboxPayload(
+      uid: 'memo-2',
+      content: 'hello',
+      visibility: 'PRIVATE',
+      pinned: false,
+      createTimeSec: 1710352800,
+      displayTimeSec: 1710439200,
+      hasAttachments: false,
+    );
+
+    expect(payload['create_time'], 1710352800);
+    expect(payload['display_time'], 1710439200);
+  });
+
   test('NoteInputController enqueues create_memo with create_time', () async {
     final dbName = uniqueDbName('note_input_display_time');
     final db = AppDatabase(dbName: dbName);
@@ -100,6 +116,50 @@ void main() {
     expect(payload['uid'], 'memo-1');
     expect(payload['create_time'], now.millisecondsSinceEpoch ~/ 1000);
     expect(payload['display_time'], now.millisecondsSinceEpoch ~/ 1000);
+  });
+
+  test('NoteInputController stores local relations in cache', () async {
+    final dbName = uniqueDbName('note_input_relations_cache');
+    final db = AppDatabase(dbName: dbName);
+    final container = ProviderContainer(
+      overrides: [databaseProvider.overrideWithValue(db)],
+    );
+    final controller = container.read(noteInputControllerProvider);
+    final now = DateTime.utc(2026, 3, 13, 18, 0);
+
+    addTearDown(() async {
+      container.dispose();
+      await db.close();
+      await deleteTestDatabase(dbName);
+    });
+
+    await controller.createMemo(
+      uid: 'memo-1',
+      content: 'offline memo [[memo-2]]',
+      visibility: 'PRIVATE',
+      now: now,
+      tags: const <String>[],
+      attachments: const <Map<String, dynamic>>[],
+      location: null,
+      hasAttachments: false,
+      relations: const <Map<String, dynamic>>[
+        {
+          'relatedMemo': {'name': 'memos/memo-2', 'snippet': 'memo two'},
+          'type': 'REFERENCE',
+        },
+      ],
+      pendingAttachments: const [],
+    );
+
+    final row = await db.getMemoByUid('memo-1');
+    expect(row, isNotNull);
+    expect(row?['relation_count'], 1);
+
+    final relationsJson = await db.getMemoRelationsCacheJson('memo-1');
+    final cachedRelations = decodeMemoRelationsJson(relationsJson ?? '');
+    expect(cachedRelations, hasLength(1));
+    expect(cachedRelations.single.memo.name, 'memos/memo-1');
+    expect(cachedRelations.single.relatedMemo.name, 'memos/memo-2');
   });
 
   test(

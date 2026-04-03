@@ -572,11 +572,19 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
     final fileSystem = LocalLibraryFileSystem(localLibrary);
     await fileSystem.ensureStructure();
 
-    final rows = await _db.listMemosForExport(includeArchived: true);
-    final memos = rows.map(LocalMemo.fromDb).toList(growable: false);
+    final rows = await _db.listMemosForLosslessExport(includeArchived: true);
+    final memos = rows
+        .map(
+          (row) => (
+            row: row,
+            memo: LocalMemo.fromDb(row),
+            relationsJson: row['relations_json'] as String?,
+          ),
+        )
+        .toList(growable: false);
     final totalAttachments = memos.fold<int>(
       0,
-      (sum, memo) => sum + memo.attachments.length,
+      (sum, entry) => sum + entry.memo.attachments.length,
     );
     final totalFiles = memos.length + totalAttachments;
     var completedFiles = 0;
@@ -594,8 +602,9 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
     var memoCount = 0;
     final httpClient = Dio();
     try {
-      for (final memo in memos) {
+      for (final memoEntry in memos) {
         await _waitIfPaused();
+        final memo = memoEntry.memo;
         final uid = memo.uid.trim();
         if (uid.isEmpty) continue;
         targetMemoUids.add(uid);
@@ -648,6 +657,7 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
 
         final expectedAttachmentNames = <String>{};
         final usedAttachmentNames = <String>{};
+        final sidecarAttachments = <LocalLibraryAttachmentExportMeta>[];
         var attachmentFailed = false;
         for (final attachment in memo.attachments) {
           await _waitIfPaused();
@@ -672,6 +682,12 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
                 httpClient: httpClient,
               );
               expectedAttachmentNames.add(archiveName);
+              sidecarAttachments.add(
+                LocalLibraryAttachmentExportMeta.fromAttachment(
+                  attachment: attachment,
+                  archiveName: archiveName,
+                ),
+              );
               exported = true;
               completedFiles += 1;
               _updateProgress(
@@ -715,6 +731,45 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
           skipAttachmentPruneUids.add(uid);
         } else {
           expectedAttachmentsByMemo[uid] = expectedAttachmentNames;
+        }
+
+        final relationsJson = memoEntry.relationsJson;
+        final hasRelations = relationsJson != null;
+        final sidecar = LocalLibraryMemoSidecar.fromMemo(
+          memo: memo,
+          hasRelations: hasRelations,
+          relations: hasRelations
+              ? decodeMemoRelationsJson(relationsJson)
+              : const <MemoRelation>[],
+          attachments: sidecarAttachments,
+        );
+        var sidecarWritten = false;
+        while (!sidecarWritten) {
+          try {
+            await fileSystem.writeMemoSidecar(
+              uid: uid,
+              content: sidecar.encodeJson(),
+            );
+            sidecarWritten = true;
+          } catch (error) {
+            final resolution = await _resolveExportIssue(
+              issue: WebDavBackupExportIssue(
+                kind: WebDavBackupExportIssueKind.memo,
+                memoUid: uid,
+                error: error,
+              ),
+              issueHandler: issueHandler,
+              stickyResolutions: stickyResolutions,
+            );
+            if (resolution.action == WebDavBackupExportAction.retry) {
+              continue;
+            }
+            if (resolution.action == WebDavBackupExportAction.skip) {
+              skipAttachmentPruneUids.add(uid);
+              await fileSystem.deleteMemoSidecar(uid);
+              break;
+            }
+          }
         }
       }
 
@@ -931,11 +986,23 @@ mixin _WebDavBackupExportMixin on _WebDavBackupServiceBase {
           .toList(growable: false);
       if (segments.isEmpty) continue;
 
+      if (segments[0] == 'memos' &&
+          segments.length == 3 &&
+          segments[1] == '_meta') {
+        final fileName = segments[2].trim();
+        if (!fileName.toLowerCase().endsWith('.json')) continue;
+        final memoUid = fileName.substring(0, fileName.length - '.json'.length);
+        if (memoUid.isEmpty || targetMemoUids.contains(memoUid)) continue;
+        await fileSystem.deleteRelativeFile(entry.relativePath);
+        continue;
+      }
+
       if (segments[0] == 'memos' && segments.length == 2) {
         final memoUid = _parseMemoUidFromFileName(segments[1]);
         if (memoUid == null || memoUid.isEmpty) continue;
         if (targetMemoUids.contains(memoUid)) continue;
         await fileSystem.deleteRelativeFile(entry.relativePath);
+        await fileSystem.deleteMemoSidecar(memoUid);
         if (deletedAttachmentDirs.add(memoUid)) {
           await fileSystem.deleteAttachmentsDir(memoUid);
         }
