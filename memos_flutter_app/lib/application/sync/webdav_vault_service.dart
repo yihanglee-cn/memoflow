@@ -27,8 +27,6 @@ class WebDavVaultService {
   static const _legacyBackupVersion = 'v1';
   static const _legacyBackupConfigFile = 'config.json';
   static const _nonceLength = 12;
-  static const _macLength = 16;
-
   final WebDavVaultClientFactory _clientFactory;
   final _cipher = AesGcm.with256bits();
   final _random = Random.secure();

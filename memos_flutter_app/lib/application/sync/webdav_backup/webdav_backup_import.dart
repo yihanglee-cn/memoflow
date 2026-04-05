@@ -206,7 +206,7 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
             );
           }
 
-          await _db.clearOutbox();
+          await WebDavBackupImportMutationService(db: _db).clearOutbox();
           final scanService = _scanServiceFor(activeLocalLibrary);
           if (scanService != null) {
             await _waitIfPaused();
@@ -451,7 +451,7 @@ mixin _WebDavBackupImportMixin on _WebDavBackupServiceBase {
             );
           }
 
-          await _db.clearOutbox();
+          await WebDavBackupImportMutationService(db: _db).clearOutbox();
           final scanService = _scanServiceFor(activeLocalLibrary);
           if (scanService != null) {
             await _waitIfPaused();

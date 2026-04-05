@@ -118,22 +118,32 @@ Future<bool> guardMemoContentForCurrentSyncTarget({
 
 Future<void> enqueueCreateMemoWithAttachmentUploads({
   required MemoProviderReader read,
-  required AppDatabase db,
   required Map<String, dynamic> createPayload,
   required List<Map<String, dynamic>> attachmentPayloads,
+  required Future<void> Function(List<Map<String, Object?>> items)
+  enqueueOutboxBatch,
 }) async {
   final uploadsFirst = shouldEnqueueCreateMemoAfterAttachmentUploads(read);
+  final items = <Map<String, Object?>>[];
   if (uploadsFirst) {
     for (final payload in attachmentPayloads) {
-      await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+      items.add(<String, Object?>{
+        'type': 'upload_attachment',
+        'payload': payload,
+      });
     }
   }
 
-  await db.enqueueOutbox(type: 'create_memo', payload: createPayload);
+  items.add(<String, Object?>{'type': 'create_memo', 'payload': createPayload});
 
   if (!uploadsFirst) {
     for (final payload in attachmentPayloads) {
-      await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+      items.add(<String, Object?>{
+        'type': 'upload_attachment',
+        'payload': payload,
+      });
     }
   }
+
+  await enqueueOutboxBatch(items);
 }

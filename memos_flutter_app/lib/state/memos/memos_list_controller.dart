@@ -132,46 +132,19 @@ class MemosListController {
     required int nowSec,
     required List<String> tags,
   }) async {
-    final db = _ref.read(databaseProvider);
-    await db.upsertMemo(
+    await _ref.read(memoMutationServiceProvider).createQuickInputMemo(
       uid: uid,
       content: content,
       visibility: visibility,
-      pinned: false,
-      state: 'NORMAL',
-      createTimeSec: nowSec,
-      updateTimeSec: nowSec,
+      nowSec: nowSec,
       tags: tags,
-      attachments: const <Map<String, dynamic>>[],
-      location: null,
-      relationCount: 0,
-      syncState: 1,
     );
-
-    final allowed = await guardMemoContentForCurrentSyncTarget(
-      read: _ref.read,
-      db: db,
-      memoUid: uid,
-      content: content,
-    );
-    if (allowed) {
-      await db.enqueueOutbox(
-        type: 'create_memo',
-        payload: buildCreateMemoOutboxPayload(
-          uid: uid,
-          content: content,
-          visibility: visibility,
-          pinned: false,
-          createTimeSec: nowSec,
-          hasAttachments: false,
-        ),
-      );
-    }
   }
 
   Future<int> retryOutboxErrors({required String memoUid}) async {
-    final db = _ref.read(databaseProvider);
-    return db.retryOutboxErrors(memoUid: memoUid);
+    return _ref
+        .read(memoMutationServiceProvider)
+        .retryOutboxErrors(memoUid: memoUid);
   }
 
   Future<void> createInlineComposeMemo({
@@ -185,110 +158,25 @@ class MemosListController {
     required List<Map<String, dynamic>> relations,
     required List<MemoComposerPendingAttachment> pendingAttachments,
   }) async {
-    final db = _ref.read(databaseProvider);
-    final attachmentPayloads = pendingAttachments
-        .map(
-          (attachment) => <String, dynamic>{
-            'uid': attachment.uid,
-            'memo_uid': uid,
-            'file_path': attachment.filePath,
-            'filename': attachment.filename,
-            'mime_type': attachment.mimeType,
-            'file_size': attachment.size,
-          },
-        )
-        .toList(growable: false);
-    final localAttachments = mergePendingAttachmentPlaceholders(
-      attachments: attachments,
-      pendingAttachments: attachmentPayloads,
-    );
-    final cachedRelations = mergeOutgoingReferenceRelations(
-      memoUid: uid,
-      existingRelations: const [],
-      nextRelations: relations,
-      memoSnippet: content,
-    );
-    final relationCount = countReferenceRelations(
-      memoUid: uid,
-      relations: cachedRelations,
-    );
-
-    await db.upsertMemo(
+    await _ref.read(memoMutationServiceProvider).createInlineComposeMemo(
       uid: uid,
       content: content,
       visibility: visibility,
-      pinned: false,
-      state: 'NORMAL',
-      createTimeSec: nowSec,
-      updateTimeSec: nowSec,
+      nowSec: nowSec,
       tags: tags,
-      attachments: localAttachments,
+      attachments: attachments,
       location: location,
-      relationCount: relationCount,
-      syncState: 1,
-    );
-    if (cachedRelations.isEmpty) {
-      await db.deleteMemoRelationsCache(uid);
-    } else {
-      await db.upsertMemoRelationsCache(
-        uid,
-        relationsJson: encodeMemoRelationsJson(cachedRelations),
-      );
-    }
-
-    final hasAttachments = pendingAttachments.isNotEmpty;
-    await enqueueCreateMemoWithAttachmentUploads(
-      read: _ref.read,
-      db: db,
-      createPayload: buildCreateMemoOutboxPayload(
-        uid: uid,
-        content: content,
-        visibility: visibility,
-        pinned: false,
-        createTimeSec: nowSec,
-        hasAttachments: hasAttachments,
-        location: location,
-        relations: relations,
-      ),
-      attachmentPayloads: attachmentPayloads,
+      relations: relations,
+      pendingAttachments: pendingAttachments,
     );
   }
 
   Future<void> updateMemo(LocalMemo memo, {bool? pinned, String? state}) async {
-    final now = DateTime.now();
-    final db = _ref.read(databaseProvider);
-    final syncPolicy = resolveMemoSyncMutationPolicy(
-      currentLastError: memo.lastError,
+    await _ref.read(memoMutationServiceProvider).updateMemo(
+      memo,
+      pinned: pinned,
+      state: state,
     );
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: memo.content,
-      visibility: memo.visibility,
-      pinned: pinned ?? memo.pinned,
-      state: state ?? memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: memo.tags,
-      attachments: memo.attachments
-          .map((a) => a.toJson())
-          .toList(growable: false),
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: syncPolicy.syncState,
-      lastError: syncPolicy.lastError,
-    );
-
-    if (syncPolicy.allowRemoteSync) {
-      await db.enqueueOutbox(
-        type: 'update_memo',
-        payload: {
-          'uid': memo.uid,
-          if (pinned != null) 'pinned': pinned,
-          if (state != null) 'state': state,
-        },
-      );
-    }
   }
 
   Future<void> updateMemoContent(
@@ -296,53 +184,11 @@ class MemosListController {
     String content, {
     bool preserveUpdateTime = false,
   }) async {
-    if (content == memo.content) return;
-    final updateTime = preserveUpdateTime ? memo.updateTime : DateTime.now();
-    final db = _ref.read(databaseProvider);
-    final timelineService = _ref.read(memoTimelineServiceProvider);
-    final tags = extractTags(content);
-    final syncPolicy = resolveMemoSyncMutationPolicy(
-      currentLastError: memo.lastError,
+    await _ref.read(memoMutationServiceProvider).updateMemoContent(
+      memo,
+      content,
+      preserveUpdateTime: preserveUpdateTime,
     );
-
-    await timelineService.captureMemoVersion(memo);
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: content,
-      visibility: memo.visibility,
-      pinned: memo.pinned,
-      state: memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: tags,
-      attachments: memo.attachments
-          .map((a) => a.toJson())
-          .toList(growable: false),
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: syncPolicy.syncState,
-      lastError: syncPolicy.lastError,
-    );
-
-    final allowed =
-        syncPolicy.allowRemoteSync &&
-        await guardMemoContentForCurrentSyncTarget(
-          read: _ref.read,
-          db: db,
-          memoUid: memo.uid,
-          content: content,
-        );
-    if (allowed) {
-      await db.enqueueOutbox(
-        type: 'update_memo',
-        payload: {
-          'uid': memo.uid,
-          'content': content,
-          'visibility': memo.visibility,
-        },
-      );
-    }
   }
 
   Future<void> deleteMemo(
@@ -376,28 +222,11 @@ class MemosListController {
         try {
           final api = _ref.read(memosApiProvider);
           final remote = await api.getMemo(memoUid: uid);
-          final remoteUid = remote.uid.isNotEmpty ? remote.uid : uid;
-          await db.upsertMemo(
-            uid: remoteUid,
-            content: remote.content,
-            visibility: remote.visibility,
-            pinned: remote.pinned,
-            state: remote.state,
-            createTimeSec:
-                remote.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            updateTimeSec:
-                remote.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            tags: remote.tags,
-            attachments: remote.attachments
-                .map((a) => a.toJson())
-                .toList(growable: false),
-            location: remote.location,
-            relationCount: countReferenceRelations(
-              memoUid: remoteUid,
-              relations: remote.relations,
-            ),
-            syncState: 0,
+          await _ref.read(memoMutationServiceProvider).cacheRemoteMemoForOpen(
+            remoteMemo: remote,
+            fallbackUid: uid,
           );
+          final remoteUid = remote.uid.isNotEmpty ? remote.uid : uid;
           final refreshed = await db.getMemoByUid(remoteUid);
           if (refreshed != null) {
             memo = LocalMemo.fromDb(refreshed);

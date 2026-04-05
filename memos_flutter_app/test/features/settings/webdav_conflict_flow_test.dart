@@ -701,8 +701,9 @@ void main() {
       await tester.tap(find.text(t.strings.legacy.msg_server_connection));
       await tester.pumpAndSettle();
 
-      expect(find.text('Test connection'), findsOneWidget);
-      await tester.tap(find.text('Test connection'));
+      final testConnectionButton = find.byTooltip('Test connection');
+      expect(testConnectionButton, findsOneWidget);
+      await tester.tap(testConnectionButton);
       await tester.pump();
       await tester.pumpAndSettle();
 

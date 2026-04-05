@@ -1,4 +1,4 @@
-part of memos_api;
+part of '../memos_api.dart';
 
 mixin _MemosApiNotifications on _MemosApiBase, _MemosApiAuth {
   Future<(List<AppNotification> notifications, String nextPageToken)>

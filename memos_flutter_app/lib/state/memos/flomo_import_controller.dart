@@ -25,8 +25,8 @@ import '../../data/models/app_preferences.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/memo_relation.dart';
 import 'create_memo_outbox_enqueue.dart';
-import 'create_memo_outbox_payload.dart';
 import 'flomo_import_models.dart';
+import 'flomo_import_mutation_service.dart';
 import 'memo_sync_constraints.dart';
 
 enum _BackendVersion { v025, v024, v021, unknown }
@@ -71,6 +71,8 @@ class _FlomoImportEngine {
   final AppLanguage language;
   final QueuedAttachmentStager _queuedAttachmentStager =
       QueuedAttachmentStager();
+  late final FlomoImportMutationService _mutationService =
+      FlomoImportMutationService(db: db);
 
   static const _source = 'flomo';
 
@@ -178,15 +180,10 @@ class _FlomoImportEngine {
       }
     }
 
-    final historyId = await db.upsertImportHistory(
+    final historyId = await _mutationService.beginImportHistory(
       source: _source,
       fileMd5: fileMd5,
       fileName: p.basename(filePath),
-      status: 0,
-      memoCount: 0,
-      attachmentCount: 0,
-      failedCount: 0,
-      error: null,
     );
 
     var memoCount = 0;
@@ -210,21 +207,18 @@ class _FlomoImportEngine {
         ),
       );
 
-      await db.updateImportHistory(
-        id: historyId,
-        status: 1,
+      await _mutationService.completeImportHistory(
+        historyId: historyId,
         memoCount: result.memoCount,
         attachmentCount: result.attachmentCount,
         failedCount: result.failedCount,
-        error: null,
       );
       await _writeImportMarker(fileMd5, p.basename(filePath));
       return result;
     } catch (e) {
       final message = e is ImportException ? e.message : e.toString();
-      await db.updateImportHistory(
-        id: historyId,
-        status: 2,
+      await _mutationService.failImportHistory(
+        historyId: historyId,
         memoCount: memoCount,
         attachmentCount: attachmentCount,
         failedCount: failedCount,
@@ -492,8 +486,14 @@ class _FlomoImportEngine {
           ? sidecar.resolveRelationCount()
           : 0;
 
-      await db.upsertMemo(
-        uid: memoUid,
+      final allowed = await guardMemoContentForRemoteSync(
+        db: db,
+        enabled: account != null,
+        memoUid: memoUid,
+        content: content,
+      );
+      final queuedAttachmentCount = await _mutationService.persistImportedMemo(
+        memoUid: memoUid,
         content: content,
         visibility: parsed.visibility,
         pinned: parsed.pinned,
@@ -505,65 +505,21 @@ class _FlomoImportEngine {
         attachments: attachments,
         location: location,
         relationCount: relationCount,
-        syncState: 1,
+        relationsJson: hasCompleteRelations
+            ? encodeMemoRelationsJson(relations)
+            : null,
+        createRelations: hasCompleteRelations
+            ? relations
+                  .map((relation) => relation.toJson())
+                  .toList(growable: false)
+            : const <Map<String, dynamic>>[],
+        allowRemoteSync: allowed,
+        uploadBeforeCreate: _shouldEnqueueAttachmentUploadsBeforeCreate(),
+        attachmentPayloads: attachmentPayloads,
       );
-      if (hasCompleteRelations) {
-        await db.upsertMemoRelationsCache(
-          memoUid,
-          relationsJson: encodeMemoRelationsJson(relations),
-        );
-      }
-
-      final allowed = await guardMemoContentForRemoteSync(
-        db: db,
-        enabled: account != null,
-        memoUid: memoUid,
-        content: content,
+      counters.setAttachmentCount(
+        counters.attachmentCount() + queuedAttachmentCount,
       );
-      if (allowed) {
-        final uploadBeforeCreate =
-            _shouldEnqueueAttachmentUploadsBeforeCreate();
-        if (uploadBeforeCreate) {
-          for (final payload in attachmentPayloads) {
-            await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-            counters.setAttachmentCount(counters.attachmentCount() + 1);
-          }
-        }
-        await db.enqueueOutbox(
-          type: 'create_memo',
-          payload: buildCreateMemoOutboxPayload(
-            uid: memoUid,
-            content: content,
-            visibility: parsed.visibility,
-            pinned: parsed.pinned,
-            createTimeSec:
-                parsed.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            displayTimeSec: displayTimeSec,
-            hasAttachments: attachments.isNotEmpty,
-            location: location,
-            relations: hasCompleteRelations
-                ? relations
-                      .map((relation) => relation.toJson())
-                      .toList(growable: false)
-                : const <Map<String, dynamic>>[],
-          ),
-        );
-
-        if (parsed.state.trim().isNotEmpty &&
-            parsed.state.trim().toUpperCase() != 'NORMAL') {
-          await db.enqueueOutbox(
-            type: 'update_memo',
-            payload: {'uid': memoUid, 'state': parsed.state},
-          );
-        }
-
-        if (!uploadBeforeCreate) {
-          for (final payload in attachmentPayloads) {
-            await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-            counters.setAttachmentCount(counters.attachmentCount() + 1);
-          }
-        }
-      }
 
       counters.setMemoCount(counters.memoCount() + 1);
       _reportQueueProgress(onProgress, processed, total);
@@ -704,8 +660,14 @@ class _FlomoImportEngine {
           ),
         );
 
-      await db.upsertMemo(
-        uid: memoUid,
+      final allowed = await guardMemoContentForRemoteSync(
+        db: db,
+        enabled: account != null,
+        memoUid: memoUid,
+        content: content,
+      );
+      final queuedAttachmentCount = await _mutationService.persistImportedMemo(
+        memoUid: memoUid,
         content: content,
         visibility: 'PRIVATE',
         pinned: false,
@@ -716,44 +678,13 @@ class _FlomoImportEngine {
         attachments: attachments,
         location: null,
         relationCount: 0,
-        syncState: 1,
+        allowRemoteSync: allowed,
+        uploadBeforeCreate: _shouldEnqueueAttachmentUploadsBeforeCreate(),
+        attachmentPayloads: attachmentPayloads,
       );
-
-      final allowed = await guardMemoContentForRemoteSync(
-        db: db,
-        enabled: account != null,
-        memoUid: memoUid,
-        content: content,
+      counters.setAttachmentCount(
+        counters.attachmentCount() + queuedAttachmentCount,
       );
-      if (allowed) {
-        final uploadBeforeCreate =
-            _shouldEnqueueAttachmentUploadsBeforeCreate();
-        if (uploadBeforeCreate) {
-          for (final payload in attachmentPayloads) {
-            await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-            counters.setAttachmentCount(counters.attachmentCount() + 1);
-          }
-        }
-        await db.enqueueOutbox(
-          type: 'create_memo',
-          payload: buildCreateMemoOutboxPayload(
-            uid: memoUid,
-            content: content,
-            visibility: 'PRIVATE',
-            pinned: false,
-            createTimeSec:
-                item.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-            hasAttachments: attachments.isNotEmpty,
-          ),
-        );
-
-        if (!uploadBeforeCreate) {
-          for (final payload in attachmentPayloads) {
-            await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-            counters.setAttachmentCount(counters.attachmentCount() + 1);
-          }
-        }
-      }
 
       counters.setMemoCount(counters.memoCount() + 1);
       _reportQueueProgress(onProgress, processed, total);

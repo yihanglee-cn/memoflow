@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 part of 'webdav_sync_screen.dart';
 
 class VaultSecurityStatusScreen extends ConsumerStatefulWidget {
@@ -30,10 +32,10 @@ class _VaultSecurityStatusScreenState
     setState(() => _loading = true);
     try {
       final meta = await ref
-          .read(syncCoordinatorProvider.notifier)
+          .read(desktopSyncFacadeProvider)
           .fetchWebDavSyncMeta();
       final exportStatus = await ref
-          .read(syncCoordinatorProvider.notifier)
+          .read(desktopSyncFacadeProvider)
           .fetchWebDavExportStatus();
       final vaultState = await ref
           .read(webDavVaultStateRepositoryProvider)
@@ -165,7 +167,7 @@ class _VaultSecurityStatusScreenState
 
   Future<void> _handleCleanRemotePlain() async {
     final cleaned = await ref
-        .read(syncCoordinatorProvider.notifier)
+        .read(desktopSyncFacadeProvider)
         .cleanWebDavDeprecatedPlainFiles();
     if (!mounted) return;
     if (cleaned == null) {
@@ -184,7 +186,7 @@ class _VaultSecurityStatusScreenState
 
   Future<void> _handleCleanExportPlain() async {
     final result = await ref
-        .read(syncCoordinatorProvider.notifier)
+        .read(desktopSyncFacadeProvider)
         .cleanWebDavPlainExport();
     if (!mounted) return;
     if (result == WebDavExportCleanupStatus.blocked) {
@@ -389,7 +391,7 @@ class _VaultSecurityStatusScreenState
     if (!mounted || password == null || password.trim().isEmpty) return;
 
     final error = await ref
-        .read(syncCoordinatorProvider.notifier)
+        .read(desktopSyncFacadeProvider)
         .verifyWebDavBackup(
           password: password,
           deep: mode == _BackupTestMode.deep,

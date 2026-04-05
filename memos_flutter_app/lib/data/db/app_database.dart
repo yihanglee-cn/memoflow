@@ -7,12 +7,24 @@ import 'package:sqflite/sqflite.dart';
 
 import '../../core/debug_ephemeral_storage.dart';
 import '../../core/tags.dart';
+import 'db_write_protocol.dart';
+import 'desktop_db_write_gateway.dart';
+import 'app_database_write_dao.dart';
 import '../models/memo_location.dart';
 
 class AppDatabase {
-  AppDatabase({String dbName = 'memos_app.db'}) : _dbName = dbName;
+  AppDatabase({
+    String dbName = 'memos_app.db',
+    String? workspaceKey,
+    DesktopDbWriteGateway? writeGateway,
+  }) : _dbName = dbName,
+       _workspaceKey = workspaceKey ?? dbName,
+       _writeGateway = writeGateway;
 
   final String _dbName;
+  final String _workspaceKey;
+  final DesktopDbWriteGateway? _writeGateway;
+  late final AppDatabaseWriteDao _writeDao = AppDatabaseWriteDao(db: this);
   static const Object _displayTimeUnspecified = Object();
   static const _dbVersion = 20;
   static const int outboxStatePending = 0;
@@ -29,8 +41,11 @@ class AppDatabase {
   Database? _db;
   Future<Database>? _openingDb;
   final _changes = StreamController<void>.broadcast();
+  int _localWriteDepth = 0;
 
   Stream<void> get changes => _changes.stream;
+  String get dbName => _dbName;
+  String get workspaceKey => _workspaceKey;
 
   Future<Database> _open() async {
     final basePath = await resolveDatabasesDirectoryPath();
@@ -540,6 +555,578 @@ CREATE TABLE IF NOT EXISTS outbox (
     } catch (_) {}
   }
 
+  bool get _writeProxyEnabled => _writeGateway != null;
+
+  Future<T> _runLocalWrite<T>(Future<T> Function() action) async {
+    _localWriteDepth += 1;
+    try {
+      return await action();
+    } finally {
+      _localWriteDepth -= 1;
+    }
+  }
+
+  Future<T> _dispatchWriteCommand<T>({
+    required String operation,
+    required Map<String, dynamic> payload,
+    required T Function(Object? raw) decode,
+  }) async {
+    final gateway = _writeGateway;
+    if (gateway == null) {
+      throw StateError('Write gateway is not configured.');
+    }
+    final result = await gateway.execute<T>(
+      workspaceKey: _workspaceKey,
+      dbName: _dbName,
+      commandType: appDatabaseWriteCommandType,
+      operation: operation,
+      payload: payload,
+      localExecute: () =>
+          _executeWriteOperationLocally(operation: operation, payload: payload),
+      decode: decode,
+    );
+    if (gateway.isRemote) {
+      _notifyChanged();
+    }
+    return result;
+  }
+
+  Future<Object?> executeWriteEnvelopeLocally(DbWriteEnvelope envelope) async {
+    if (envelope.commandType != appDatabaseWriteCommandType) {
+      throw UnsupportedError('Unsupported app database command type.');
+    }
+    final gateway = _writeGateway;
+    if (gateway is OwnerDesktopDbWriteGateway) {
+      return gateway.executeEnvelope<Object?>(
+        envelope: envelope,
+        localExecute: () => _executeWriteOperationLocally(
+          operation: envelope.operation,
+          payload: envelope.payload,
+        ),
+        decode: (raw) => raw,
+      );
+    }
+    return _executeWriteOperationLocally(
+      operation: envelope.operation,
+      payload: envelope.payload,
+    );
+  }
+
+  Future<Object?> _executeWriteOperationLocally({
+    required String operation,
+    required Map<String, dynamic> payload,
+  }) async {
+    switch (operation) {
+      case 'upsertMemo':
+        await _runLocalWrite(
+          () => upsertMemo(
+            uid: _requiredString(payload, 'uid'),
+            content: payload['content'] as String? ?? '',
+            visibility: payload['visibility'] as String? ?? 'PRIVATE',
+            pinned: _readBoolPayload(payload, 'pinned'),
+            state: payload['state'] as String? ?? 'NORMAL',
+            createTimeSec: _requiredInt(payload, 'createTimeSec'),
+            displayTimeSec: payload['preserveDisplayTime'] == true
+                ? _displayTimeUnspecified
+                : payload['displayTimeSec'],
+            updateTimeSec: _requiredInt(payload, 'updateTimeSec'),
+            tags: _readStringListPayload(payload, 'tags'),
+            attachments: _readMapListPayload(payload, 'attachments'),
+            location: _readMemoLocationPayload(payload, 'location'),
+            relationCount: _optionalInt(payload, 'relationCount') ?? 0,
+            syncState: _requiredInt(payload, 'syncState'),
+            lastError: payload['lastError'] as String?,
+          ),
+        );
+        return null;
+      case 'updateMemoSyncState':
+        await _runLocalWrite(
+          () => updateMemoSyncState(
+            _requiredString(payload, 'uid'),
+            syncState: _requiredInt(payload, 'syncState'),
+            lastError: payload['lastError'] as String?,
+          ),
+        );
+        return null;
+      case 'updateMemoAttachmentsJson':
+        await _runLocalWrite(
+          () => updateMemoAttachmentsJson(
+            _requiredString(payload, 'uid'),
+            attachmentsJson: payload['attachmentsJson'] as String? ?? '[]',
+          ),
+        );
+        return null;
+      case 'removePendingAttachmentPlaceholder':
+        await _runLocalWrite(
+          () => removePendingAttachmentPlaceholder(
+            memoUid: _requiredString(payload, 'memoUid'),
+            attachmentUid: _requiredString(payload, 'attachmentUid'),
+          ),
+        );
+        return null;
+      case 'upsertMemoRelationsCache':
+        await _runLocalWrite(
+          () => upsertMemoRelationsCache(
+            _requiredString(payload, 'memoUid'),
+            relationsJson: payload['relationsJson'] as String? ?? '{}',
+          ),
+        );
+        return null;
+      case 'deleteMemoRelationsCache':
+        await _runLocalWrite(
+          () => deleteMemoRelationsCache(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'insertMemoVersion':
+        return _runLocalWrite(
+          () => insertMemoVersion(
+            memoUid: _requiredString(payload, 'memoUid'),
+            snapshotTime: _requiredInt(payload, 'snapshotTime'),
+            summary: payload['summary'] as String? ?? '',
+            payloadJson: payload['payloadJson'] as String? ?? '{}',
+          ),
+        );
+      case 'deleteMemoVersionById':
+        await _runLocalWrite(
+          () => deleteMemoVersionById(_requiredInt(payload, 'id')),
+        );
+        return null;
+      case 'deleteMemoVersionsByMemoUid':
+        await _runLocalWrite(
+          () =>
+              deleteMemoVersionsByMemoUid(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'insertRecycleBinItem':
+        return _runLocalWrite(
+          () => insertRecycleBinItem(
+            itemType: payload['itemType'] as String? ?? '',
+            memoUid: _requiredString(payload, 'memoUid'),
+            summary: payload['summary'] as String? ?? '',
+            payloadJson: payload['payloadJson'] as String? ?? '{}',
+            deletedTime: _requiredInt(payload, 'deletedTime'),
+            expireTime: _requiredInt(payload, 'expireTime'),
+          ),
+        );
+      case 'upsertMemoDeleteTombstone':
+        await _runLocalWrite(
+          () => upsertMemoDeleteTombstone(
+            memoUid: _requiredString(payload, 'memoUid'),
+            state:
+                payload['state'] as String? ??
+                memoDeleteTombstoneStateLocalOnly,
+            lastError: payload['lastError'] as String?,
+            deletedTime: _optionalInt(payload, 'deletedTime'),
+          ),
+        );
+        return null;
+      case 'upsertMemoInlineImageSource':
+        await _runLocalWrite(
+          () => upsertMemoInlineImageSource(
+            memoUid: _requiredString(payload, 'memoUid'),
+            localUrl: payload['localUrl'] as String? ?? '',
+            sourceUrl: payload['sourceUrl'] as String? ?? '',
+          ),
+        );
+        return null;
+      case 'deleteMemoInlineImageSources':
+        await _runLocalWrite(
+          () =>
+              deleteMemoInlineImageSources(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'deleteMemoDeleteTombstone':
+        await _runLocalWrite(
+          () => deleteMemoDeleteTombstone(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'replaceMemoFromLocalLibrary':
+        await _runLocalWrite(
+          () => replaceMemoFromLocalLibrary(
+            uid: _requiredString(payload, 'uid'),
+            content: payload['content'] as String? ?? '',
+            visibility: payload['visibility'] as String? ?? 'PRIVATE',
+            pinned: _readBoolPayload(payload, 'pinned'),
+            state: payload['state'] as String? ?? 'NORMAL',
+            createTimeSec: _requiredInt(payload, 'createTimeSec'),
+            displayTimeSec: payload['displayTimeSec'],
+            displayTimeSpecified:
+                payload['displayTimeSpecified'] == null ||
+                payload['displayTimeSpecified'] == true,
+            updateTimeSec: _requiredInt(payload, 'updateTimeSec'),
+            tags: _readStringListPayload(payload, 'tags'),
+            attachments: _readMapListPayload(payload, 'attachments'),
+            location: _readMemoLocationPayload(payload, 'location'),
+            relationCount: _optionalInt(payload, 'relationCount') ?? 0,
+            syncState: _requiredInt(payload, 'syncState'),
+            lastError: payload['lastError'] as String?,
+            clearOutbox: _readBoolPayload(payload, 'clearOutbox'),
+            relationsMode: payload['relationsMode'] as String? ?? 'none',
+            relationsJson: payload['relationsJson'] as String?,
+          ),
+        );
+        return null;
+      case 'deleteMemoFromLocalLibrary':
+        await _runLocalWrite(
+          () => deleteMemoFromLocalLibrary(
+            memoUid: _requiredString(payload, 'memoUid'),
+          ),
+        );
+        return null;
+      case 'deleteMemoAfterRecycleBinMove':
+        await _runLocalWrite(
+          () => deleteMemoAfterRecycleBinMove(
+            memoUid: _requiredString(payload, 'memoUid'),
+            draftAttachmentNames: _readStringListPayload(
+              payload,
+              'draftAttachmentNames',
+            ),
+          ),
+        );
+        return null;
+      case 'renameMemoUidAndRewriteOutboxMemoUids':
+        return _runLocalWrite(
+          () => renameMemoUidAndRewriteOutboxMemoUids(
+            oldUid: _requiredString(payload, 'oldUid'),
+            newUid: _requiredString(payload, 'newUid'),
+          ),
+        );
+      case 'deleteRecycleBinItemById':
+        await _runLocalWrite(
+          () => deleteRecycleBinItemById(_requiredInt(payload, 'id')),
+        );
+        return null;
+      case 'clearRecycleBinItems':
+        await _runLocalWrite(clearRecycleBinItems);
+        return null;
+      case 'renameMemoUid':
+        await _runLocalWrite(
+          () => renameMemoUid(
+            oldUid: _requiredString(payload, 'oldUid'),
+            newUid: _requiredString(payload, 'newUid'),
+          ),
+        );
+        return null;
+      case 'rewriteOutboxMemoUids':
+        return _runLocalWrite(
+          () => rewriteOutboxMemoUids(
+            oldUid: _requiredString(payload, 'oldUid'),
+            newUid: _requiredString(payload, 'newUid'),
+          ),
+        );
+      case 'enqueueOutbox':
+        return _runLocalWrite(
+          () => enqueueOutbox(
+            type: payload['type'] as String? ?? '',
+            payload: _readObjectMapPayload(
+              payload,
+              'payload',
+            ).cast<String, dynamic>(),
+          ),
+        );
+      case 'enqueueOutboxBatch':
+        return _runLocalWrite(
+          () => enqueueOutboxBatch(
+            items: _readObjectMapListPayload(payload, 'items'),
+          ),
+        );
+      case 'claimNextOutboxRunnable':
+        return _runLocalWrite(
+          () => claimNextOutboxRunnable(nowMs: _optionalInt(payload, 'nowMs')),
+        );
+      case 'claimOutboxTaskById':
+        return _runLocalWrite(
+          () => claimOutboxTaskById(
+            _requiredInt(payload, 'id'),
+            nowMs: _optionalInt(payload, 'nowMs'),
+          ),
+        );
+      case 'recoverOutboxRunningTasks':
+        return _runLocalWrite(recoverOutboxRunningTasks);
+      case 'markOutboxDone':
+        await _runLocalWrite(() => markOutboxDone(_requiredInt(payload, 'id')));
+        return null;
+      case 'completeOutboxTask':
+        await _runLocalWrite(
+          () => completeOutboxTask(_requiredInt(payload, 'id')),
+        );
+        return null;
+      case 'markOutboxError':
+        await _runLocalWrite(
+          () => markOutboxError(
+            _requiredInt(payload, 'id'),
+            error: payload['error'] as String? ?? '',
+          ),
+        );
+        return null;
+      case 'markOutboxRetryScheduled':
+        await _runLocalWrite(
+          () => markOutboxRetryScheduled(
+            _requiredInt(payload, 'id'),
+            error: payload['error'] as String? ?? '',
+            retryAtMs: _requiredInt(payload, 'retryAtMs'),
+          ),
+        );
+        return null;
+      case 'markOutboxQuarantined':
+        await _runLocalWrite(
+          () => markOutboxQuarantined(
+            _requiredInt(payload, 'id'),
+            error: payload['error'] as String? ?? '',
+            failureCode: payload['failureCode'] as String? ?? '',
+            failureKind: payload['failureKind'] as String? ?? '',
+            incrementAttempts:
+                payload['incrementAttempts'] == null ||
+                payload['incrementAttempts'] == true,
+          ),
+        );
+        return null;
+      case 'markOutboxRetryPending':
+        await _runLocalWrite(
+          () => markOutboxRetryPending(
+            _requiredInt(payload, 'id'),
+            error: payload['error'] as String? ?? '',
+          ),
+        );
+        return null;
+      case 'retryOutboxErrors':
+        return _runLocalWrite(
+          () => retryOutboxErrors(memoUid: payload['memoUid'] as String?),
+        );
+      case 'retryOutboxItem':
+        await _runLocalWrite(
+          () => retryOutboxItem(_requiredInt(payload, 'id')),
+        );
+        return null;
+      case 'deleteOutbox':
+        await _runLocalWrite(() => deleteOutbox(_requiredInt(payload, 'id')));
+        return null;
+      case 'deleteOutboxItems':
+        return _runLocalWrite(
+          () => deleteOutboxItems(_readIntListPayload(payload, 'ids')),
+        );
+      case 'discardMissingSourceUploadTask':
+        await _runLocalWrite(
+          () => discardMissingSourceUploadTask(
+            outboxId: _requiredInt(payload, 'outboxId'),
+            memoUid: payload['memoUid'] as String? ?? '',
+            attachmentUid: payload['attachmentUid'] as String? ?? '',
+          ),
+        );
+        return null;
+      case 'deleteOutboxForMemo':
+        await _runLocalWrite(
+          () => deleteOutboxForMemo(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'clearOutbox':
+        await _runLocalWrite(clearOutbox);
+        return null;
+      case 'upsertImportHistory':
+        return _runLocalWrite(
+          () => upsertImportHistory(
+            source: payload['source'] as String? ?? '',
+            fileMd5: payload['fileMd5'] as String? ?? '',
+            fileName: payload['fileName'] as String? ?? '',
+            status: _requiredInt(payload, 'status'),
+            memoCount: _requiredInt(payload, 'memoCount'),
+            attachmentCount: _requiredInt(payload, 'attachmentCount'),
+            failedCount: _requiredInt(payload, 'failedCount'),
+            error: payload['error'] as String?,
+          ),
+        );
+      case 'updateImportHistory':
+        await _runLocalWrite(
+          () => updateImportHistory(
+            id: _requiredInt(payload, 'id'),
+            status: _requiredInt(payload, 'status'),
+            memoCount: _requiredInt(payload, 'memoCount'),
+            attachmentCount: _requiredInt(payload, 'attachmentCount'),
+            failedCount: _requiredInt(payload, 'failedCount'),
+            error: payload['error'] as String?,
+          ),
+        );
+        return null;
+      case 'deleteMemoByUid':
+        await _runLocalWrite(
+          () => deleteMemoByUid(_requiredString(payload, 'uid')),
+        );
+        return null;
+      case 'upsertMemoReminder':
+        await _runLocalWrite(
+          () => upsertMemoReminder(
+            memoUid: _requiredString(payload, 'memoUid'),
+            mode: payload['mode'] as String? ?? '',
+            timesJson: payload['timesJson'] as String? ?? '[]',
+          ),
+        );
+        return null;
+      case 'deleteMemoReminder':
+        await _runLocalWrite(
+          () => deleteMemoReminder(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      case 'upsertComposeDraftRow':
+        await _runLocalWrite(
+          () => upsertComposeDraftRow(_readObjectMapPayload(payload, 'row')),
+        );
+        return null;
+      case 'replaceComposeDraftRows':
+        await _runLocalWrite(
+          () => replaceComposeDraftRows(
+            workspaceKey: _requiredString(payload, 'workspaceKey'),
+            rows: _readObjectMapListPayload(payload, 'rows'),
+          ),
+        );
+        return null;
+      case 'deleteComposeDraft':
+        await _runLocalWrite(
+          () => deleteComposeDraft(_requiredString(payload, 'uid')),
+        );
+        return null;
+      case 'deleteComposeDraftsByWorkspace':
+        await _runLocalWrite(
+          () => deleteComposeDraftsByWorkspace(
+            _requiredString(payload, 'workspaceKey'),
+          ),
+        );
+        return null;
+      case 'rebuildStatsCache':
+        await _runLocalWrite(rebuildStatsCache);
+        return null;
+      default:
+        throw UnsupportedError(
+          'Unsupported AppDatabase write operation: $operation',
+        );
+    }
+  }
+
+  static int _requiredInt(Map<String, dynamic> payload, String key) {
+    final value = payload[key];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    throw StateError('Missing integer payload: $key');
+  }
+
+  static int? _optionalInt(Map<String, dynamic> payload, String key) {
+    final value = payload[key];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return null;
+  }
+
+  static String _requiredString(Map<String, dynamic> payload, String key) {
+    final value = (payload[key] as String? ?? '').trim();
+    if (value.isEmpty) {
+      throw StateError('Missing string payload: $key');
+    }
+    return value;
+  }
+
+  static bool _readBoolPayload(Map<String, dynamic> payload, String key) {
+    return payload[key] == true;
+  }
+
+  static List<String> _readStringListPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List) return const <String>[];
+    return value
+        .map((item) => (item as String? ?? '').trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static List<int> _readIntListPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List) return const <int>[];
+    return value
+        .map((item) {
+          if (item is int) return item;
+          if (item is num) return item.toInt();
+          return null;
+        })
+        .whereType<int>()
+        .toList(growable: false);
+  }
+
+  static List<Map<String, dynamic>> _readMapListPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => Map<Object?, Object?>.from(item).map<String, dynamic>(
+            (mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  static Map<String, Object?> _readObjectMapPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! Map) return const <String, Object?>{};
+    return Map<Object?, Object?>.from(value).map<String, Object?>(
+      (mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue),
+    );
+  }
+
+  static List<Map<String, Object?>> _readObjectMapListPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List) return const <Map<String, Object?>>[];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) => Map<Object?, Object?>.from(item).map<String, Object?>(
+            (mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue),
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  static MemoLocation? _readMemoLocationPayload(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! Map) return null;
+    return MemoLocation.fromJson(
+      Map<Object?, Object?>.from(value).map<String, dynamic>(
+        (mapKey, mapValue) => MapEntry(mapKey.toString(), mapValue),
+      ),
+    );
+  }
+
+  static int _decodeIntResult(Object? raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    return 0;
+  }
+
+  static Map<String, dynamic>? _decodeMapResult(Object? raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) {
+      return Map<Object?, Object?>.from(
+        raw,
+      ).map<String, dynamic>((key, value) => MapEntry(key.toString(), value));
+    }
+    return null;
+  }
+
   void _notifyChanged() {
     if (!_changes.isClosed) {
       _changes.add(null);
@@ -599,7 +1186,7 @@ CREATE TABLE IF NOT EXISTS outbox (
         updates.add((id: id, tags: normalized));
       }
       if (updates.isNotEmpty) {
-        await db.transaction((txn) async {
+        await AppDatabaseWriteDao.runTransaction<void>(db, (txn) async {
           for (final update in updates) {
             await txn.update(
               'memos',
@@ -632,6 +1219,23 @@ CREATE TABLE IF NOT EXISTS outbox (
       counts[key] = (counts[key] ?? 0) + 1;
     }
     return counts;
+  }
+
+  bool isDisplayTimeUnspecified(Object? value) {
+    return identical(value, _displayTimeUnspecified);
+  }
+
+  int? normalizeDisplayTimeSec(Object? displayTimeSec) {
+    return switch (displayTimeSec) {
+      int value => value,
+      num value => value.toInt(),
+      null || _displayTimeUnspecified => null,
+      _ => throw ArgumentError.value(
+        displayTimeSec,
+        'displayTimeSec',
+        'must be an int, num, null, or omitted',
+      ),
+    };
   }
 
   Future<ResolvedTag?> resolveTagPath(DatabaseExecutor txn, String rawTag) {
@@ -744,6 +1348,63 @@ WHERE mt.memo_uid = ?;
       tags: deduped,
     );
     await _applyMemoCacheDelta(txn, before: before, after: after);
+  }
+
+  Future<Map<String, dynamic>?> loadMemoSnapshotPayload(
+    DatabaseExecutor txn,
+    String uid,
+  ) async {
+    return _memoSnapshotToPayload(await _fetchMemoSnapshot(txn, uid));
+  }
+
+  Map<String, dynamic> createMemoSnapshotPayload({
+    required String state,
+    required int createTimeSec,
+    required String content,
+    required List<String> tags,
+  }) {
+    return _memoSnapshotToPayload(
+          _MemoSnapshot(
+            state: state,
+            createTimeSec: createTimeSec,
+            content: content,
+            tags: tags,
+          ),
+        ) ??
+        const <String, dynamic>{};
+  }
+
+  Future<void> applyMemoCacheDeltaPayload(
+    DatabaseExecutor txn, {
+    required Map<String, dynamic>? before,
+    required Map<String, dynamic>? after,
+  }) async {
+    await _applyMemoCacheDelta(
+      txn,
+      before: _memoSnapshotFromPayload(before),
+      after: _memoSnapshotFromPayload(after),
+    );
+  }
+
+  Future<void> replaceMemoFtsEntry(
+    DatabaseExecutor executor, {
+    required int rowId,
+    required String content,
+    required String tags,
+  }) {
+    return _replaceMemoFtsEntry(
+      executor,
+      rowId: rowId,
+      content: content,
+      tags: tags,
+    );
+  }
+
+  Future<void> deleteMemoFtsEntry(
+    DatabaseExecutor executor, {
+    required int rowId,
+  }) {
+    return _deleteMemoFtsEntry(executor, rowId: rowId);
   }
 
   static int _countChars(String content) {
@@ -1026,118 +1687,51 @@ WHERE id = 1;
     required int syncState,
     String? lastError,
   }) async {
-    final db = await this.db;
-    final attachmentsJson = jsonEncode(attachments);
-    final locationPlaceholder = location?.placeholder;
-    final locationLat = location?.latitude;
-    final locationLng = location?.longitude;
-    final shouldPreserveDisplayTime = identical(
-      displayTimeSec,
-      _displayTimeUnspecified,
-    );
-    final normalizedDisplayTimeSec = switch (displayTimeSec) {
-      int value => value,
-      num value => value.toInt(),
-      null || _displayTimeUnspecified => null,
-      _ => throw ArgumentError.value(
-        displayTimeSec,
-        'displayTimeSec',
-        'must be an int, num, null, or omitted',
-      ),
-    };
-
-    await db.transaction((txn) async {
-      final normalizedTags = _normalizeTags(tags);
-      final resolved = <String, int>{};
-      for (final raw in normalizedTags) {
-        final resolvedTag = await resolveTagPath(txn, raw);
-        if (resolvedTag == null) continue;
-        resolved.putIfAbsent(resolvedTag.path, () => resolvedTag.id);
-      }
-      final canonicalTags = resolved.keys.toList(growable: false);
-      final tagsText = canonicalTags.join(' ');
-
-      final before = await _fetchMemoSnapshot(txn, uid);
-      final values = <String, Object?>{
-        'content': content,
-        'visibility': visibility,
-        'pinned': pinned ? 1 : 0,
-        'state': state,
-        'create_time': createTimeSec,
-        'update_time': updateTimeSec,
-        'tags': tagsText,
-        'attachments_json': attachmentsJson,
-        'location_placeholder': locationPlaceholder,
-        'location_lat': locationLat,
-        'location_lng': locationLng,
-        'relation_count': relationCount,
-        'sync_state': syncState,
-        'last_error': lastError,
-      };
-      if (!shouldPreserveDisplayTime) {
-        values['display_time'] = normalizedDisplayTimeSec;
-      }
-      final updated = await txn.update(
-        'memos',
-        values,
-        where: 'uid = ?',
-        whereArgs: [uid],
-      );
-
-      int rowId;
-      if (updated == 0) {
-        rowId = await txn.insert('memos', {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemo',
+        payload: <String, dynamic>{
           'uid': uid,
           'content': content,
           'visibility': visibility,
-          'pinned': pinned ? 1 : 0,
+          'pinned': pinned,
           'state': state,
-          'create_time': createTimeSec,
-          'display_time': normalizedDisplayTimeSec,
-          'update_time': updateTimeSec,
-          'tags': tagsText,
-          'attachments_json': attachmentsJson,
-          'location_placeholder': locationPlaceholder,
-          'location_lat': locationLat,
-          'location_lng': locationLng,
-          'relation_count': relationCount,
-          'sync_state': syncState,
-          'last_error': lastError,
-        }, conflictAlgorithm: ConflictAlgorithm.abort);
-      } else {
-        final rows = await txn.query(
-          'memos',
-          columns: const ['id'],
-          where: 'uid = ?',
-          whereArgs: [uid],
-          limit: 1,
-        );
-        rowId = (rows.firstOrNull?['id'] as int?) ?? 0;
-        if (rowId <= 0) return;
-      }
-
-      await _replaceMemoFtsEntry(
-        txn,
-        rowId: rowId,
-        content: content,
-        tags: tagsText,
+          'createTimeSec': createTimeSec,
+          'displayTimeSec': identical(displayTimeSec, _displayTimeUnspecified)
+              ? null
+              : displayTimeSec,
+          'preserveDisplayTime': identical(
+            displayTimeSec,
+            _displayTimeUnspecified,
+          ),
+          'updateTimeSec': updateTimeSec,
+          'tags': tags,
+          'attachments': attachments,
+          'location': location?.toJson(),
+          'relationCount': relationCount,
+          'syncState': syncState,
+          'lastError': lastError,
+        },
+        decode: (_) {},
       );
-
-      await updateMemoTagsMapping(
-        txn,
-        uid,
-        resolved.values.toList(growable: false),
-      );
-
-      final after = _MemoSnapshot(
-        state: state,
-        createTimeSec: createTimeSec,
-        content: content,
-        tags: canonicalTags,
-      );
-      await _applyMemoCacheDelta(txn, before: before, after: after);
-    });
-    _notifyChanged();
+      return;
+    }
+    await _writeDao.upsertMemo(
+      uid: uid,
+      content: content,
+      visibility: visibility,
+      pinned: pinned,
+      state: state,
+      createTimeSec: createTimeSec,
+      displayTimeSec: displayTimeSec,
+      updateTimeSec: updateTimeSec,
+      tags: tags,
+      attachments: attachments,
+      location: location,
+      relationCount: relationCount,
+      syncState: syncState,
+      lastError: lastError,
+    );
   }
 
   Future<void> updateMemoSyncState(
@@ -1145,70 +1739,64 @@ WHERE id = 1;
     required int syncState,
     String? lastError,
   }) async {
-    final db = await this.db;
-    await db.update(
-      'memos',
-      {'sync_state': syncState, 'last_error': lastError},
-      where: 'uid = ?',
-      whereArgs: [uid],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'updateMemoSyncState',
+        payload: <String, dynamic>{
+          'uid': uid,
+          'syncState': syncState,
+          'lastError': lastError,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.updateMemoSyncState(
+      uid,
+      syncState: syncState,
+      lastError: lastError,
     );
-    _notifyChanged();
   }
 
   Future<void> updateMemoAttachmentsJson(
     String uid, {
     required String attachmentsJson,
   }) async {
-    final db = await this.db;
-    await db.update(
-      'memos',
-      {'attachments_json': attachmentsJson},
-      where: 'uid = ?',
-      whereArgs: [uid],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'updateMemoAttachmentsJson',
+        payload: <String, dynamic>{
+          'uid': uid,
+          'attachmentsJson': attachmentsJson,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.updateMemoAttachmentsJson(
+      uid,
+      attachmentsJson: attachmentsJson,
     );
-    _notifyChanged();
   }
 
   Future<void> removePendingAttachmentPlaceholder({
     required String memoUid,
     required String attachmentUid,
   }) async {
-    final trimmedMemoUid = memoUid.trim();
-    final trimmedAttachmentUid = attachmentUid.trim();
-    if (trimmedMemoUid.isEmpty || trimmedAttachmentUid.isEmpty) return;
-
-    final row = await getMemoByUid(trimmedMemoUid);
-    final raw = row?['attachments_json'];
-    if (raw is! String || raw.trim().isEmpty) return;
-
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(raw);
-    } catch (_) {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'removePendingAttachmentPlaceholder',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'attachmentUid': attachmentUid,
+        },
+        decode: (_) {},
+      );
       return;
     }
-    if (decoded is! List) return;
-
-    final expectedNames = <String>{
-      'attachments/$trimmedAttachmentUid',
-      'resources/$trimmedAttachmentUid',
-    };
-    var changed = false;
-    final next = <Map<String, dynamic>>[];
-    for (final item in decoded) {
-      if (item is! Map) continue;
-      final map = item.cast<String, dynamic>();
-      final name = (map['name'] as String?)?.trim() ?? '';
-      if (expectedNames.contains(name)) {
-        changed = true;
-        continue;
-      }
-      next.add(map);
-    }
-    if (!changed) return;
-    await updateMemoAttachmentsJson(
-      trimmedMemoUid,
-      attachmentsJson: jsonEncode(next),
+    await _writeDao.removePendingAttachmentPlaceholder(
+      memoUid: memoUid,
+      attachmentUid: attachmentUid,
     );
   }
 
@@ -1232,36 +1820,33 @@ WHERE id = 1;
     String memoUid, {
     required String relationsJson,
   }) async {
-    final normalized = memoUid.trim();
-    if (normalized.isEmpty) return;
-    final db = await this.db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated = await db.update(
-      'memo_relations_cache',
-      {'relations_json': relationsJson, 'updated_time': now},
-      where: 'memo_uid = ?',
-      whereArgs: [normalized],
-    );
-    if (updated == 0) {
-      await db.insert('memo_relations_cache', {
-        'memo_uid': normalized,
-        'relations_json': relationsJson,
-        'updated_time': now,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemoRelationsCache',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'relationsJson': relationsJson,
+        },
+        decode: (_) {},
+      );
+      return;
     }
-    _notifyChanged();
+    await _writeDao.upsertMemoRelationsCache(
+      memoUid,
+      relationsJson: relationsJson,
+    );
   }
 
   Future<void> deleteMemoRelationsCache(String memoUid) async {
-    final normalized = memoUid.trim();
-    if (normalized.isEmpty) return;
-    final db = await this.db;
-    await db.delete(
-      'memo_relations_cache',
-      where: 'memo_uid = ?',
-      whereArgs: [normalized],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoRelationsCache',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoRelationsCache(memoUid);
   }
 
   Future<int> insertMemoVersion({
@@ -1270,21 +1855,24 @@ WHERE id = 1;
     required String summary,
     required String payloadJson,
   }) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) {
-      throw const FormatException('memo_uid is required');
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'insertMemoVersion',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'snapshotTime': snapshotTime,
+          'summary': summary,
+          'payloadJson': payloadJson,
+        },
+        decode: _decodeIntResult,
+      );
     }
-    final db = await this.db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final id = await db.insert('memo_versions', {
-      'memo_uid': normalizedUid,
-      'snapshot_time': snapshotTime,
-      'summary': summary,
-      'payload_json': payloadJson,
-      'created_time': now,
-    });
-    _notifyChanged();
-    return id;
+    return _writeDao.insertMemoVersion(
+      memoUid: memoUid,
+      snapshotTime: snapshotTime,
+      summary: summary,
+      payloadJson: payloadJson,
+    );
   }
 
   Future<List<Map<String, dynamic>>> listMemoVersionsByUid(
@@ -1347,21 +1935,27 @@ WHERE id = 1;
   }
 
   Future<void> deleteMemoVersionById(int id) async {
-    final db = await this.db;
-    await db.delete('memo_versions', where: 'id = ?', whereArgs: [id]);
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoVersionById',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoVersionById(id);
   }
 
   Future<void> deleteMemoVersionsByMemoUid(String memoUid) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) return;
-    final db = await this.db;
-    await db.delete(
-      'memo_versions',
-      where: 'memo_uid = ?',
-      whereArgs: [normalizedUid],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoVersionsByMemoUid',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoVersionsByMemoUid(memoUid);
   }
 
   Future<int> insertRecycleBinItem({
@@ -1372,17 +1966,28 @@ WHERE id = 1;
     required int deletedTime,
     required int expireTime,
   }) async {
-    final db = await this.db;
-    final id = await db.insert('recycle_bin_items', {
-      'item_type': itemType,
-      'memo_uid': memoUid.trim(),
-      'summary': summary,
-      'payload_json': payloadJson,
-      'deleted_time': deletedTime,
-      'expire_time': expireTime,
-    });
-    _notifyChanged();
-    return id;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'insertRecycleBinItem',
+        payload: <String, dynamic>{
+          'itemType': itemType,
+          'memoUid': memoUid,
+          'summary': summary,
+          'payloadJson': payloadJson,
+          'deletedTime': deletedTime,
+          'expireTime': expireTime,
+        },
+        decode: _decodeIntResult,
+      );
+    }
+    return _writeDao.insertRecycleBinItem(
+      itemType: itemType,
+      memoUid: memoUid,
+      summary: summary,
+      payloadJson: payloadJson,
+      deletedTime: deletedTime,
+      expireTime: expireTime,
+    );
   }
 
   Future<Set<String>> listRecycleBinMemoUids() async {
@@ -1424,32 +2029,25 @@ WHERE id = 1;
     String? lastError,
     int? deletedTime,
   }) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) return;
-    final db = await this.db;
-    final existing = await db.query(
-      'memo_delete_tombstones',
-      columns: const ['deleted_time'],
-      where: 'memo_uid = ?',
-      whereArgs: [normalizedUid],
-      limit: 1,
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemoDeleteTombstone',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'state': state,
+          'lastError': lastError,
+          'deletedTime': deletedTime,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.upsertMemoDeleteTombstone(
+      memoUid: memoUid,
+      state: state,
+      lastError: lastError,
+      deletedTime: deletedTime,
     );
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final deletedTimeValue = switch (existing.firstOrNull?['deleted_time']) {
-      int value when deletedTime == null => value,
-      num value when deletedTime == null => value.toInt(),
-      String value when deletedTime == null =>
-        int.tryParse(value.trim()) ?? now,
-      _ => deletedTime ?? now,
-    };
-    await db.insert('memo_delete_tombstones', {
-      'memo_uid': normalizedUid,
-      'state': state,
-      'deleted_time': deletedTimeValue,
-      'updated_time': now,
-      'last_error': lastError,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    _notifyChanged();
   }
 
   Future<Map<String, dynamic>?> getMemoDeleteTombstone(String memoUid) async {
@@ -1508,22 +2106,23 @@ WHERE id = 1;
     required String localUrl,
     required String sourceUrl,
   }) async {
-    final normalizedUid = memoUid.trim();
-    final normalizedLocalUrl = localUrl.trim();
-    final normalizedSourceUrl = sourceUrl.trim();
-    if (normalizedUid.isEmpty ||
-        normalizedLocalUrl.isEmpty ||
-        normalizedSourceUrl.isEmpty) {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemoInlineImageSource',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'localUrl': localUrl,
+          'sourceUrl': sourceUrl,
+        },
+        decode: (_) {},
+      );
       return;
     }
-    final db = await this.db;
-    await db.insert('memo_inline_image_sources', {
-      'memo_uid': normalizedUid,
-      'local_url': normalizedLocalUrl,
-      'source_url': normalizedSourceUrl,
-      'updated_time': DateTime.now().toUtc().millisecondsSinceEpoch,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    _notifyChanged();
+    await _writeDao.upsertMemoInlineImageSource(
+      memoUid: memoUid,
+      localUrl: localUrl,
+      sourceUrl: sourceUrl,
+    );
   }
 
   Future<Map<String, String>> listMemoInlineImageSources(String memoUid) async {
@@ -1548,27 +2147,132 @@ WHERE id = 1;
   }
 
   Future<void> deleteMemoInlineImageSources(String memoUid) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) return;
-    final db = await this.db;
-    await db.delete(
-      'memo_inline_image_sources',
-      where: 'memo_uid = ?',
-      whereArgs: [normalizedUid],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoInlineImageSources',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoInlineImageSources(memoUid);
   }
 
   Future<void> deleteMemoDeleteTombstone(String memoUid) async {
-    final normalizedUid = memoUid.trim();
-    if (normalizedUid.isEmpty) return;
-    final db = await this.db;
-    await db.delete(
-      'memo_delete_tombstones',
-      where: 'memo_uid = ?',
-      whereArgs: [normalizedUid],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoDeleteTombstone',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoDeleteTombstone(memoUid);
+  }
+
+  Future<void> replaceMemoFromLocalLibrary({
+    required String uid,
+    required String content,
+    required String visibility,
+    required bool pinned,
+    required String state,
+    required int createTimeSec,
+    Object? displayTimeSec,
+    bool displayTimeSpecified = false,
+    required int updateTimeSec,
+    required List<String> tags,
+    required List<Map<String, dynamic>> attachments,
+    required MemoLocation? location,
+    int relationCount = 0,
+    required int syncState,
+    String? lastError,
+    bool clearOutbox = false,
+    String relationsMode = 'none',
+    String? relationsJson,
+  }) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'replaceMemoFromLocalLibrary',
+        payload: <String, dynamic>{
+          'uid': uid,
+          'content': content,
+          'visibility': visibility,
+          'pinned': pinned,
+          'state': state,
+          'createTimeSec': createTimeSec,
+          'displayTimeSec': displayTimeSec,
+          'displayTimeSpecified': displayTimeSpecified,
+          'updateTimeSec': updateTimeSec,
+          'tags': tags,
+          'attachments': attachments,
+          if (location != null) 'location': location.toJson(),
+          'relationCount': relationCount,
+          'syncState': syncState,
+          'lastError': lastError,
+          'clearOutbox': clearOutbox,
+          'relationsMode': relationsMode,
+          'relationsJson': relationsJson,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.replaceMemoFromLocalLibrary(
+      uid: uid,
+      content: content,
+      visibility: visibility,
+      pinned: pinned,
+      state: state,
+      createTimeSec: createTimeSec,
+      displayTimeSec: displayTimeSec,
+      displayTimeSpecified: displayTimeSpecified,
+      updateTimeSec: updateTimeSec,
+      tags: tags,
+      attachments: attachments,
+      location: location,
+      relationCount: relationCount,
+      syncState: syncState,
+      lastError: lastError,
+      clearOutbox: clearOutbox,
+      relationsMode: relationsMode,
+      relationsJson: relationsJson,
     );
-    _notifyChanged();
+  }
+
+  Future<void> deleteMemoFromLocalLibrary({required String memoUid}) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoFromLocalLibrary',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoFromLocalLibrary(memoUid: memoUid);
+  }
+
+  Future<void> deleteMemoAfterRecycleBinMove({
+    required String memoUid,
+    required List<String> draftAttachmentNames,
+  }) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoAfterRecycleBinMove',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'draftAttachmentNames': draftAttachmentNames,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+
+    final normalizedMemoUid = memoUid.trim();
+    if (normalizedMemoUid.isEmpty) return;
+    await _writeDao.deleteMemoAfterRecycleBinMove(
+      memoUid: normalizedMemoUid,
+      draftAttachmentNames: draftAttachmentNames,
+    );
   }
 
   Future<List<Map<String, dynamic>>> listRecycleBinItems() async {
@@ -1613,126 +2317,73 @@ WHERE id = 1;
   }
 
   Future<void> deleteRecycleBinItemById(int id) async {
-    final db = await this.db;
-    await db.delete('recycle_bin_items', where: 'id = ?', whereArgs: [id]);
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteRecycleBinItemById',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteRecycleBinItemById(id);
   }
 
   Future<void> clearRecycleBinItems() async {
-    final db = await this.db;
-    await db.delete('recycle_bin_items');
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'clearRecycleBinItems',
+        payload: const <String, dynamic>{},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.clearRecycleBinItems();
   }
 
   Future<void> renameMemoUid({
     required String oldUid,
     required String newUid,
   }) async {
-    final db = await this.db;
-    await db.transaction((txn) async {
-      await txn.update(
-        'memos',
-        {'uid': newUid},
-        where: 'uid = ?',
-        whereArgs: [oldUid],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'renameMemoUid',
+        payload: <String, dynamic>{'oldUid': oldUid, 'newUid': newUid},
+        decode: (_) {},
       );
-      await txn.update(
-        'memo_reminders',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
+      return;
+    }
+    await _writeDao.renameMemoUid(oldUid: oldUid, newUid: newUid);
+  }
+
+  Future<int> renameMemoUidAndRewriteOutboxMemoUids({
+    required String oldUid,
+    required String newUid,
+  }) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'renameMemoUidAndRewriteOutboxMemoUids',
+        payload: <String, dynamic>{'oldUid': oldUid, 'newUid': newUid},
+        decode: _decodeIntResult,
       );
-      await txn.update(
-        'attachments',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
-      );
-      await txn.update(
-        'memo_relations_cache',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
-      );
-      await txn.update(
-        'memo_versions',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
-      );
-      await txn.update(
-        'recycle_bin_items',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
-      );
-      await txn.update(
-        'memo_inline_image_sources',
-        {'memo_uid': newUid},
-        where: 'memo_uid = ?',
-        whereArgs: [oldUid],
-      );
-    });
-    _notifyChanged();
+    }
+    return _writeDao.renameMemoUidAndRewriteOutboxMemoUids(
+      oldUid: oldUid,
+      newUid: newUid,
+    );
   }
 
   Future<int> rewriteOutboxMemoUids({
     required String oldUid,
     required String newUid,
   }) async {
-    final db = await this.db;
-    var changedCount = 0;
-    final rows = await db.query(
-      'outbox',
-      columns: const ['id', 'type', 'payload'],
-    );
-    for (final row in rows) {
-      final id = row['id'];
-      final type = row['type'];
-      final payloadRaw = row['payload'];
-      if (id is! int || type is! String || payloadRaw is! String) continue;
-
-      Map<String, dynamic> payload;
-      try {
-        final decoded = jsonDecode(payloadRaw);
-        if (decoded is! Map) continue;
-        payload = decoded.cast<String, dynamic>();
-      } catch (_) {
-        continue;
-      }
-
-      var changed = false;
-      switch (type) {
-        case 'create_memo':
-        case 'update_memo':
-        case 'delete_memo':
-          if (payload['uid'] == oldUid) {
-            payload['uid'] = newUid;
-            changed = true;
-          }
-          break;
-        case 'upload_attachment':
-        case 'delete_attachment':
-          if (payload['memo_uid'] == oldUid) {
-            payload['memo_uid'] = newUid;
-            changed = true;
-          }
-          break;
-      }
-      if (!changed) continue;
-
-      await db.update(
-        'outbox',
-        {'payload': jsonEncode(payload)},
-        where: 'id = ?',
-        whereArgs: [id],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'rewriteOutboxMemoUids',
+        payload: <String, dynamic>{'oldUid': oldUid, 'newUid': newUid},
+        decode: _decodeIntResult,
       );
-      changedCount++;
     }
-    if (changedCount > 0) {
-      _notifyChanged();
-    }
-    return changedCount;
+    return _writeDao.rewriteOutboxMemoUids(oldUid: oldUid, newUid: newUid);
   }
 
   Future<Map<String, dynamic>?> getMemoByUid(String uid) async {
@@ -1751,21 +2402,28 @@ WHERE id = 1;
     required String type,
     required Map<String, dynamic> payload,
   }) async {
-    final db = await this.db;
-    final id = await db.insert('outbox', {
-      'type': type,
-      'payload': jsonEncode(payload),
-      'state': outboxStatePending,
-      'attempts': 0,
-      'last_error': null,
-      'failure_code': null,
-      'failure_kind': null,
-      'retry_at': null,
-      'quarantined_at': null,
-      'created_time': DateTime.now().toUtc().millisecondsSinceEpoch,
-    });
-    _notifyChanged();
-    return id;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'enqueueOutbox',
+        payload: <String, dynamic>{'type': type, 'payload': payload},
+        decode: _decodeIntResult,
+      );
+    }
+    return _writeDao.enqueueOutbox(type: type, payload: payload);
+  }
+
+  Future<int> enqueueOutboxBatch({
+    required List<Map<String, Object?>> items,
+  }) async {
+    if (items.isEmpty) return 0;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'enqueueOutboxBatch',
+        payload: <String, dynamic>{'items': items},
+        decode: _decodeIntResult,
+      );
+    }
+    return _writeDao.enqueueOutboxBatch(items: items);
   }
 
   Future<List<Map<String, dynamic>>> listOutboxPending({int limit = 50}) async {
@@ -2029,108 +2687,75 @@ WHERE id = 1;
   }
 
   Future<Map<String, dynamic>?> claimNextOutboxRunnable({int? nowMs}) async {
-    final db = await this.db;
-    final now = nowMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
-    final claimed = await db.transaction<Map<String, dynamic>?>((txn) async {
-      final rows = await txn.query(
-        'outbox',
-        where:
-            '(state = ? OR state = ?) AND (retry_at IS NULL OR retry_at <= ?)',
-        whereArgs: [outboxStatePending, outboxStateRetry, now],
-        orderBy: 'id ASC',
-        limit: 1,
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<Map<String, dynamic>?>(
+        operation: 'claimNextOutboxRunnable',
+        payload: <String, dynamic>{'nowMs': nowMs},
+        decode: _decodeMapResult,
       );
-      if (rows.isEmpty) return null;
-
-      final id = rows.first['id'];
-      if (id is! int) return null;
-
-      final updated = await txn.update(
-        'outbox',
-        {'state': outboxStateRunning},
-        where: 'id = ? AND (state = ? OR state = ?)',
-        whereArgs: [id, outboxStatePending, outboxStateRetry],
-      );
-      if (updated <= 0) return null;
-
-      final claimedRows = await txn.query(
-        'outbox',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (claimedRows.isEmpty) return null;
-      return claimedRows.first;
-    });
-    if (claimed != null) {
-      _notifyChanged();
     }
-    return claimed;
+    return _writeDao.claimNextOutboxRunnable(nowMs: nowMs);
   }
 
   Future<Map<String, dynamic>?> claimOutboxTaskById(
     int id, {
     int? nowMs,
   }) async {
-    final db = await this.db;
-    final now = nowMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
-    final claimed = await db.transaction<Map<String, dynamic>?>((txn) async {
-      final updated = await txn.rawUpdate(
-        '''
-UPDATE outbox
-SET state = ?
-WHERE id = ?
-  AND (
-    state = ?
-    OR (state = ? AND (retry_at IS NULL OR retry_at <= ?))
-  );
-''',
-        [outboxStateRunning, id, outboxStatePending, outboxStateRetry, now],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<Map<String, dynamic>?>(
+        operation: 'claimOutboxTaskById',
+        payload: <String, dynamic>{'id': id, 'nowMs': nowMs},
+        decode: _decodeMapResult,
       );
-      if (updated <= 0) return null;
-      final rows = await txn.query(
-        'outbox',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (rows.isEmpty) return null;
-      return rows.first;
-    });
-    if (claimed != null) {
-      _notifyChanged();
     }
-    return claimed;
+    return _writeDao.claimOutboxTaskById(id, nowMs: nowMs);
   }
 
   Future<int> recoverOutboxRunningTasks() async {
-    final db = await this.db;
-    final updated = await db.rawUpdate(
-      'UPDATE outbox SET state = ?, retry_at = NULL WHERE state = ?',
-      [outboxStatePending, outboxStateRunning],
-    );
-    if (updated > 0) {
-      _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'recoverOutboxRunningTasks',
+        payload: const <String, dynamic>{},
+        decode: _decodeIntResult,
+      );
     }
-    return updated;
+    return _writeDao.recoverOutboxRunningTasks();
   }
 
   Future<void> markOutboxDone(int id) async {
-    final db = await this.db;
-    await db.rawUpdate(
-      'UPDATE outbox SET state = ?, retry_at = NULL, last_error = NULL, failure_code = NULL, failure_kind = NULL, quarantined_at = NULL WHERE id = ?',
-      [outboxStateDone, id],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markOutboxDone',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.markOutboxDone(id);
+  }
+
+  Future<void> completeOutboxTask(int id) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'completeOutboxTask',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.completeOutboxTask(id);
   }
 
   Future<void> markOutboxError(int id, {required String error}) async {
-    final db = await this.db;
-    await db.rawUpdate(
-      'UPDATE outbox SET state = ?, attempts = attempts + 1, retry_at = NULL, last_error = ?, failure_code = NULL, failure_kind = NULL, quarantined_at = NULL WHERE id = ?',
-      [outboxStateError, error, id],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markOutboxError',
+        payload: <String, dynamic>{'id': id, 'error': error},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.markOutboxError(id, error: error);
   }
 
   Future<void> markOutboxRetryScheduled(
@@ -2138,12 +2763,23 @@ WHERE id = ?
     required String error,
     required int retryAtMs,
   }) async {
-    final db = await this.db;
-    await db.rawUpdate(
-      'UPDATE outbox SET state = ?, attempts = attempts + 1, retry_at = ?, last_error = ?, failure_code = NULL, failure_kind = ?, quarantined_at = NULL WHERE id = ?',
-      [outboxStateRetry, retryAtMs, error, 'retryable', id],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markOutboxRetryScheduled',
+        payload: <String, dynamic>{
+          'id': id,
+          'error': error,
+          'retryAtMs': retryAtMs,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.markOutboxRetryScheduled(
+      id,
+      error: error,
+      retryAtMs: retryAtMs,
     );
-    _notifyChanged();
   }
 
   Future<void> markOutboxQuarantined(
@@ -2153,85 +2789,110 @@ WHERE id = ?
     required String failureKind,
     bool incrementAttempts = true,
   }) async {
-    final db = await this.db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    if (incrementAttempts) {
-      await db.rawUpdate(
-        'UPDATE outbox SET state = ?, attempts = attempts + 1, retry_at = NULL, last_error = ?, failure_code = ?, failure_kind = ?, quarantined_at = ? WHERE id = ?',
-        [outboxStateQuarantined, error, failureCode, failureKind, now, id],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markOutboxQuarantined',
+        payload: <String, dynamic>{
+          'id': id,
+          'error': error,
+          'failureCode': failureCode,
+          'failureKind': failureKind,
+          'incrementAttempts': incrementAttempts,
+        },
+        decode: (_) {},
       );
-    } else {
-      await db.rawUpdate(
-        'UPDATE outbox SET state = ?, retry_at = NULL, last_error = ?, failure_code = ?, failure_kind = ?, quarantined_at = ? WHERE id = ?',
-        [outboxStateQuarantined, error, failureCode, failureKind, now, id],
-      );
+      return;
     }
-    _notifyChanged();
+    await _writeDao.markOutboxQuarantined(
+      id,
+      error: error,
+      failureCode: failureCode,
+      failureKind: failureKind,
+      incrementAttempts: incrementAttempts,
+    );
   }
 
   Future<void> markOutboxRetryPending(int id, {required String error}) async {
-    await markOutboxRetryScheduled(
-      id,
-      error: error,
-      retryAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
-    );
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markOutboxRetryPending',
+        payload: <String, dynamic>{'id': id, 'error': error},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.markOutboxRetryPending(id, error: error);
   }
 
   Future<int> retryOutboxErrors({String? memoUid}) async {
-    final db = await this.db;
-    final normalizedMemoUid = (memoUid ?? '').trim();
-    final rows = await db.query(
-      'outbox',
-      columns: const ['id', 'type', 'payload'],
-      where: 'state IN (?, ?)',
-      whereArgs: const [outboxStateError, outboxStateQuarantined],
-      orderBy: 'id ASC',
-    );
-
-    final ids = <int>[];
-    for (final row in rows) {
-      final id = row['id'];
-      if (id is! int) continue;
-      if (normalizedMemoUid.isEmpty) {
-        ids.add(id);
-        continue;
-      }
-      final type = row['type'];
-      final payloadRaw = row['payload'];
-      if (type is! String || payloadRaw is! String) continue;
-      final payload = _decodeOutboxPayload(payloadRaw);
-      if (payload == null) continue;
-      final targetUid = _extractOutboxMemoUid(type, payload);
-      if (targetUid == null || targetUid.trim() != normalizedMemoUid) {
-        continue;
-      }
-      ids.add(id);
-    }
-
-    if (ids.isEmpty) return 0;
-    for (final id in ids) {
-      await db.rawUpdate(
-        'UPDATE outbox SET state = ?, retry_at = NULL, last_error = NULL, failure_code = NULL, failure_kind = NULL, quarantined_at = NULL WHERE id = ?',
-        [outboxStatePending, id],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'retryOutboxErrors',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: _decodeIntResult,
       );
     }
-    _notifyChanged();
-    return ids.length;
+    return _writeDao.retryOutboxErrors(memoUid: memoUid);
   }
 
   Future<void> retryOutboxItem(int id) async {
-    final db = await this.db;
-    await db.rawUpdate(
-      'UPDATE outbox SET state = ?, retry_at = NULL, last_error = NULL, failure_code = NULL, failure_kind = NULL, quarantined_at = NULL WHERE id = ?',
-      [outboxStatePending, id],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'retryOutboxItem',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.retryOutboxItem(id);
   }
 
   Future<void> deleteOutbox(int id) async {
-    final db = await this.db;
-    await db.delete('outbox', where: 'id = ?', whereArgs: [id]);
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteOutbox',
+        payload: <String, dynamic>{'id': id},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteOutbox(id);
+  }
+
+  Future<int> deleteOutboxItems(List<int> ids) async {
+    if (ids.isEmpty) return 0;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'deleteOutboxItems',
+        payload: <String, dynamic>{'ids': ids},
+        decode: _decodeIntResult,
+      );
+    }
+    return _writeDao.deleteOutboxItems(ids);
+  }
+
+  Future<void> discardMissingSourceUploadTask({
+    required int outboxId,
+    required String memoUid,
+    required String attachmentUid,
+  }) async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'discardMissingSourceUploadTask',
+        payload: <String, dynamic>{
+          'outboxId': outboxId,
+          'memoUid': memoUid,
+          'attachmentUid': attachmentUid,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.discardMissingSourceUploadTask(
+      outboxId: outboxId,
+      memoUid: memoUid,
+      attachmentUid: attachmentUid,
+    );
   }
 
   Future<bool> hasPendingOutboxTaskForMemo(
@@ -2271,45 +2932,27 @@ WHERE id = ?
   }
 
   Future<void> deleteOutboxForMemo(String memoUid) async {
-    final trimmed = memoUid.trim();
-    if (trimmed.isEmpty) return;
-    final db = await this.db;
-    final rows = await db.query(
-      'outbox',
-      columns: const ['id', 'type', 'payload'],
-      where: 'state IN (?, ?, ?, ?, ?)',
-      whereArgs: const [
-        outboxStatePending,
-        outboxStateRunning,
-        outboxStateRetry,
-        outboxStateError,
-        outboxStateQuarantined,
-      ],
-    );
-    final ids = <int>[];
-    for (final row in rows) {
-      final id = row['id'];
-      final type = row['type'];
-      final payloadRaw = row['payload'];
-      if (id is! int || type is! String || payloadRaw is! String) continue;
-      final payload = _decodeOutboxPayload(payloadRaw);
-      if (payload == null) continue;
-      final target = _extractOutboxMemoUid(type, payload);
-      if (target is String && target.trim() == trimmed) {
-        ids.add(id);
-      }
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteOutboxForMemo',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
     }
-    if (ids.isEmpty) return;
-    for (final id in ids) {
-      await db.delete('outbox', where: 'id = ?', whereArgs: [id]);
-    }
-    _notifyChanged();
+    await _writeDao.deleteOutboxForMemo(memoUid);
   }
 
   Future<void> clearOutbox() async {
-    final db = await this.db;
-    await db.delete('outbox');
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'clearOutbox',
+        payload: const <String, dynamic>{},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.clearOutbox();
   }
 
   Future<Map<String, dynamic>?> getImportHistory({
@@ -2337,22 +2980,32 @@ WHERE id = ?
     required int failedCount,
     String? error,
   }) async {
-    final db = await this.db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final id = await db.insert('import_history', {
-      'source': source,
-      'file_md5': fileMd5,
-      'file_name': fileName,
-      'memo_count': memoCount,
-      'attachment_count': attachmentCount,
-      'failed_count': failedCount,
-      'status': status,
-      'created_time': now,
-      'updated_time': now,
-      'error': error,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    _notifyChanged();
-    return id;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'upsertImportHistory',
+        payload: <String, dynamic>{
+          'source': source,
+          'fileMd5': fileMd5,
+          'fileName': fileName,
+          'status': status,
+          'memoCount': memoCount,
+          'attachmentCount': attachmentCount,
+          'failedCount': failedCount,
+          'error': error,
+        },
+        decode: _decodeIntResult,
+      );
+    }
+    return _writeDao.upsertImportHistory(
+      source: source,
+      fileMd5: fileMd5,
+      fileName: fileName,
+      status: status,
+      memoCount: memoCount,
+      attachmentCount: attachmentCount,
+      failedCount: failedCount,
+      error: error,
+    );
   }
 
   Future<void> updateImportHistory({
@@ -2363,52 +3016,41 @@ WHERE id = ?
     required int failedCount,
     String? error,
   }) async {
-    final db = await this.db;
-    await db.update(
-      'import_history',
-      {
-        'status': status,
-        'memo_count': memoCount,
-        'attachment_count': attachmentCount,
-        'failed_count': failedCount,
-        'updated_time': DateTime.now().toUtc().millisecondsSinceEpoch,
-        'error': error,
-      },
-      where: 'id = ?',
-      whereArgs: [id],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'updateImportHistory',
+        payload: <String, dynamic>{
+          'id': id,
+          'status': status,
+          'memoCount': memoCount,
+          'attachmentCount': attachmentCount,
+          'failedCount': failedCount,
+          'error': error,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.updateImportHistory(
+      id: id,
+      status: status,
+      memoCount: memoCount,
+      attachmentCount: attachmentCount,
+      failedCount: failedCount,
+      error: error,
     );
-    _notifyChanged();
   }
 
   Future<void> deleteMemoByUid(String uid) async {
-    final db = await this.db;
-    await db.transaction((txn) async {
-      final before = await _fetchMemoSnapshot(txn, uid);
-      final rows = await txn.query(
-        'memos',
-        columns: const ['id'],
-        where: 'uid = ?',
-        whereArgs: [uid],
-        limit: 1,
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoByUid',
+        payload: <String, dynamic>{'uid': uid},
+        decode: (_) {},
       );
-      final rowId = rows.firstOrNull?['id'] as int?;
-      await txn.delete('memos', where: 'uid = ?', whereArgs: [uid]);
-      await txn.delete(
-        'memo_relations_cache',
-        where: 'memo_uid = ?',
-        whereArgs: [uid],
-      );
-      await txn.delete(
-        'memo_versions',
-        where: 'memo_uid = ?',
-        whereArgs: [uid],
-      );
-      if (rowId != null) {
-        await _deleteMemoFtsEntry(txn, rowId: rowId);
-      }
-      await _applyMemoCacheDelta(txn, before: before, after: null);
-    });
-    _notifyChanged();
+      return;
+    }
+    await _writeDao.deleteMemoByUid(uid);
   }
 
   Future<Map<String, dynamic>?> getMemoReminderByUid(String memoUid) async {
@@ -2440,34 +3082,35 @@ WHERE id = ?
     required String mode,
     required String timesJson,
   }) async {
-    final db = await this.db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final updated = await db.update(
-      'memo_reminders',
-      {'mode': mode, 'times_json': timesJson, 'updated_time': now},
-      where: 'memo_uid = ?',
-      whereArgs: [memoUid],
-    );
-    if (updated == 0) {
-      await db.insert('memo_reminders', {
-        'memo_uid': memoUid,
-        'mode': mode,
-        'times_json': timesJson,
-        'created_time': now,
-        'updated_time': now,
-      }, conflictAlgorithm: ConflictAlgorithm.abort);
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemoReminder',
+        payload: <String, dynamic>{
+          'memoUid': memoUid,
+          'mode': mode,
+          'timesJson': timesJson,
+        },
+        decode: (_) {},
+      );
+      return;
     }
-    _notifyChanged();
+    await _writeDao.upsertMemoReminder(
+      memoUid: memoUid,
+      mode: mode,
+      timesJson: timesJson,
+    );
   }
 
   Future<void> deleteMemoReminder(String memoUid) async {
-    final db = await this.db;
-    await db.delete(
-      'memo_reminders',
-      where: 'memo_uid = ?',
-      whereArgs: [memoUid],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteMemoReminder',
+        payload: <String, dynamic>{'memoUid': memoUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteMemoReminder(memoUid);
   }
 
   Future<List<Map<String, dynamic>>> listComposeDraftRows({
@@ -2518,51 +3161,57 @@ WHERE id = ?
   }
 
   Future<void> upsertComposeDraftRow(Map<String, Object?> row) async {
-    final db = await this.db;
-    await db.insert(
-      'compose_drafts',
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertComposeDraftRow',
+        payload: <String, dynamic>{'row': row},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.upsertComposeDraftRow(row);
   }
 
   Future<void> replaceComposeDraftRows({
     required String workspaceKey,
     required List<Map<String, Object?>> rows,
   }) async {
-    final db = await this.db;
-    await db.transaction((txn) async {
-      await txn.delete(
-        'compose_drafts',
-        where: 'workspace_key = ?',
-        whereArgs: [workspaceKey],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'replaceComposeDraftRows',
+        payload: <String, dynamic>{'workspaceKey': workspaceKey, 'rows': rows},
+        decode: (_) {},
       );
-      for (final row in rows) {
-        await txn.insert(
-          'compose_drafts',
-          row,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
-    });
-    _notifyChanged();
+      return;
+    }
+    await _writeDao.replaceComposeDraftRows(
+      workspaceKey: workspaceKey,
+      rows: rows,
+    );
   }
 
   Future<void> deleteComposeDraft(String uid) async {
-    final db = await this.db;
-    await db.delete('compose_drafts', where: 'uid = ?', whereArgs: [uid]);
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteComposeDraft',
+        payload: <String, dynamic>{'uid': uid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteComposeDraft(uid);
   }
 
   Future<void> deleteComposeDraftsByWorkspace(String workspaceKey) async {
-    final db = await this.db;
-    await db.delete(
-      'compose_drafts',
-      where: 'workspace_key = ?',
-      whereArgs: [workspaceKey],
-    );
-    _notifyChanged();
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'deleteComposeDraftsByWorkspace',
+        payload: <String, dynamic>{'workspaceKey': workspaceKey},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.deleteComposeDraftsByWorkspace(workspaceKey);
   }
 
   Future<List<String>> listTagStrings({String? state}) async {
@@ -2891,6 +3540,14 @@ LIMIT 20000;
   }
 
   Future<void> rebuildStatsCache() async {
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'rebuildStatsCache',
+        payload: const <String, dynamic>{},
+        decode: (_) {},
+      );
+      return;
+    }
     final db = await this.db;
     await _rebuildStatsCache(db);
     _notifyChanged();
@@ -3089,7 +3746,7 @@ CREATE TABLE IF NOT EXISTS memo_tags (
       );
       if (rows.isEmpty) return;
       lastId = _readInt(rows.last['id']) ?? lastId;
-      await db.transaction((txn) async {
+      await AppDatabaseWriteDao.runTransaction<void>(db, (txn) async {
         for (final row in rows) {
           final uid = row['uid'];
           if (uid is! String || uid.trim().isEmpty) continue;
@@ -3181,7 +3838,7 @@ CREATE TABLE IF NOT EXISTS tag_stats_cache (
   }
 
   static Future<void> _rebuildStatsCache(Database db) async {
-    await db.transaction((txn) async {
+    await AppDatabaseWriteDao.runTransaction<void>(db, (txn) async {
       await txn.delete('stats_cache');
       await txn.delete('daily_counts_cache');
       await txn.delete('tag_stats_cache');
@@ -3242,7 +3899,7 @@ CREATE TABLE IF NOT EXISTS tag_stats_cache (
     }
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
+    await AppDatabaseWriteDao.runTransaction<void>(db, (txn) async {
       await txn.insert('stats_cache', {
         'id': 1,
         'total_memos': totalMemos,
@@ -3477,6 +4134,37 @@ CREATE TABLE IF NOT EXISTS memos_fts (
       }
       rethrow;
     }
+  }
+
+  static Map<String, dynamic>? _memoSnapshotToPayload(_MemoSnapshot? snapshot) {
+    if (snapshot == null) return null;
+    return <String, dynamic>{
+      'state': snapshot.state,
+      'createTimeSec': snapshot.createTimeSec,
+      'content': snapshot.content,
+      'tags': snapshot.tags,
+    };
+  }
+
+  static _MemoSnapshot? _memoSnapshotFromPayload(
+    Map<String, dynamic>? payload,
+  ) {
+    if (payload == null) return null;
+    final rawTags = payload['tags'];
+    final tags = <String>[];
+    if (rawTags is List) {
+      for (final entry in rawTags) {
+        if (entry is String && entry.trim().isNotEmpty) {
+          tags.add(entry.trim());
+        }
+      }
+    }
+    return _MemoSnapshot(
+      state: (payload['state'] as String?) ?? '',
+      createTimeSec: _readInt(payload['createTimeSec']) ?? 0,
+      content: (payload['content'] as String?) ?? '',
+      tags: tags,
+    );
   }
 
   static String _toFtsQuery(String raw) {

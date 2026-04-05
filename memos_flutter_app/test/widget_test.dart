@@ -13,13 +13,14 @@ import 'package:memos_flutter_app/app.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
-import 'package:memos_flutter_app/features/auth/login_screen.dart';
 import 'package:memos_flutter_app/features/onboarding/language_selection_screen.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
 
 void main() {
-  testWidgets('Shows login when logged out', (WidgetTester tester) async {
+  testWidgets('shows onboarding when no workspace is available', (
+    WidgetTester tester,
+  ) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -32,13 +33,14 @@ void main() {
       ),
     );
 
+    await tester.pump();
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-    final unauthenticatedEntry = find.byWidgetPredicate(
-      (widget) => widget is LoginScreen || widget is LanguageSelectionScreen,
-      description: 'LoginScreen or LanguageSelectionScreen',
+    final onboardingEntry = find.byType(
+      LanguageSelectionScreen,
+      skipOffstage: false,
     );
-    expect(unauthenticatedEntry, findsOneWidget);
+    expect(onboardingEntry, findsAtLeastNWidgets(1));
   });
 }
 

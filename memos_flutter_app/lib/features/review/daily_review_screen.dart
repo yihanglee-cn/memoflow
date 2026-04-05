@@ -25,10 +25,8 @@ import '../../data/models/attachment.dart';
 import '../../data/models/local_library.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/user.dart';
-import '../../state/memos/memo_sync_constraints.dart';
-import '../../state/system/database_provider.dart';
+import '../../state/memos/memo_mutation_service.dart';
 import '../../state/system/session_provider.dart';
-import '../../state/memos/memo_timeline_provider.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/review/ai_analysis_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
@@ -639,52 +637,15 @@ class _DailyReviewScreenState extends ConsumerState<DailyReviewScreen> {
     );
     if (updated == memo.content) return;
 
-    final db = ref.read(databaseProvider);
-    final timelineService = ref.read(memoTimelineServiceProvider);
     final tags = extractTags(updated);
-    final syncPolicy = resolveMemoSyncMutationPolicy(
-      currentLastError: memo.lastError,
-    );
-
-    await timelineService.captureMemoVersion(memo);
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: updated,
-      visibility: memo.visibility,
-      pinned: memo.pinned,
-      state: memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: memo.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: tags,
-      attachments: memo.attachments
-          .map((a) => a.toJson())
-          .toList(growable: false),
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: syncPolicy.syncState,
-      lastError: syncPolicy.lastError,
-    );
-
-    final allowed =
-        syncPolicy.allowRemoteSync &&
-        await guardMemoContentForRemoteSync(
-          db: db,
-          enabled:
-              ref.read(appSessionProvider).valueOrNull?.currentAccount != null,
-          memoUid: memo.uid,
+    await ref
+        .read(memoMutationServiceProvider)
+        .updateMemoContentForTaskToggle(
+          memo: memo,
           content: updated,
+          updateTime: memo.updateTime,
+          tags: tags,
         );
-    if (allowed) {
-      await db.enqueueOutbox(
-        type: 'update_memo',
-        payload: {
-          'uid': memo.uid,
-          'content': updated,
-          'visibility': memo.visibility,
-        },
-      );
-    }
   }
 
   Future<void> _openAiHistoryEntry(AiSavedAnalysisHistoryEntry entry) async {

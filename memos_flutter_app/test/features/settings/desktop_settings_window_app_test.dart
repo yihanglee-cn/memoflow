@@ -5,17 +5,36 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memos_flutter_app/core/desktop_db_write_channel.dart';
 import 'package:memos_flutter_app/core/desktop_quick_input_channel.dart';
+import 'package:memos_flutter_app/core/desktop_runtime_role.dart';
+import 'package:memos_flutter_app/core/desktop_sync_channel.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
+import 'package:memos_flutter_app/application/sync/desktop_remote_sync_facade.dart';
+import 'package:memos_flutter_app/application/sync/sync_coordinator.dart';
+import 'package:memos_flutter_app/application/sync/sync_error.dart';
+import 'package:memos_flutter_app/application/sync/sync_request.dart';
+import 'package:memos_flutter_app/application/sync/sync_types.dart';
+import 'package:memos_flutter_app/application/sync/webdav_backup_service.dart';
+import 'package:memos_flutter_app/application/sync/webdav_sync_service.dart';
+import 'package:memos_flutter_app/data/db/app_database.dart';
+import 'package:memos_flutter_app/data/logs/webdav_backup_progress_tracker.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/data/models/local_library.dart';
 import 'package:memos_flutter_app/data/models/user.dart';
+import 'package:memos_flutter_app/data/models/webdav_backup.dart';
+import 'package:memos_flutter_app/data/models/webdav_export_status.dart';
+import 'package:memos_flutter_app/data/models/webdav_settings.dart';
+import 'package:memos_flutter_app/data/models/webdav_sync_meta.dart';
 import 'package:memos_flutter_app/data/repositories/local_library_repository.dart';
 import 'package:memos_flutter_app/features/settings/desktop_settings_window_app.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
+import 'package:memos_flutter_app/state/sync/sync_coordinator_provider.dart';
+import 'package:memos_flutter_app/state/system/database_provider.dart';
 import 'package:memos_flutter_app/state/system/local_library_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
+import 'package:memos_flutter_app/state/webdav/webdav_backup_provider.dart';
 
 const MethodChannel _windowManagerChannel = MethodChannel('window_manager');
 const MethodChannel _multiWindowChannel = MethodChannel(
@@ -194,6 +213,20 @@ class _TestAppPreferencesController extends AppPreferencesController {
           ref.read(appPreferencesLoadedProvider.notifier).state = true;
         },
       );
+}
+
+class _TestNotifyingDatabase extends AppDatabase {
+  _TestNotifyingDatabase({required this.dbNameForTest})
+    : super(dbName: dbNameForTest, workspaceKey: dbNameForTest);
+
+  final String dbNameForTest;
+  int notifyCalls = 0;
+
+  @override
+  void notifyDataChanged() {
+    notifyCalls += 1;
+    super.notifyDataChanged();
+  }
 }
 
 Future<dynamic> _dispatchIncomingMultiWindowMethod(
@@ -495,4 +528,519 @@ void main() {
     expect(snapshot?.currentKey, 'local-workspace');
     expect(snapshot?.hasLocalLibrary, isTrue);
   });
+
+  testWidgets('desktop db changed event invalidates local database listeners', (
+    tester,
+  ) async {
+    final account = _TestSessionController.account(
+      key: 'users/demo',
+      username: 'demo',
+    );
+    final sessionController = _TestSessionController(
+      initialState: AppSessionState(
+        accounts: [account],
+        currentKey: account.key,
+      ),
+    );
+    final db = _TestNotifyingDatabase(
+      dbNameForTest: databaseNameForAccountKey(account.key),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_multiWindowEventChannel, (call) async {
+          switch (call.method) {
+            case 'desktop.quickInput.ping':
+            case 'desktop.settings.ping':
+            case 'desktop.subWindow.visibility':
+              return true;
+            case 'desktop.main.getWorkspaceSnapshot':
+              return <String, dynamic>{
+                'currentKey': account.key,
+                'hasCurrentAccount': true,
+                'hasLocalLibrary': false,
+              };
+          }
+          return true;
+        });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appSessionProvider.overrideWith((ref) => sessionController),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref),
+          ),
+          databaseProvider.overrideWithValue(db),
+        ],
+        child: const DesktopSettingsWindowApp(windowId: 7),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await _dispatchIncomingMultiWindowMethod(
+      desktopDbChangedMethod,
+      arguments: <String, dynamic>{
+        'workspaceKey': account.key,
+        'dbName': databaseNameForAccountKey(account.key),
+        'changeId': 'test-change',
+        'category': 'app_database.upsertMemo',
+        'originWindowId': 0,
+      },
+    );
+    await tester.pump();
+
+    expect(db.notifyCalls, 1);
+  });
+
+  testWidgets('desktop sync events update mirrored state and progress', (
+    tester,
+  ) async {
+    final account = _TestSessionController.account(
+      key: 'users/sync',
+      username: 'sync',
+    );
+    final sessionController = _TestSessionController(
+      initialState: AppSessionState(
+        accounts: [account],
+        currentKey: account.key,
+      ),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_multiWindowEventChannel, (call) async {
+          switch (call.method) {
+            case 'desktop.quickInput.ping':
+            case 'desktop.settings.ping':
+            case 'desktop.subWindow.visibility':
+              return true;
+            case 'desktop.main.getWorkspaceSnapshot':
+              return <String, dynamic>{
+                'currentKey': account.key,
+                'hasCurrentAccount': true,
+                'hasLocalLibrary': false,
+              };
+            case desktopSyncStateSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                SyncCoordinatorState.initial.toJson(),
+              );
+            case desktopSyncProgressSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                WebDavBackupProgressSnapshot.idle.toJson(),
+              );
+          }
+          return true;
+        });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          desktopRuntimeRoleProvider.overrideWith(
+            (ref) => DesktopRuntimeRole.desktopSettings,
+          ),
+          desktopWindowIdProvider.overrideWith((ref) => 7),
+          appSessionProvider.overrideWith((ref) => sessionController),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref),
+          ),
+        ],
+        child: const DesktopSettingsWindowApp(windowId: 7),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await _dispatchIncomingMultiWindowMethod(
+      desktopSyncStateChangedMethod,
+      arguments: <String, dynamic>{
+        'workspaceKey': account.key,
+        'state': SyncCoordinatorState(
+          memos: SyncFlowStatus.idle,
+          webDavSync: const SyncFlowStatus(
+            running: true,
+            lastSuccessAt: null,
+            lastError: null,
+            hasPendingConflict: true,
+            attention: null,
+          ),
+          webDavBackup: SyncFlowStatus.idle,
+          localScan: SyncFlowStatus.idle,
+          webDavLastBackupAt: null,
+          webDavRestoring: false,
+          pendingWebDavConflicts: const <String>['memo-1'],
+          pendingLocalScanConflicts: const <LocalScanConflict>[],
+        ).toJson(),
+      },
+    );
+    await _dispatchIncomingMultiWindowMethod(
+      desktopSyncProgressChangedMethod,
+      arguments: <String, dynamic>{
+        'workspaceKey': account.key,
+        'progress': const WebDavBackupProgressSnapshot(
+          running: true,
+          paused: true,
+          operation: WebDavBackupProgressOperation.backup,
+          stage: WebDavBackupProgressStage.uploading,
+          completed: 2,
+          total: 5,
+          currentPath: 'backup/memo-1.md',
+          itemGroup: WebDavBackupProgressItemGroup.memo,
+        ).toJson(),
+      },
+    );
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(DesktopSettingsWindowApp)),
+      listen: false,
+    );
+    expect(container.read(syncCoordinatorProvider).webDavSync.running, isTrue);
+    expect(container.read(syncCoordinatorProvider).pendingWebDavConflicts, [
+      'memo-1',
+    ]);
+    final snapshot = container
+        .read(webDavBackupProgressTrackerProvider)
+        .snapshot;
+    expect(snapshot.running, isTrue);
+    expect(snapshot.paused, isTrue);
+    expect(snapshot.completed, 2);
+    expect(snapshot.total, 5);
+  });
+
+  testWidgets('desktop backup export prompt is forwarded to remote facade', (
+    tester,
+  ) async {
+    final account = _TestSessionController.account(
+      key: 'users/prompt',
+      username: 'prompt',
+    );
+    final sessionController = _TestSessionController(
+      initialState: AppSessionState(
+        accounts: [account],
+        currentKey: account.key,
+      ),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_multiWindowEventChannel, (call) async {
+          switch (call.method) {
+            case 'desktop.quickInput.ping':
+            case 'desktop.settings.ping':
+            case 'desktop.subWindow.visibility':
+              return true;
+            case 'desktop.main.getWorkspaceSnapshot':
+              return <String, dynamic>{
+                'currentKey': account.key,
+                'hasCurrentAccount': true,
+                'hasLocalLibrary': false,
+              };
+            case desktopSyncStateSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                SyncCoordinatorState.initial.toJson(),
+              );
+            case desktopSyncProgressSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                WebDavBackupProgressSnapshot.idle.toJson(),
+              );
+            case desktopSyncRequestMethod:
+              return desktopSyncRpcSuccess(
+                syncRunResultToJson(const SyncRunStarted()),
+              );
+          }
+          return true;
+        });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          desktopRuntimeRoleProvider.overrideWith(
+            (ref) => DesktopRuntimeRole.desktopSettings,
+          ),
+          desktopWindowIdProvider.overrideWith((ref) => 7),
+          appSessionProvider.overrideWith((ref) => sessionController),
+          syncCoordinatorProvider.overrideWith((ref) => _PromptSyncFacade()),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref),
+          ),
+        ],
+        child: const DesktopSettingsWindowApp(windowId: 7),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final raw = await _dispatchIncomingMultiWindowMethod(
+      desktopSyncPromptBackupExportIssueMethod,
+      arguments: <String, dynamic>{
+        'workspaceKey': account.key,
+        'requestId': 'prompt-request-1',
+        'sessionId': 'prompt-session-1',
+        'issue': serializeWebDavBackupExportIssue(
+          const WebDavBackupExportIssue(
+            kind: WebDavBackupExportIssueKind.memo,
+            memoUid: 'memo-42',
+            error: 'export failed',
+          ),
+        ),
+      },
+    );
+    await tester.pump();
+
+    expect(raw, isA<Map>());
+    final resolution = deserializeWebDavBackupExportPromptResponse(
+      raw,
+      expectedMetadata: const DesktopSyncPromptMetadata(
+        requestId: 'prompt-request-1',
+        sessionId: 'prompt-session-1',
+      ),
+    );
+    expect(resolution.action, WebDavBackupExportAction.skip);
+    expect(resolution.applyToRemainingFailures, isTrue);
+  });
+
+  testWidgets('desktop backup config restore prompt is forwarded to facade', (
+    tester,
+  ) async {
+    final account = _TestSessionController.account(
+      key: 'users/config',
+      username: 'config',
+    );
+    final sessionController = _TestSessionController(
+      initialState: AppSessionState(
+        accounts: [account],
+        currentKey: account.key,
+      ),
+    );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_multiWindowEventChannel, (call) async {
+          switch (call.method) {
+            case 'desktop.quickInput.ping':
+            case 'desktop.settings.ping':
+            case 'desktop.subWindow.visibility':
+              return true;
+            case 'desktop.main.getWorkspaceSnapshot':
+              return <String, dynamic>{
+                'currentKey': account.key,
+                'hasCurrentAccount': true,
+                'hasLocalLibrary': false,
+              };
+            case desktopSyncStateSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                SyncCoordinatorState.initial.toJson(),
+              );
+            case desktopSyncProgressSnapshotMethod:
+              return desktopSyncRpcSuccess(
+                WebDavBackupProgressSnapshot.idle.toJson(),
+              );
+          }
+          return true;
+        });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          desktopRuntimeRoleProvider.overrideWith(
+            (ref) => DesktopRuntimeRole.desktopSettings,
+          ),
+          desktopWindowIdProvider.overrideWith((ref) => 7),
+          appSessionProvider.overrideWith((ref) => sessionController),
+          syncCoordinatorProvider.overrideWith((ref) => _PromptSyncFacade()),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(ref),
+          ),
+        ],
+        child: const DesktopSettingsWindowApp(windowId: 7),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final raw = await _dispatchIncomingMultiWindowMethod(
+      desktopSyncPromptBackupConfigRestoreMethod,
+      arguments: <String, dynamic>{
+        'workspaceKey': account.key,
+        'requestId': 'prompt-request-2',
+        'sessionId': 'prompt-session-2',
+        'configTypes': <String>[
+          WebDavBackupConfigType.aiSettings.name,
+          WebDavBackupConfigType.webdavSettings.name,
+        ],
+      },
+    );
+    await tester.pump();
+
+    expect(raw, isA<Map>());
+    final selected = deserializeWebDavBackupConfigPromptResponse(
+      raw,
+      expectedMetadata: const DesktopSyncPromptMetadata(
+        requestId: 'prompt-request-2',
+        sessionId: 'prompt-session-2',
+      ),
+    );
+    expect(
+      selected.map((item) => item.name),
+      containsAll(<String>[
+        WebDavBackupConfigType.aiSettings.name,
+        WebDavBackupConfigType.webdavSettings.name,
+      ]),
+    );
+  });
+}
+
+class _PromptSyncFacade extends DesktopSyncFacade {
+  _PromptSyncFacade() : super(SyncCoordinatorState.initial);
+
+  @override
+  Future<WebDavBackupExportResolution> handleBackupExportIssuePrompt(
+    WebDavBackupExportIssue issue,
+  ) async {
+    return const WebDavBackupExportResolution(
+      action: WebDavBackupExportAction.skip,
+      applyToRemainingFailures: true,
+    );
+  }
+
+  @override
+  Future<Set<WebDavBackupConfigType>> handleBackupConfigRestorePrompt(
+    Set<WebDavBackupConfigType> candidates,
+  ) async {
+    return candidates;
+  }
+
+  @override
+  void applyRemoteStateSnapshot(SyncCoordinatorState next) {
+    state = next;
+  }
+
+  @override
+  Future<WebDavExportCleanupStatus> cleanWebDavPlainExport() async {
+    return WebDavExportCleanupStatus.notFound;
+  }
+
+  @override
+  Future<WebDavSyncMeta?> cleanWebDavDeprecatedPlainFiles() async {
+    return null;
+  }
+
+  @override
+  Future<WebDavExportStatus> fetchWebDavExportStatus() async {
+    return const WebDavExportStatus(
+      webDavConfigured: false,
+      encSignature: null,
+      plainSignature: null,
+      plainDetected: false,
+      plainDeprecated: false,
+      plainDetectedAt: null,
+      plainRemindAfter: null,
+      lastExportSuccessAt: null,
+      lastUploadSuccessAt: null,
+    );
+  }
+
+  @override
+  Future<WebDavSyncMeta?> fetchWebDavSyncMeta() async {
+    return null;
+  }
+
+  @override
+  Future<List<WebDavBackupSnapshotInfo>> listWebDavBackupSnapshots({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String password,
+  }) async {
+    return const <WebDavBackupSnapshotInfo>[];
+  }
+
+  @override
+  Future<String> recoverWebDavBackupPassword({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String recoveryCode,
+    required String newPassword,
+  }) async {
+    return '';
+  }
+
+  @override
+  Future<SyncRunResult> requestSync(SyncRequest request) async {
+    return const SyncRunStarted();
+  }
+
+  @override
+  Future<SyncRunResult> requestWebDavBackup({
+    required SyncRequestReason reason,
+    String? password,
+    WebDavBackupExportIssueHandler? onExportIssue,
+  }) async {
+    return const SyncRunStarted();
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavPlainBackup({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) async {
+    return const WebDavRestoreSuccess();
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavPlainBackupToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) async {
+    return const WebDavRestoreSuccess();
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavSnapshot({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) async {
+    return const WebDavRestoreSuccess();
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavSnapshotToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) async {
+    return const WebDavRestoreSuccess();
+  }
+
+  @override
+  Future<void> resolveLocalScanConflicts(Map<String, bool> resolutions) async {}
+
+  @override
+  Future<void> resolveWebDavConflicts(Map<String, bool> resolutions) async {}
+
+  @override
+  Future<void> retryPending() async {}
+
+  @override
+  Future<WebDavConnectionTestResult> testWebDavConnection({
+    required WebDavSettings settings,
+  }) async {
+    return const WebDavConnectionTestResult.success();
+  }
+
+  @override
+  Future<SyncError?> verifyWebDavBackup({
+    required String password,
+    required bool deep,
+  }) async {
+    return null;
+  }
 }

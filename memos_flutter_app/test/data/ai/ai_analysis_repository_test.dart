@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memos_flutter_app/data/db/db_write_protocol.dart';
+import 'package:memos_flutter_app/data/db/desktop_db_write_gateway.dart';
 import 'package:memos_flutter_app/data/ai/ai_analysis_models.dart';
 import 'package:memos_flutter_app/data/ai/ai_analysis_repository.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
@@ -132,4 +134,83 @@ void main() {
       containsAll(<String>['Summary 0', 'Summary 1', 'Summary 2']),
     );
   });
+
+  test('createAnalysisTask uses write gateway when configured', () async {
+    final dbName = uniqueDbName('ai_analysis_gateway_proxy');
+    final db = AppDatabase(
+      dbName: dbName,
+      workspaceKey: 'workspace-ai-proxy',
+    );
+    final gateway = _CapturingRemoteGateway(responseValue: 42);
+    final repository = AiAnalysisRepository(db, writeGateway: gateway);
+
+    addTearDown(() async {
+      await db.close();
+      await deleteTestDatabase(dbName);
+    });
+
+    final taskId = await repository.createAnalysisTask(
+      taskUid: 'task-proxy',
+      analysisType: AiAnalysisType.emotionMap,
+      status: AiTaskStatus.queued,
+      rangeStart: 100,
+      rangeEndExclusive: 200,
+      includePublic: true,
+      includePrivate: true,
+      includeProtected: false,
+      promptTemplate: 'Proxy prompt',
+      generationProfileKey: 'gen-proxy',
+      embeddingProfileKey: 'embed-proxy',
+      retrievalProfile: const <String, dynamic>{'sample': true},
+    );
+
+    expect(taskId, 42);
+    expect(gateway.localExecuteCalled, isFalse);
+    expect(gateway.workspaceKey, 'workspace-ai-proxy');
+    expect(gateway.dbName, dbName);
+    expect(gateway.commandType, aiAnalysisRepositoryWriteCommandType);
+    expect(gateway.operation, 'createAnalysisTask');
+    expect(gateway.payload['taskUid'], 'task-proxy');
+    expect(
+      gateway.payload['retrievalProfile'],
+      const <String, dynamic>{'sample': true},
+    );
+
+    final rows = await (await db.db).query('ai_analysis_tasks');
+    expect(rows, isEmpty);
+  });
+}
+
+class _CapturingRemoteGateway implements DesktopDbWriteGateway {
+  _CapturingRemoteGateway({this.responseValue});
+
+  final Object? responseValue;
+
+  bool localExecuteCalled = false;
+  String? workspaceKey;
+  String? dbName;
+  String? commandType;
+  String? operation;
+  Map<String, dynamic> payload = const <String, dynamic>{};
+
+  @override
+  bool get isRemote => true;
+
+  @override
+  Future<T> execute<T>({
+    required String workspaceKey,
+    required String dbName,
+    required String commandType,
+    required String operation,
+    required Map<String, dynamic> payload,
+    required Future<Object?> Function() localExecute,
+    required T Function(Object? raw) decode,
+  }) async {
+    this.workspaceKey = workspaceKey;
+    this.dbName = dbName;
+    this.commandType = commandType;
+    this.operation = operation;
+    this.payload = Map<String, dynamic>.from(payload);
+    return decode(responseValue);
+  }
 }

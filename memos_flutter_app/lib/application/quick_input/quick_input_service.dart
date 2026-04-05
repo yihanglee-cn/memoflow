@@ -2,15 +2,14 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/memo_relations.dart';
 import '../sync/sync_request.dart';
 import '../../core/tags.dart';
 import '../../core/uid.dart';
 import '../../data/models/memo_location.dart';
 import '../attachments/queued_attachment_stager.dart';
-import '../../state/memos/create_memo_outbox_enqueue.dart';
-import '../../state/memos/create_memo_outbox_payload.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
+import '../../state/memos/memo_composer_state.dart';
+import '../../state/memos/memo_mutation_service.dart';
 
 class QuickInputService {
   QuickInputService({
@@ -83,7 +82,6 @@ class QuickInputService {
     final nowSec = now.toUtc().millisecondsSinceEpoch ~/ 1000;
     final uid = generateUid();
     final visibility = resolveVisibility(ref);
-    final db = _bootstrapAdapter.readDatabase(ref);
     final tags = extractTags(content);
     final uploadPayloads = <Map<String, dynamic>>[];
     for (final payload in attachmentPayloads) {
@@ -105,63 +103,42 @@ class QuickInputService {
     }
     final stagedUploadPayloads = await _queuedAttachmentStager
         .stageUploadPayloads(uploadPayloads, scopeKey: uid);
-    final attachments = mergePendingAttachmentPlaceholders(
-      attachments: const <Map<String, dynamic>>[],
-      pendingAttachments: stagedUploadPayloads,
-    );
     final normalizedRelations = relations
         .where((relation) => relation.isNotEmpty)
         .toList(growable: false);
-    final hasAttachments = attachments.isNotEmpty;
-    final cachedRelations = mergeOutgoingReferenceRelations(
-      memoUid: uid,
-      existingRelations: const [],
-      nextRelations: normalizedRelations,
-      memoSnippet: content,
-    );
-    final relationCount = countReferenceRelations(
-      memoUid: uid,
-      relations: cachedRelations,
-    );
+    final pendingAttachments = stagedUploadPayloads
+        .map(
+          (payload) => MemoComposerPendingAttachment(
+            uid: (payload['uid'] as String? ?? '').trim(),
+            filePath: (payload['file_path'] as String? ?? '').trim(),
+            filename: (payload['filename'] as String? ?? '').trim(),
+            mimeType: (payload['mime_type'] as String? ?? '').trim().isEmpty
+                ? 'application/octet-stream'
+                : (payload['mime_type'] as String).trim(),
+            size: _readInt(payload['file_size']),
+          ),
+        )
+        .where(
+          (attachment) =>
+              attachment.uid.isNotEmpty &&
+              attachment.filePath.isNotEmpty &&
+              attachment.filename.isNotEmpty,
+        )
+        .toList(growable: false);
 
-    await db.upsertMemo(
-      uid: uid,
-      content: content,
-      visibility: visibility,
-      pinned: false,
-      state: 'NORMAL',
-      createTimeSec: nowSec,
-      updateTimeSec: nowSec,
-      tags: tags,
-      attachments: attachments,
-      location: location,
-      relationCount: relationCount,
-      syncState: 1,
-    );
-    if (cachedRelations.isEmpty) {
-      await db.deleteMemoRelationsCache(uid);
-    } else {
-      await db.upsertMemoRelationsCache(
-        uid,
-        relationsJson: encodeMemoRelationsJson(cachedRelations),
-      );
-    }
-
-    await enqueueCreateMemoWithAttachmentUploads(
-      read: ref.read,
-      db: db,
-      createPayload: buildCreateMemoOutboxPayload(
-        uid: uid,
-        content: content,
-        visibility: visibility,
-        pinned: false,
-        createTimeSec: nowSec,
-        hasAttachments: hasAttachments,
-        location: location,
-        relations: normalizedRelations,
-      ),
-      attachmentPayloads: stagedUploadPayloads,
-    );
+    await ref
+        .read(memoMutationServiceProvider)
+        .createInlineComposeMemo(
+          uid: uid,
+          content: content,
+          visibility: visibility,
+          nowSec: nowSec,
+          tags: tags,
+          attachments: const <Map<String, dynamic>>[],
+          location: location,
+          relations: normalizedRelations,
+          pendingAttachments: pendingAttachments,
+        );
 
     unawaited(
       _bootstrapAdapter.requestSync(

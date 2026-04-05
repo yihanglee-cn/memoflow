@@ -1,4 +1,4 @@
-part of memos_api;
+part of '../memos_api.dart';
 
 mixin _MemosApiMemos on _MemosApiBase {
   static const String _kGrpcWebContentType = 'application/grpc-web+proto';

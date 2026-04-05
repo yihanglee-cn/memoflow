@@ -8,6 +8,7 @@ import '../../data/db/app_database.dart';
 import '../../data/models/compose_draft.dart';
 import '../attachments/queued_attachment_stager_provider.dart';
 import '../system/database_provider.dart';
+import 'compose_draft_mutation_service.dart';
 import '../system/session_provider.dart';
 import 'note_draft_provider.dart';
 
@@ -22,6 +23,7 @@ final composeDraftRepositoryProvider = Provider<ComposeDraftRepository>((ref) {
     database: ref.watch(databaseProvider),
     workspaceKey: workspaceKey,
     attachmentStager: ref.watch(queuedAttachmentStagerProvider),
+    mutations: ref.watch(composeDraftMutationServiceProvider),
     legacyNoteDraftRepository: ref.watch(noteDraftRepositoryProvider),
   );
 });
@@ -51,15 +53,18 @@ class ComposeDraftRepository {
     required AppDatabase database,
     required String workspaceKey,
     required QueuedAttachmentStager attachmentStager,
+    ComposeDraftMutationService? mutations,
     NoteDraftRepository? legacyNoteDraftRepository,
   }) : _database = database,
-       _workspaceKey = workspaceKey.trim(),
-       _attachmentStager = attachmentStager,
-       _legacyNoteDraftRepository = legacyNoteDraftRepository;
+        _workspaceKey = workspaceKey.trim(),
+        _attachmentStager = attachmentStager,
+        _mutations = mutations ?? ComposeDraftMutationService(db: database),
+        _legacyNoteDraftRepository = legacyNoteDraftRepository;
 
   final AppDatabase _database;
   final String _workspaceKey;
   final QueuedAttachmentStager _attachmentStager;
+  final ComposeDraftMutationService _mutations;
   final NoteDraftRepository? _legacyNoteDraftRepository;
 
   bool _legacyImportAttempted = false;
@@ -123,7 +128,7 @@ class ComposeDraftRepository {
       createdTime: existing?.createdTime ?? now,
       updatedTime: now,
     );
-    await _database.upsertComposeDraftRow(record.toRow());
+    await _mutations.upsertDraftRow(record.toRow());
     await _syncLegacyDraftMirror(snapshot.content);
     return uid;
   }
@@ -134,7 +139,7 @@ class ComposeDraftRepository {
   }) async {
     final existing = await getByUidWithoutLegacyImport(uid);
     if (existing == null) return;
-    await _database.deleteComposeDraft(existing.uid);
+    await _mutations.deleteDraft(existing.uid);
     await _deleteAttachmentFiles(
       existing.snapshot.attachments,
       keepPaths: keepPaths,
@@ -144,7 +149,7 @@ class ComposeDraftRepository {
 
   Future<void> clearDrafts() async {
     final existing = await _listDraftsFromDb();
-    await _database.deleteComposeDraftsByWorkspace(_workspaceKey);
+    await _mutations.deleteDraftsByWorkspace(_workspaceKey);
     await _deleteDraftAttachmentFiles(existing);
     await _syncLegacyDraftMirror(null);
   }
@@ -154,7 +159,7 @@ class ComposeDraftRepository {
     final nextDrafts = drafts
         .map((draft) => draft.copyWith(workspaceKey: _workspaceKey))
         .toList(growable: false);
-    await _database.replaceComposeDraftRows(
+    await _mutations.replaceDraftRows(
       workspaceKey: _workspaceKey,
       rows: nextDrafts.map((draft) => draft.toRow()).toList(growable: false),
     );
@@ -182,7 +187,7 @@ class ComposeDraftRepository {
     if (legacyText.trim().isEmpty) return;
 
     final now = DateTime.now().toUtc();
-    await _database.upsertComposeDraftRow(
+    await _mutations.upsertDraftRow(
       ComposeDraftRecord(
         uid: generateUid(),
         workspaceKey: _workspaceKey,

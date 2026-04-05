@@ -96,11 +96,11 @@ extension _RemoteSyncOutbox on RemoteSyncController {
         break;
       }
       if (headState == AppDatabase.outboxStateRunning) {
-        await db.recoverOutboxRunningTasks();
+        await _mutations.recoverOutboxRunningTasks();
         continue;
       }
 
-      final row = await db.claimOutboxTaskById(headId, nowMs: nowMs);
+      final row = await _mutations.claimOutboxTaskById(headId, nowMs: nowMs);
       if (row == null) continue;
       final id = row['id'] as int?;
       final type = row['type'] as String?;
@@ -112,7 +112,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
       try {
         payload = (jsonDecode(payloadRaw) as Map).cast<String, dynamic>();
       } catch (e) {
-        await db.markOutboxQuarantined(
+        await _mutations.markOutboxQuarantined(
           id,
           error: 'Invalid payload: $e',
           failureCode: 'invalid_payload',
@@ -168,8 +168,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
           type != 'delete_attachment' &&
           await db.hasMemoDeleteMarker(memoUid);
       if (suppressDeletedMemoTask) {
-        await db.markOutboxDone(id);
-        await db.deleteOutbox(id);
+        await _mutations.completeOutboxTask(id);
         successCount++;
         if (isUploadTask) {
           await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
@@ -210,11 +209,10 @@ extension _RemoteSyncOutbox on RemoteSyncController {
                     types: const {'upload_attachment', 'update_memo'},
                   );
               if (!hasFollowUpOutbox) {
-                await db.updateMemoSyncState(uid, syncState: 0);
+                await _mutations.updateMemoSyncState(uid, syncState: 0);
               }
             }
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           case 'update_memo':
             await _handleUpdateMemo(payload);
@@ -222,19 +220,17 @@ extension _RemoteSyncOutbox on RemoteSyncController {
             final hasPendingAttachments =
                 payload['has_pending_attachments'] as bool? ?? false;
             if (!hasPendingAttachments && uid != null && uid.isNotEmpty) {
-              await db.updateMemoSyncState(uid, syncState: 0);
+              await _mutations.updateMemoSyncState(uid, syncState: 0);
             }
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           case 'delete_memo':
             await _handleDeleteMemo(payload);
             final uid = payload['uid'] as String?;
             if (uid != null && uid.trim().isNotEmpty) {
-              await db.deleteMemoDeleteTombstone(uid);
+              await _mutations.deleteMemoDeleteTombstone(uid);
             }
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           case 'upload_attachment':
             final isFinalized = await _handleUploadAttachment(
@@ -243,10 +239,9 @@ extension _RemoteSyncOutbox on RemoteSyncController {
             );
             final memoUid = payload['memo_uid'] as String?;
             if (isFinalized && memoUid != null && memoUid.isNotEmpty) {
-              await db.updateMemoSyncState(memoUid, syncState: 0);
+              await _mutations.updateMemoSyncState(memoUid, syncState: 0);
             }
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           case 'delete_attachment':
             await _handleDeleteAttachment(payload);
@@ -256,11 +251,10 @@ extension _RemoteSyncOutbox on RemoteSyncController {
                 memoUid,
               );
               if (pendingUploads <= 0) {
-                await db.updateMemoSyncState(memoUid, syncState: 0);
+                await _mutations.updateMemoSyncState(memoUid, syncState: 0);
               }
             }
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           case 'submit_log_report':
             LogManager.instance.info(
@@ -270,8 +264,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
                 'reason': 'feature_disabled',
               },
             );
-            await db.markOutboxDone(id);
-            await db.deleteOutbox(id);
+            await _mutations.completeOutboxTask(id);
             break;
           default:
             throw StateError('Unknown op type: $type');
@@ -330,17 +323,17 @@ extension _RemoteSyncOutbox on RemoteSyncController {
             final retryAt =
                 DateTime.now().toUtc().millisecondsSinceEpoch +
                 delay.inMilliseconds;
-            await db.markOutboxRetryScheduled(
+            await _mutations.markOutboxRetryScheduled(
               id,
               error: outboxError,
               retryAtMs: retryAt,
             );
             blockedReason = 'retry_scheduled';
             if (memoUid != null && memoUid.isNotEmpty) {
-              await db.updateMemoSyncState(memoUid, syncState: 1);
+              await _mutations.updateMemoSyncState(memoUid, syncState: 1);
             }
           } else {
-            await db.markOutboxQuarantined(
+            await _mutations.markOutboxQuarantined(
               id,
               error: outboxError,
               failureCode: classification.failureCode,
@@ -367,11 +360,11 @@ extension _RemoteSyncOutbox on RemoteSyncController {
                 presentationParams: {'type': type},
                 cause: memoError,
               );
-              await db.updateMemoSyncState(
-                  failedMemoUid,
-                  syncState: 2,
-                  lastError: encodeSyncError(syncError),
-                );
+              await _mutations.updateMemoSyncState(
+                failedMemoUid,
+                syncState: 2,
+                lastError: encodeSyncError(syncError),
+              );
               await _cascadeMemoQuarantine(
                 rootOutboxId: id,
                 memoUid: failedMemoUid,
@@ -381,7 +374,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
           }
           if (type == 'delete_memo' && memoUid != null && memoUid.isNotEmpty) {
             final currentState = await db.getMemoDeleteTombstoneState(memoUid);
-            await db.upsertMemoDeleteTombstone(
+            await _mutations.upsertMemoDeleteTombstone(
               memoUid: memoUid,
               state:
                   currentState ??
@@ -441,10 +434,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
         if (typeCounts.isNotEmpty) 'typeCounts': typeCounts,
       },
     );
-    return _OutboxProcessResult(
-      blocked: true,
-      hasQuarantined: hasAttention,
-    );
+    return _OutboxProcessResult(blocked: true, hasQuarantined: hasAttention);
   }
 
   Future<bool> _discardMissingSourceUploadTaskIfNeeded({
@@ -461,9 +451,9 @@ extension _RemoteSyncOutbox on RemoteSyncController {
     final attachmentUid = (payload['uid'] as String? ?? '').trim();
     final filePath = (payload['file_path'] as String? ?? '').trim();
 
-    await db.deleteOutbox(outboxId);
+    await _mutations.deleteOutbox(outboxId);
     if (memoUid.isNotEmpty && attachmentUid.isNotEmpty) {
-      await db.removePendingAttachmentPlaceholder(
+      await _mutations.removePendingAttachmentPlaceholder(
         memoUid: memoUid,
         attachmentUid: attachmentUid,
       );
@@ -478,7 +468,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
     }
     if (memoUid.isNotEmpty) {
       final hasMorePending = await db.hasPendingOutboxTaskForMemo(memoUid);
-      await db.updateMemoSyncState(
+      await _mutations.updateMemoSyncState(
         memoUid,
         syncState: hasMorePending ? 1 : 0,
         lastError: null,
@@ -621,8 +611,10 @@ extension _RemoteSyncOutbox on RemoteSyncController {
       final remoteUid = created.uid;
       final targetUid = remoteUid.isNotEmpty ? remoteUid : uid;
       if (remoteUid.isNotEmpty && remoteUid != uid) {
-        await db.renameMemoUid(oldUid: uid, newUid: remoteUid);
-        await db.rewriteOutboxMemoUids(oldUid: uid, newUid: remoteUid);
+        await _mutations.renameMemoUidAndRewriteOutboxMemoUids(
+          oldUid: uid,
+          newUid: remoteUid,
+        );
       }
       if (normalizedRelations.isNotEmpty &&
           !api.supportsCreateMemoRelationsInCreateBody) {
@@ -1011,7 +1003,7 @@ extension _RemoteSyncOutbox on RemoteSyncController {
     for (final row in rows) {
       final id = row['id'] as int?;
       if (id == null || id <= rootOutboxId) continue;
-      await db.markOutboxQuarantined(
+      await _mutations.markOutboxQuarantined(
         id,
         error: 'Blocked by quarantined memo root task',
         failureCode: 'blocked_by_quarantined_memo_root',

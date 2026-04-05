@@ -3,6 +3,7 @@ part of 'memos_providers.dart';
 class RemoteSyncController extends SyncControllerBase {
   RemoteSyncController({
     required this.db,
+    RemoteSyncMutationService? mutations,
     required this.api,
     required this.currentUserName,
     required this.syncStatusTracker,
@@ -10,9 +11,11 @@ class RemoteSyncController extends SyncControllerBase {
     required this.imageBedRepository,
     required this.attachmentPreprocessor,
     this.onRelationsSynced,
-  }) : super(const AsyncValue.data(null));
+  }) : _mutations = mutations ?? RemoteSyncMutationService(db: db),
+       super(const AsyncValue.data(null));
 
   final AppDatabase db;
+  final RemoteSyncMutationService _mutations;
   final MemosApi api;
   final String currentUserName;
   final SyncStatusTracker syncStatusTracker;
@@ -119,7 +122,7 @@ class RemoteSyncController extends SyncControllerBase {
       },
     );
     syncStatusTracker.markSyncStarted();
-    await db.recoverOutboxRunningTasks();
+    await _mutations.recoverOutboxRunningTasks();
     final totalPendingAtStart = await db.countOutboxPending();
     syncQueueProgressTracker.markSyncStarted(totalTasks: totalPendingAtStart);
     if (!_setStateSafely(
@@ -174,7 +177,9 @@ class RemoteSyncController extends SyncControllerBase {
         allowPrivateVisibilityPrune: allowPrivateVisibilityPrune,
       );
     });
-    if (!next.hasError && !outboxResult.blocked && outboxResult.hasQuarantined) {
+    if (!next.hasError &&
+        !outboxResult.blocked &&
+        outboxResult.hasQuarantined) {
       latestAttention = _buildSyncAttentionInfo(
         await db.getLatestOutboxAttention(),
       );

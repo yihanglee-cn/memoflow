@@ -24,9 +24,7 @@ import '../../data/ai/ai_provider_models.dart';
 import '../../data/ai/ai_route_config.dart';
 import '../../data/ai/ai_settings_models.dart';
 import '../../data/models/local_memo.dart';
-import '../../state/memos/memo_sync_constraints.dart';
-import '../../state/memos/create_memo_outbox_payload.dart';
-import '../../state/system/session_provider.dart';
+import '../../state/memos/memo_mutation_service.dart';
 import '../about/about_screen.dart';
 import '../explore/explore_screen.dart';
 import '../home/app_drawer.dart';
@@ -576,45 +574,19 @@ class _AiSummaryScreenState extends ConsumerState<AiSummaryScreen> {
     final uid = generateUid();
     final now = DateTime.now();
     final tags = extractTags(content);
-    final db = ref.read(databaseProvider);
     final aiAnalysisRepository = ref.read(aiAnalysisRepositoryProvider);
 
     try {
-      await db.upsertMemo(
-        uid: uid,
-        content: content,
-        visibility: 'PRIVATE',
-        pinned: false,
-        state: 'NORMAL',
-        createTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-        updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-        tags: tags,
-        attachments: const [],
-        location: null,
-        relationCount: 0,
-        syncState: 1,
-      );
-      await aiAnalysisRepository.upsertMemoPolicy(memoUid: uid, allowAi: false);
-      final allowed = await guardMemoContentForRemoteSync(
-        db: db,
-        enabled:
-            ref.read(appSessionProvider).valueOrNull?.currentAccount != null,
-        memoUid: uid,
-        content: content,
-      );
-      if (allowed) {
-        await db.enqueueOutbox(
-          type: 'create_memo',
-          payload: buildCreateMemoOutboxPayload(
+      await ref
+          .read(memoMutationServiceProvider)
+          .createQuickInputMemo(
             uid: uid,
             content: content,
             visibility: 'PRIVATE',
-            pinned: false,
-            createTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-            hasAttachments: false,
-          ),
-        );
-      }
+            nowSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
+            tags: tags,
+          );
+      await aiAnalysisRepository.upsertMemoPolicy(memoUid: uid, allowAi: false);
       unawaited(
         ref
             .read(syncCoordinatorProvider.notifier)

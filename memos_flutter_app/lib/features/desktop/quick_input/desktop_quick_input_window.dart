@@ -14,16 +14,20 @@ import '../../../i18n/strings.g.dart';
 import '../../../core/app_localization.dart';
 import '../../../core/app_theme.dart';
 import '../../../core/desktop/shortcuts.dart';
+import '../../../core/desktop_db_write_channel.dart';
 import '../../../core/desktop_quick_input_channel.dart';
 import '../../../core/markdown_editing.dart';
 import '../../../core/memo_template_renderer.dart';
 import '../../../core/memoflow_palette.dart';
 import '../../../core/tags.dart';
 import '../../../core/uid.dart';
+import '../../../data/db/db_write_protocol.dart';
 import '../../../data/models/memo_location.dart';
 import '../../../data/models/memo_template_settings.dart';
 import '../../../state/settings/location_settings_provider.dart';
 import '../../../state/system/logging_provider.dart';
+import '../../../state/system/database_provider.dart';
+import '../../../state/system/session_provider.dart';
 import '../../../state/settings/memo_template_settings_provider.dart';
 import '../../../state/settings/preferences_provider.dart';
 import '../../memos/attachment_gallery_screen.dart';
@@ -195,6 +199,26 @@ class _DesktopQuickInputWindowScreenState
 
   Future<dynamic> _handleMethodCall(MethodCall call, int _) async {
     if (!mounted) return null;
+    if (call.method == desktopDbChangedMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final event = DesktopDbChangeEvent.fromJson(
+          Map<Object?, Object?>.from(args),
+        );
+        final currentKey =
+            ref.read(appSessionProvider).valueOrNull?.currentKey?.trim() ?? '';
+        final expectedDbName = currentKey.isEmpty
+            ? null
+            : databaseNameForAccountKey(currentKey);
+        if (currentKey == event.workspaceKey &&
+            expectedDbName == event.dbName) {
+          try {
+            ref.read(databaseProvider).notifyDataChanged();
+          } catch (_) {}
+        }
+      }
+      return true;
+    }
     if (call.method == desktopQuickInputFocusMethod) {
       await _bringWindowToFront();
       return true;

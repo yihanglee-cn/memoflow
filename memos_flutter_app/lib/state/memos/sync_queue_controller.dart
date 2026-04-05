@@ -9,8 +9,7 @@ import '../../data/db/app_database.dart';
 import '../../data/models/local_memo.dart';
 import '../system/database_provider.dart';
 import '../sync/sync_coordinator_provider.dart';
-import 'create_memo_outbox_enqueue.dart';
-import 'create_memo_outbox_payload.dart';
+import 'memo_mutation_service.dart';
 import 'sync_queue_models.dart';
 
 final syncQueueControllerProvider = Provider<SyncQueueController>((ref) {
@@ -32,33 +31,35 @@ class SyncQueueController {
           item.type == 'create_memo' ||
           isLocalOnlySyncPausedError(currentLastError);
       if (shouldPreserveLocalOnlyMemo) {
-        await db.deleteOutboxForMemo(memoUid);
-        await _preserveMemoAsLocalOnly(db, memoUid, existingRow: memoRow);
+        await _ref
+            .read(memoMutationServiceProvider)
+            .deleteMemoSyncTasksPreservingLocalOnly(
+              memoUid: memoUid,
+              existingRow: memoRow,
+            );
         return;
       }
       final tombstoneState = await db.getMemoDeleteTombstoneState(memoUid);
-      if (item.type == 'delete_memo' && tombstoneState != null) {
-        await db.upsertMemoDeleteTombstone(
-          memoUid: memoUid,
-          state: AppDatabase.memoDeleteTombstoneStateLocalOnly,
-        );
-      }
-      await db.deleteOutbox(item.id);
-      if (item.type == 'upload_attachment' && item.attachmentUid != null) {
-        await db.removePendingAttachmentPlaceholder(
-          memoUid: memoUid,
-          attachmentUid: item.attachmentUid!,
-        );
-      }
-      await _clearMemoSyncErrorIfIdle(db, memoUid);
+      await _ref
+          .read(memoMutationServiceProvider)
+          .deleteSyncQueueItem(
+            outboxId: item.id,
+            memoUid: memoUid,
+            attachmentUid: item.type == 'upload_attachment'
+                ? item.attachmentUid
+                : null,
+            keepDeleteTombstoneLocalOnly:
+                item.type == 'delete_memo' && tombstoneState != null,
+          );
       return;
     }
 
-    await db.deleteOutbox(item.id);
+    await _ref
+        .read(memoMutationServiceProvider)
+        .deleteSyncQueueItem(outboxId: item.id);
   }
 
   Future<void> retryItem(SyncQueueItem item) async {
-    final db = _ref.read(databaseProvider);
     final memoUid = item.memoUid?.trim();
     if (item.needsAttention) {
       if (memoUid != null && memoUid.isNotEmpty) {
@@ -66,19 +67,27 @@ class SyncQueueController {
         if (rebuilt) {
           return;
         }
-        final retried = await db.retryOutboxErrors(memoUid: memoUid);
+        final retried = await _ref
+            .read(memoMutationServiceProvider)
+            .retryOutboxErrors(memoUid: memoUid);
         if (retried > 0) {
           return;
         }
       }
-      await db.retryOutboxItem(item.id);
+      await _ref
+          .read(memoMutationServiceProvider)
+          .retryOutboxItem(outboxId: item.id);
       return;
     }
     if (memoUid != null && memoUid.isNotEmpty) {
-      await db.retryOutboxErrors(memoUid: memoUid);
+      await _ref
+          .read(memoMutationServiceProvider)
+          .retryOutboxErrors(memoUid: memoUid);
       return;
     }
-    await db.retryOutboxItem(item.id);
+    await _ref
+        .read(memoMutationServiceProvider)
+        .retryOutboxItem(outboxId: item.id);
   }
 
   Future<bool> retryQuarantinedMemoItem(SyncQueueItem item) async {
@@ -129,61 +138,18 @@ class SyncQueueController {
     final shouldSyncAttachments =
         memo.attachments.isNotEmpty || _hasAttachmentTaskChanges(existingItems);
 
-    if (hasActiveItems) {
-      await _deleteOutboxItems(db, attentionIds);
-      await db.updateMemoSyncState(memo.uid, syncState: 1, lastError: null);
-      return true;
-    }
-
-    if (rootType == 'create_memo') {
-      await enqueueCreateMemoWithAttachmentUploads(
-        read: _ref.read,
-        db: db,
-        createPayload: buildCreateMemoOutboxPayload(
-          uid: memo.uid,
-          content: memo.content,
-          visibility: memo.visibility,
-          pinned: memo.pinned,
-          createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-          displayTimeSec: memo.displayTime == null
-              ? null
-              : memo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000,
-          hasAttachments: memo.attachments.isNotEmpty,
-          location: memo.location,
+    return _ref
+        .read(memoMutationServiceProvider)
+        .rebuildMemoSyncQueue(
+          memo: memo,
+          attentionIds: attentionIds,
+          hasActiveItems: hasActiveItems,
+          rootType: rootType,
+          uploadPayloads: uploadPayloads,
+          deletePayloads: deletePayloads,
           relations: relations,
-        ),
-        attachmentPayloads: uploadPayloads,
-      );
-      for (final payload in deletePayloads) {
-        await db.enqueueOutbox(type: 'delete_attachment', payload: payload);
-      }
-    } else {
-      await db.enqueueOutbox(
-        type: 'update_memo',
-        payload: {
-          'uid': memo.uid,
-          'content': memo.content,
-          'visibility': memo.visibility,
-          'pinned': memo.pinned,
-          if (memo.state.trim().isNotEmpty && memo.state != 'NORMAL')
-            'state': memo.state,
-          if (memo.location != null) 'location': memo.location!.toJson(),
-          if (relations.isNotEmpty) 'relations': relations,
-          if (shouldSyncAttachments) 'sync_attachments': true,
-          if (uploadPayloads.isNotEmpty) 'has_pending_attachments': true,
-        },
-      );
-      for (final payload in uploadPayloads) {
-        await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
-      }
-      for (final payload in deletePayloads) {
-        await db.enqueueOutbox(type: 'delete_attachment', payload: payload);
-      }
-    }
-
-    await _deleteOutboxItems(db, attentionIds);
-    await db.updateMemoSyncState(memo.uid, syncState: 1, lastError: null);
-    return true;
+          shouldSyncAttachments: shouldSyncAttachments,
+        );
   }
 
   Future<SyncRunResult> requestSync() async {
@@ -195,37 +161,6 @@ class SyncQueueController {
             reason: SyncRequestReason.manual,
           ),
         );
-  }
-
-  Future<void> _clearMemoSyncErrorIfIdle(AppDatabase db, String memoUid) async {
-    final trimmed = memoUid.trim();
-    if (trimmed.isEmpty) return;
-    final pending = await db.listPendingOutboxMemoUids();
-    if (pending.contains(trimmed)) return;
-    final row = await db.getMemoByUid(trimmed);
-    final currentLastError = row?['last_error'] as String?;
-    if (isLocalOnlySyncPausedError(currentLastError)) {
-      await _preserveMemoAsLocalOnly(db, trimmed, existingRow: row);
-      return;
-    }
-    await db.updateMemoSyncState(trimmed, syncState: 0, lastError: null);
-  }
-
-  Future<void> _preserveMemoAsLocalOnly(
-    AppDatabase db,
-    String memoUid, {
-    Map<String, dynamic>? existingRow,
-  }) async {
-    final trimmed = memoUid.trim();
-    if (trimmed.isEmpty) return;
-    final row = existingRow ?? await db.getMemoByUid(trimmed);
-    if (row == null) return;
-    final currentLastError = row['last_error'] as String?;
-    await db.updateMemoSyncState(
-      trimmed,
-      syncState: SyncState.error.index,
-      lastError: markLocalOnlySyncPausedError(currentLastError),
-    );
   }
 
   String _resolveRebuildRootType({
@@ -357,11 +292,5 @@ class SyncQueueController {
       }
     }
     return false;
-  }
-
-  Future<void> _deleteOutboxItems(AppDatabase db, List<int> ids) async {
-    for (final id in ids) {
-      await db.deleteOutbox(id);
-    }
   }
 }

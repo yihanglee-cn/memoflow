@@ -34,7 +34,9 @@ import '../../data/local_library/local_library_fs.dart';
 import '../../features/share/share_inline_image_content.dart';
 import 'create_memo_outbox_payload.dart';
 import 'create_memo_time_policy.dart';
+import 'memo_relations_cache_mutation_service.dart';
 import 'memo_sync_constraints.dart';
+import 'remote_sync_mutation_service.dart';
 import '../../data/logs/sync_queue_progress_tracker.dart';
 import '../system/database_provider.dart';
 import '../attachments/attachment_preprocessor_provider.dart';
@@ -45,6 +47,7 @@ import '../system/logging_provider.dart';
 import '../settings/memoflow_bridge_settings_provider.dart';
 import '../system/network_log_provider.dart';
 import '../system/session_provider.dart';
+import '../sync/local_sync_mutation_service.dart';
 import '../sync/sync_controller_base.dart';
 
 part 'memos_query_models.part.dart';
@@ -83,6 +86,7 @@ final syncControllerProvider =
         }
         return LocalSyncController(
           db: ref.watch(databaseProvider),
+          mutations: LocalSyncMutationService(db: ref.watch(databaseProvider)),
           fileSystem: LocalLibraryFileSystem(localLibrary),
           attachmentStore: LocalAttachmentStore(),
           bridgeSettingsRepository: ref.watch(
@@ -102,6 +106,7 @@ final syncControllerProvider =
       }
       return RemoteSyncController(
         db: ref.watch(databaseProvider),
+        mutations: RemoteSyncMutationService(db: ref.watch(databaseProvider)),
         api: ref.watch(memosApiProvider),
         currentUserName: authContext.userName,
         syncStatusTracker: ref.read(syncStatusTrackerProvider),

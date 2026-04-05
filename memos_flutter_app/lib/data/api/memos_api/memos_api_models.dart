@@ -1,4 +1,4 @@
-part of memos_api;
+part of '../memos_api.dart';
 
 enum _NotificationApiMode { modern, legacyV1, legacyV2 }
 

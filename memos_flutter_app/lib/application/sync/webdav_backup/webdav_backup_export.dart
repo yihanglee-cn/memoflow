@@ -1448,14 +1448,12 @@ class _ExportWriter {
     required this.backupBaseDir,
     required this.exportStagingDir,
     required this.chunkSize,
-    this.logEvent,
   }) : _fileSystem = LocalLibraryFileSystem(library);
 
   final LocalLibrary library;
   final String backupBaseDir;
   final String exportStagingDir;
   final int chunkSize;
-  final void Function(String label, {String? detail, Object? error})? logEvent;
   final LocalLibraryFileSystem _fileSystem;
 
   String _resolvedPath(String relative) {
@@ -1537,24 +1535,14 @@ class _ExportWriter {
     if (prevDir.existsSync()) {
       try {
         await prevDir.delete(recursive: true);
-      } catch (error) {
-        logEvent?.call(
-          'Export cleanup failed',
-          detail: LogSanitizer.redactPathLike(prevDir.path),
-          error: error,
-        );
+      } catch (_) {
       }
     }
     final stagingRoot = Directory(p.join(rootPath, exportStagingDir));
     if (stagingRoot.existsSync()) {
       try {
         await stagingRoot.delete(recursive: true);
-      } catch (error) {
-        logEvent?.call(
-          'Export staging cleanup failed',
-          detail: LogSanitizer.redactPathLike(stagingRoot.path),
-          error: error,
-        );
+      } catch (_) {
       }
     }
   }

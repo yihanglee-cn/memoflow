@@ -10,6 +10,7 @@ import '../../core/top_toast.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_reminder.dart';
 import '../../state/system/database_provider.dart';
+import '../../state/system/reminder_mutation_service.dart';
 import '../../state/system/reminder_scheduler.dart';
 import '../../state/settings/reminder_settings_provider.dart';
 import 'reminder_settings_screen.dart';
@@ -21,10 +22,12 @@ class MemoReminderEditorScreen extends ConsumerStatefulWidget {
   final LocalMemo memo;
 
   @override
-  ConsumerState<MemoReminderEditorScreen> createState() => _MemoReminderEditorScreenState();
+  ConsumerState<MemoReminderEditorScreen> createState() =>
+      _MemoReminderEditorScreenState();
 }
 
-class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScreen> {
+class _MemoReminderEditorScreenState
+    extends ConsumerState<MemoReminderEditorScreen> {
   final _dateFmt = DateFormat('yyyy-MM-dd HH:mm');
   bool _loading = true;
   ReminderMode _mode = ReminderMode.single;
@@ -63,10 +66,7 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
   Future<void> _addOrEditTime({DateTime? current}) async {
     if (current == null && _mode == ReminderMode.repeat && _times.length >= 9) {
       if (mounted) {
-        showTopToast(
-          context,
-          context.t.strings.legacy.msg_v_9_times_allowed,
-        );
+        showTopToast(context, context.t.strings.legacy.msg_v_9_times_allowed);
       }
       return;
     }
@@ -105,13 +105,16 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
     );
     if (!mounted) return null;
     if (time == null) return null;
-    final picked = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    final picked = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
     if (picked.isBefore(now)) {
       if (mounted) {
-        showTopToast(
-          context,
-          context.t.strings.legacy.msg_pick_future_time,
-        );
+        showTopToast(context, context.t.strings.legacy.msg_pick_future_time);
       }
       return null;
     }
@@ -120,48 +123,48 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
 
   Future<void> _save() async {
     if (_times.isEmpty) {
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_select_reminder_time,
-      );
+      showTopToast(context, context.t.strings.legacy.msg_select_reminder_time);
       return;
     }
     if (_mode == ReminderMode.repeat && _times.length > 9) {
-      showTopToast(
-        context,
-        context.t.strings.legacy.msg_v_9_times_allowed,
-      );
+      showTopToast(context, context.t.strings.legacy.msg_v_9_times_allowed);
       return;
     }
 
-    final db = ref.read(databaseProvider);
-    final sorted = [..._times]..sort();
-    await db.upsertMemoReminder(
-      memoUid: widget.memo.uid,
-      mode: _mode.name,
-      timesJson: MemoReminder.encodeTimes(sorted),
-    );
+    await ref
+        .read(reminderMutationServiceProvider)
+        .saveReminder(memoUid: widget.memo.uid, mode: _mode, times: _times);
     await ref.read(reminderSchedulerProvider).rescheduleAll();
     if (!mounted) return;
     Navigator.of(context).pop(true);
   }
 
   Future<void> _deleteReminder() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             title: Text(context.t.strings.legacy.msg_delete_reminder),
-            content: Text(context.t.strings.legacy.msg_remove_all_reminder_times_memo),
+            content: Text(
+              context.t.strings.legacy.msg_remove_all_reminder_times_memo,
+            ),
             actions: [
-              TextButton(onPressed: () => context.safePop(false), child: Text(context.t.strings.legacy.msg_cancel_2)),
-              FilledButton(onPressed: () => context.safePop(true), child: Text(context.t.strings.legacy.msg_delete)),
+              TextButton(
+                onPressed: () => context.safePop(false),
+                child: Text(context.t.strings.legacy.msg_cancel_2),
+              ),
+              FilledButton(
+                onPressed: () => context.safePop(true),
+                child: Text(context.t.strings.legacy.msg_delete),
+              ),
             ],
           ),
         ) ??
         false;
     if (!confirmed) return;
-    final db = ref.read(databaseProvider);
-    await db.deleteMemoReminder(widget.memo.uid);
+    await ref
+        .read(reminderMutationServiceProvider)
+        .deleteReminder(widget.memo.uid);
     await ref.read(reminderSchedulerProvider).rescheduleAll();
     if (!mounted) return;
     Navigator.of(context).pop(true);
@@ -171,11 +174,17 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
   Widget build(BuildContext context) {
     final settings = ref.watch(reminderSettingsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? MemoFlowPalette.backgroundDark : MemoFlowPalette.backgroundLight;
+    final bg = isDark
+        ? MemoFlowPalette.backgroundDark
+        : MemoFlowPalette.backgroundLight;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
-    final textMain = isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
+    final textMain = isDark
+        ? MemoFlowPalette.textDark
+        : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
-    final divider = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
+    final divider = isDark
+        ? Colors.white.withValues(alpha: 0.06)
+        : Colors.black.withValues(alpha: 0.06);
 
     return Scaffold(
       backgroundColor: bg,
@@ -206,11 +215,7 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
-                    colors: [
-                      const Color(0xFF0B0B0B),
-                      bg,
-                      bg,
-                    ],
+                    colors: [const Color(0xFF0B0B0B), bg, bg],
                   ),
                 ),
               ),
@@ -227,7 +232,9 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
                     textMain: textMain,
                     textMuted: textMuted,
                     onOpenSettings: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => const ReminderSettingsScreen()),
+                      MaterialPageRoute<void>(
+                        builder: (_) => const ReminderSettingsScreen(),
+                      ),
                     ),
                   ),
                 if (!settings.enabled) const SizedBox(height: 12),
@@ -254,7 +261,9 @@ class _MemoReminderEditorScreenState extends ConsumerState<MemoReminderEditorScr
                       textMain: textMain,
                       textMuted: textMuted,
                       onAdd: () => _addOrEditTime(),
-                      canAdd: _mode == ReminderMode.single ? true : _times.length < 9,
+                      canAdd: _mode == ReminderMode.single
+                          ? true
+                          : _times.length < 9,
                       addLabel: _mode == ReminderMode.single
                           ? context.t.strings.legacy.msg_set_time
                           : context.t.strings.legacy.msg_add_2,
@@ -456,7 +465,10 @@ class _TimesHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: textMain)),
+            child: Text(
+              label,
+              style: TextStyle(fontWeight: FontWeight.w600, color: textMain),
+            ),
           ),
           TextButton.icon(
             onPressed: canAdd ? onAdd : null,
@@ -495,13 +507,22 @@ class _TimeRow extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(timeLabel, style: TextStyle(fontWeight: FontWeight.w600, color: textMain)),
+                child: Text(
+                  timeLabel,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: textMain,
+                  ),
+                ),
               ),
               IconButton(
                 onPressed: onRemove,
                 icon: Icon(Icons.close, size: 18, color: textMuted),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                constraints: const BoxConstraints.tightFor(
+                  width: 32,
+                  height: 32,
+                ),
               ),
             ],
           ),

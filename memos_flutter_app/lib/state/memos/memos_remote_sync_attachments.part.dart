@@ -447,7 +447,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
         content: updatedContent,
       );
       if (allowed) {
-        await db.enqueueOutbox(
+        await _mutations.enqueueOutbox(
           type: 'update_memo',
           payload: {
             'uid': memo.uid,
@@ -480,7 +480,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
     required List<Map<String, dynamic>> attachments,
   }) async {
     final now = DateTime.now().toUtc();
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: memo.uid,
       content: content,
       visibility: memo.visibility,
@@ -522,7 +522,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
 
     final tags = extractTags(updatedContent);
     final now = DateTime.now().toUtc();
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: memo.uid,
       content: updatedContent,
       visibility: memo.visibility,
@@ -545,7 +545,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
       content: updatedContent,
     );
     if (allowed) {
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'update_memo',
         payload: {
           'uid': memo.uid,
@@ -741,7 +741,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
     }
 
     if (!changed) return;
-    await db.updateMemoAttachmentsJson(
+    await _mutations.updateMemoAttachmentsJson(
       memoUid,
       attachmentsJson: jsonEncode(out),
     );
@@ -803,7 +803,7 @@ extension _RemoteSyncAttachments on RemoteSyncController {
     }
 
     if (!changed) return;
-    await db.updateMemoAttachmentsJson(
+    await _mutations.updateMemoAttachmentsJson(
       memoUid,
       attachmentsJson: jsonEncode(out),
     );

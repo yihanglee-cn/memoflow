@@ -153,6 +153,7 @@ void main(List<String> args) {
                 desktopRuntimeRoleProvider.overrideWith(
                   (ref) => DesktopRuntimeRole.desktopQuickInput,
                 ),
+                desktopWindowIdProvider.overrideWith((ref) => windowId),
               ],
               child: DesktopQuickInputWindowApp(windowId: windowId),
             ),
@@ -169,6 +170,7 @@ void main(List<String> args) {
                 desktopRuntimeRoleProvider.overrideWith(
                   (ref) => DesktopRuntimeRole.desktopSettings,
                 ),
+                desktopWindowIdProvider.overrideWith((ref) => windowId),
               ],
               child: DesktopSettingsWindowApp(windowId: windowId),
             ),
@@ -220,6 +222,7 @@ void main(List<String> args) {
             desktopRuntimeRoleProvider.overrideWith(
               (ref) => DesktopRuntimeRole.mainApp,
             ),
+            desktopWindowIdProvider.overrideWith((ref) => 0),
           ],
           child: const App(),
         ),

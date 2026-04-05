@@ -1,15 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/memo_relations.dart';
-import '../../core/tags.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_location.dart';
 import '../../features/share/share_inline_image_content.dart';
 import '../attachments/queued_attachment_stager_provider.dart';
-import 'create_memo_outbox_enqueue.dart';
-import 'create_memo_outbox_payload.dart';
-import 'memo_sync_constraints.dart';
+import 'memo_mutation_service.dart';
 import '../system/database_provider.dart';
 
 class NoteInputPendingAttachment {
@@ -54,7 +50,6 @@ class NoteInputController {
     required List<Map<String, dynamic>> relations,
     required List<NoteInputPendingAttachment> pendingAttachments,
   }) async {
-    final db = _ref.read(databaseProvider);
     final queuedAttachmentStager = _ref.read(queuedAttachmentStagerProvider);
 
     final attachmentPayloads = await queuedAttachmentStager.stageUploadPayloads(
@@ -79,44 +74,7 @@ class NoteInputController {
           .toList(growable: false),
       scopeKey: uid,
     );
-    final localAttachments = mergePendingAttachmentPlaceholders(
-      attachments: attachments,
-      pendingAttachments: attachmentPayloads,
-    );
-    final cachedRelations = mergeOutgoingReferenceRelations(
-      memoUid: uid,
-      existingRelations: const [],
-      nextRelations: relations,
-      memoSnippet: content,
-    );
-    final relationCount = countReferenceRelations(
-      memoUid: uid,
-      relations: cachedRelations,
-    );
-
-    await db.upsertMemo(
-      uid: uid,
-      content: content,
-      visibility: visibility,
-      pinned: false,
-      state: 'NORMAL',
-      createTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-      tags: tags,
-      attachments: localAttachments,
-      location: location,
-      relationCount: relationCount,
-      syncState: 1,
-    );
-    if (cachedRelations.isEmpty) {
-      await db.deleteMemoRelationsCache(uid);
-    } else {
-      await db.upsertMemoRelationsCache(
-        uid,
-        relationsJson: encodeMemoRelationsJson(cachedRelations),
-      );
-    }
-
+    final inlineImageSourceMappings = <Map<String, String>>[];
     for (final payload in attachmentPayloads) {
       NoteInputPendingAttachment? matchedAttachment;
       for (final attachment in pendingAttachments) {
@@ -135,28 +93,26 @@ class NoteInputController {
           sourceUrl != null &&
           sourceUrl.isNotEmpty &&
           localUrl.isNotEmpty) {
-        await db.upsertMemoInlineImageSource(
-          memoUid: uid,
-          localUrl: localUrl,
-          sourceUrl: sourceUrl,
-        );
+        inlineImageSourceMappings.add(<String, String>{
+          'localUrl': localUrl,
+          'sourceUrl': sourceUrl,
+        });
       }
     }
 
-    await enqueueCreateMemoWithAttachmentUploads(
-      read: _ref.read,
-      db: db,
-      createPayload: buildCreateMemoOutboxPayload(
-        uid: uid,
-        content: syncContent ?? content,
-        visibility: visibility,
-        pinned: false,
-        createTimeSec: now.toUtc().millisecondsSinceEpoch ~/ 1000,
-        hasAttachments: hasAttachments,
-        location: location,
-        relations: relations,
-      ),
+    await _ref.read(memoMutationServiceProvider).createNoteInputMemo(
+      uid: uid,
+      content: content,
+      syncContent: syncContent,
+      visibility: visibility,
+      now: now,
+      tags: tags,
+      attachments: attachments,
+      location: location,
+      hasAttachments: hasAttachments,
+      relations: relations,
       attachmentPayloads: attachmentPayloads,
+      inlineImageSourceMappings: inlineImageSourceMappings,
     );
   }
 
@@ -215,66 +171,27 @@ class NoteInputController {
         externalLink: localUrl,
       ).toJson(),
     ];
-    final now = DateTime.now().toUtc();
-    final syncPolicy = resolveMemoSyncMutationPolicy(
-      currentLastError: memo.lastError,
-    );
-
-    await db.upsertMemo(
-      uid: memo.uid,
-      content: updatedContent,
-      visibility: memo.visibility,
-      pinned: memo.pinned,
-      state: memo.state,
-      createTimeSec: memo.createTime.toUtc().millisecondsSinceEpoch ~/ 1000,
-      updateTimeSec: now.millisecondsSinceEpoch ~/ 1000,
-      tags: extractTags(updatedContent),
-      attachments: updatedAttachments,
-      location: memo.location,
-      relationCount: memo.relationCount,
-      syncState: syncPolicy.syncState,
-      lastError: syncPolicy.lastError,
-    );
-
-    if (normalizedSourceUrl.isNotEmpty) {
-      await db.upsertMemoInlineImageSource(
-        memoUid: memo.uid,
-        localUrl: localUrl,
-        sourceUrl: normalizedSourceUrl,
-      );
-    }
-
-    final allowed =
-        syncPolicy.allowRemoteSync &&
-        await guardMemoContentForCurrentSyncTarget(
-          read: _ref.read,
-          db: db,
-          memoUid: memo.uid,
-          content: updatedContent,
+    final stagedPayload = await queuedAttachmentStager.stageUploadPayload({
+      'uid': stagedAttachment.uid,
+      'memo_uid': memo.uid,
+      'file_path': stagedAttachment.filePath,
+      'filename': stagedAttachment.filename,
+      'mime_type': stagedAttachment.mimeType,
+      'file_size': stagedAttachment.size,
+      'skip_compression': stagedAttachment.skipCompression,
+      'share_inline_image': true,
+      'from_third_party_share': true,
+      'share_inline_local_url': localUrl,
+    }, scopeKey: memo.uid);
+    await _ref
+        .read(memoMutationServiceProvider)
+        .appendDeferredThirdPartyShareInlineImage(
+          memo: memo,
+          updatedContent: updatedContent,
+          updatedAttachments: updatedAttachments,
+          localUrl: localUrl,
+          normalizedSourceUrl: normalizedSourceUrl,
+          stagedUploadPayload: stagedPayload,
         );
-    if (allowed) {
-      await db.enqueueOutbox(
-        type: 'update_memo',
-        payload: {
-          'uid': memo.uid,
-          'content': updatedContent,
-          'visibility': memo.visibility,
-          'pinned': memo.pinned,
-        },
-      );
-      final stagedPayload = await queuedAttachmentStager.stageUploadPayload({
-        'uid': stagedAttachment.uid,
-        'memo_uid': memo.uid,
-        'file_path': stagedAttachment.filePath,
-        'filename': stagedAttachment.filename,
-        'mime_type': stagedAttachment.mimeType,
-        'file_size': stagedAttachment.size,
-        'skip_compression': stagedAttachment.skipCompression,
-        'share_inline_image': true,
-        'from_third_party_share': true,
-        'share_inline_local_url': localUrl,
-      }, scopeKey: memo.uid);
-      await db.enqueueOutbox(type: 'upload_attachment', payload: stagedPayload);
-    }
   }
 }

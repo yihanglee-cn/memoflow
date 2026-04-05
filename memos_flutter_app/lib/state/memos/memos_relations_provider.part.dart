@@ -43,11 +43,11 @@ Future<List<MemoRelation>> _loadMemoRelationsCache(
 }
 
 Future<void> _storeMemoRelationsCache(
-  AppDatabase db,
+  MemoRelationsCacheMutationService mutations,
   String memoUid,
   List<MemoRelation> relations,
 ) async {
-  await db.upsertMemoRelationsCache(
+  await mutations.upsertMemoRelationsCache(
     memoUid,
     relationsJson: _encodeMemoRelationsCache(relations),
   );
@@ -64,8 +64,8 @@ Future<void> _refreshMemoRelationsCache(Ref ref, String memoUid) async {
       memoUid: normalized,
       pageSize: 200,
     );
-    final db = ref.read(databaseProvider);
-    await _storeMemoRelationsCache(db, normalized, relations);
+    final mutations = ref.read(memoRelationsCacheMutationServiceProvider);
+    await _storeMemoRelationsCache(mutations, normalized, relations);
   } catch (_) {}
 }
 

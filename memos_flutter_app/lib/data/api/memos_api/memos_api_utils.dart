@@ -1,6 +1,4 @@
-part of memos_api;
-
-const Duration _attachmentTimeout = Duration(seconds: 120);
+part of '../memos_api.dart';
 
 const Duration _largeListReceiveTimeout = Duration(seconds: 90);
 

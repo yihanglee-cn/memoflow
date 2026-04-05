@@ -36,6 +36,7 @@ extension _StartupCoordinatorShare on StartupCoordinator {
     if (payload == null) return false;
     if (!_bootstrapAdapter.readPreferencesLoaded(_ref)) return false;
     final prefs = _bootstrapAdapter.readPreferences(_ref);
+    final session = _bootstrapAdapter.readSession(_ref);
     if (!prefs.thirdPartyShareEnabled) {
       _logStartupInfo(
         'Startup: share_disabled',
@@ -48,9 +49,8 @@ extension _StartupCoordinatorShare on StartupCoordinator {
       _clearStartupShareLaunchUi();
       _setShareFlowActive(false);
       _notifyShareDisabled();
-      return true;
+      return session?.currentAccount != null;
     }
-    final session = _bootstrapAdapter.readSession(_ref);
     if (session?.currentAccount == null) return false;
     final navigator = _navigatorKey.currentState;
     final context = _navigatorKey.currentContext;

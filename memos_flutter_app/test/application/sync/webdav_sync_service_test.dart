@@ -151,14 +151,7 @@ class _PutCall {
 class _FakeWebDavClient implements WebDavClient {
   _FakeWebDavClient({
     required this.baseUrl,
-    this.username = '',
-    this.password = '',
-    this.authMode = WebDavAuthMode.basic,
-    this.ignoreBadCert = false,
-    this.logWriter,
     Map<String, WebDavResponse>? responsesByName,
-    this.putResponse,
-    this.mkcolResponse,
     this.deleteResponse,
   }) : _responsesByName = responsesByName ?? <String, WebDavResponse>{};
 
@@ -166,23 +159,23 @@ class _FakeWebDavClient implements WebDavClient {
   final Uri baseUrl;
 
   @override
-  final String username;
+  final String username = '';
 
   @override
-  final String password;
+  final String password = '';
 
   @override
-  final WebDavAuthMode authMode;
+  final WebDavAuthMode authMode = WebDavAuthMode.basic;
 
   @override
-  final bool ignoreBadCert;
+  final bool ignoreBadCert = false;
 
   @override
-  final void Function(DebugLogEntry entry)? logWriter;
+  final void Function(DebugLogEntry entry)? logWriter = null;
 
   final Map<String, WebDavResponse> _responsesByName;
-  final WebDavResponse? putResponse;
-  final WebDavResponse? mkcolResponse;
+  final WebDavResponse? putResponse = null;
+  final WebDavResponse? mkcolResponse = null;
   final WebDavResponse? deleteResponse;
   final List<_PutCall> putCalls = <_PutCall>[];
   final List<Uri> mkcolCalls = <Uri>[];

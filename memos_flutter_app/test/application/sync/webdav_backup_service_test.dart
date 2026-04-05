@@ -94,11 +94,10 @@ class _FakeConfigAdapter implements WebDavSyncLocalAdapter {
   _FakeConfigAdapter({
     required this.snapshot,
     List<ComposeDraftRecord>? drafts,
-    this.workspaceKey = 'workspace-1',
   }) : _drafts = List<ComposeDraftRecord>.from(drafts ?? const []);
 
   final WebDavSyncLocalSnapshot snapshot;
-  final String workspaceKey;
+  final String workspaceKey = 'workspace-1';
   List<ComposeDraftRecord> _drafts;
   List<ComposeDraftRecord>? replacedDrafts;
 
@@ -164,39 +163,31 @@ class _PutCall {
 class _FakeWebDavClient implements WebDavClient {
   _FakeWebDavClient({
     required this.baseUrl,
-    this.username = '',
-    this.password = '',
-    this.authMode = WebDavAuthMode.basic,
-    this.ignoreBadCert = false,
-    this.logWriter,
     Map<String, WebDavResponse>? responsesBySuffix,
-    this.putResponse,
-    this.mkcolResponse,
-    this.deleteResponse,
   }) : _responsesBySuffix = responsesBySuffix ?? <String, WebDavResponse>{};
 
   @override
   final Uri baseUrl;
 
   @override
-  final String username;
+  final String username = '';
 
   @override
-  final String password;
+  final String password = '';
 
   @override
-  final WebDavAuthMode authMode;
+  final WebDavAuthMode authMode = WebDavAuthMode.basic;
 
   @override
-  final bool ignoreBadCert;
+  final bool ignoreBadCert = false;
 
   @override
-  final void Function(DebugLogEntry entry)? logWriter;
+  final void Function(DebugLogEntry entry)? logWriter = null;
 
   final Map<String, WebDavResponse> _responsesBySuffix;
-  final WebDavResponse? putResponse;
-  final WebDavResponse? mkcolResponse;
-  final WebDavResponse? deleteResponse;
+  final WebDavResponse? putResponse = null;
+  final WebDavResponse? mkcolResponse = null;
+  final WebDavResponse? deleteResponse = null;
 
   final List<_PutCall> putCalls = <_PutCall>[];
 

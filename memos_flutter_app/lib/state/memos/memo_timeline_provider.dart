@@ -26,6 +26,7 @@ import '../../data/models/memo_version.dart';
 import '../../data/models/recycle_bin_item.dart';
 import 'memo_sync_constraints.dart';
 import 'create_memo_outbox_payload.dart';
+import 'memo_timeline_mutation_service.dart';
 import '../attachments/queued_attachment_stager_provider.dart';
 import '../system/database_provider.dart';
 import '../system/session_provider.dart';
@@ -46,6 +47,7 @@ final memoTimelineServiceProvider = Provider<MemoTimelineService>((ref) {
           );
     },
     queuedAttachmentStager: ref.watch(queuedAttachmentStagerProvider),
+    mutations: ref.watch(memoTimelineMutationServiceProvider),
   );
 });
 
@@ -94,15 +96,18 @@ class MemoTimelineService {
     required this.db,
     required this.account,
     required this.triggerSync,
+    MemoTimelineMutationService? mutations,
     QueuedAttachmentStager? queuedAttachmentStager,
     Future<void> Function(Duration delay)? waitForRetry,
-  }) : _queuedAttachmentStager =
+  }) : _mutations = mutations ?? MemoTimelineMutationService(db: db),
+       _queuedAttachmentStager =
            queuedAttachmentStager ?? QueuedAttachmentStager(),
        _waitForRetry = waitForRetry ?? Future<void>.delayed;
 
   final AppDatabase db;
   final Account? account;
   final Future<void> Function() triggerSync;
+  final MemoTimelineMutationService _mutations;
   final QueuedAttachmentStager _queuedAttachmentStager;
   final Future<void> Function(Duration delay) _waitForRetry;
 
@@ -163,7 +168,7 @@ class MemoTimelineService {
 
     try {
       await _withDatabaseBusyRetry(() {
-        return db.insertMemoVersion(
+        return _mutations.insertMemoVersion(
           memoUid: memoUid,
           snapshotTime: now,
           summary: _memoSummary(memo.content),
@@ -200,7 +205,7 @@ class MemoTimelineService {
     final current = LocalMemo.fromDb(row);
     await captureMemoVersion(current);
     // Overwrite semantics: discard pending sync ops for this memo first.
-    await db.deleteOutboxForMemo(current.uid);
+    await _mutations.deleteOutboxForMemo(current.uid);
 
     final payloadMemo = _payloadMemo(version.payload);
     final restoredContent = (payloadMemo['content'] as String?) ?? '';
@@ -218,7 +223,7 @@ class MemoTimelineService {
 
     final now = DateTime.now().toUtc();
     final tags = extractTags(restoredContent);
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: current.uid,
       content: restoredContent,
       visibility: restoredVisibility,
@@ -246,7 +251,7 @@ class MemoTimelineService {
           content: restoredContent,
         );
     if (allowed) {
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'update_memo',
         payload: {
           'uid': current.uid,
@@ -275,7 +280,7 @@ class MemoTimelineService {
           'mime_type': attachment.type,
           'file_size': attachment.size,
         }, scopeKey: current.uid);
-        await db.enqueueOutbox(
+        await _mutations.enqueueOutbox(
           type: 'upload_attachment',
           payload: stagedPayload,
         );
@@ -306,7 +311,7 @@ class MemoTimelineService {
       'memo': _memoPayload(memo: memo, attachments: backedAttachments),
     };
 
-    await db.insertRecycleBinItem(
+    await _mutations.insertRecycleBinItem(
       itemType: 'memo',
       memoUid: memoUid,
       summary: _memoSummary(memo.content),
@@ -345,7 +350,7 @@ class MemoTimelineService {
     };
     final deletedAt = DateTime.now().toUtc();
     final expireAt = deletedAt.add(recycleRetention);
-    await db.insertRecycleBinItem(
+    await _mutations.insertRecycleBinItem(
       itemType: 'attachment',
       memoUid: memoUid,
       summary: '${attachment.filename} (${attachment.type})',
@@ -362,13 +367,13 @@ class MemoTimelineService {
       await _restoreAttachmentFromRecycleItem(item);
     }
     await _deleteRecycleItemStorage(item.payload);
-    await db.deleteRecycleBinItemById(item.id);
+    await _mutations.deleteRecycleBinItemById(item.id);
     unawaited(triggerSync());
   }
 
   Future<void> deleteRecycleBinItem(RecycleBinItem item) async {
     await _deleteRecycleItemStorage(item.payload);
-    await db.deleteRecycleBinItemById(item.id);
+    await _mutations.deleteRecycleBinItemById(item.id);
   }
 
   Future<void> purgeExpiredRecycleBin() async {
@@ -379,7 +384,7 @@ class MemoTimelineService {
       final item = RecycleBinItem.fromDb(row);
       if (!item.isExpired && !now.isAfter(item.expireTime)) continue;
       await _deleteRecycleItemStorage(item.payload);
-      await db.deleteRecycleBinItemById(item.id);
+      await _mutations.deleteRecycleBinItemById(item.id);
     }
   }
 
@@ -389,7 +394,7 @@ class MemoTimelineService {
       final item = RecycleBinItem.fromDb(row);
       await _deleteRecycleItemStorage(item.payload);
     }
-    await db.clearRecycleBinItems();
+    await _mutations.clearRecycleBinItems();
   }
 
   Future<void> _restoreMemoFromRecycleItem(RecycleBinItem item) async {
@@ -421,10 +426,10 @@ class MemoTimelineService {
         ? createTimeSec
         : now.millisecondsSinceEpoch ~/ 1000;
 
-    await db.deleteOutboxForMemo(memoUid);
-    await db.deleteMemoDeleteTombstone(memoUid);
+    await _mutations.deleteOutboxForMemo(memoUid);
+    await _mutations.deleteMemoDeleteTombstone(memoUid);
 
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: memoUid,
       content: content,
       visibility: visibility,
@@ -475,10 +480,13 @@ class MemoTimelineService {
       final uploadBeforeCreate = _shouldEnqueueAttachmentUploadsBeforeCreate;
       if (uploadBeforeCreate) {
         for (final payload in attachmentPayloads) {
-          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          await _mutations.enqueueOutbox(
+            type: 'upload_attachment',
+            payload: payload,
+          );
         }
       }
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'create_memo',
         payload: buildCreateMemoOutboxPayload(
           uid: memoUid,
@@ -492,17 +500,20 @@ class MemoTimelineService {
       );
       if (!uploadBeforeCreate) {
         for (final payload in attachmentPayloads) {
-          await db.enqueueOutbox(type: 'upload_attachment', payload: payload);
+          await _mutations.enqueueOutbox(
+            type: 'upload_attachment',
+            payload: payload,
+          );
         }
       }
       if (state == 'ARCHIVED') {
-        await db.enqueueOutbox(
+        await _mutations.enqueueOutbox(
           type: 'update_memo',
           payload: {'uid': memoUid, 'state': 'ARCHIVED'},
         );
       }
     } else {
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'update_memo',
         payload: {
           'uid': memoUid,
@@ -536,7 +547,7 @@ class MemoTimelineService {
           'mime_type': attachment.type,
           'file_size': attachment.size,
         }, scopeKey: memoUid);
-        await db.enqueueOutbox(
+        await _mutations.enqueueOutbox(
           type: 'upload_attachment',
           payload: stagedPayload,
         );
@@ -582,7 +593,7 @@ class MemoTimelineService {
     );
 
     final now = DateTime.now().toUtc();
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: memo.uid,
       content: memo.content,
       visibility: memo.visibility,
@@ -607,7 +618,7 @@ class MemoTimelineService {
           content: memo.content,
         );
     if (allowed) {
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'update_memo',
         payload: {
           'uid': memo.uid,
@@ -627,7 +638,10 @@ class MemoTimelineService {
         'mime_type': restoredAttachment.type,
         'file_size': restoredAttachment.size,
       }, scopeKey: memo.uid);
-      await db.enqueueOutbox(type: 'upload_attachment', payload: stagedPayload);
+      await _mutations.enqueueOutbox(
+        type: 'upload_attachment',
+        payload: stagedPayload,
+      );
     }
   }
 
@@ -639,12 +653,12 @@ class MemoTimelineService {
     for (final id in overflowIds) {
       final row = await db.getMemoVersionById(id);
       if (row == null) {
-        await db.deleteMemoVersionById(id);
+        await _mutations.deleteMemoVersionById(id);
         continue;
       }
       final payload = _decodePayload((row['payload_json'] as String?) ?? '{}');
       await _deleteVersionStorage(payload);
-      await db.deleteMemoVersionById(id);
+      await _mutations.deleteMemoVersionById(id);
     }
   }
 
@@ -985,7 +999,7 @@ class MemoTimelineService {
           ? attachment.name
           : attachment.uid;
       if (name.isEmpty) continue;
-      await db.enqueueOutbox(
+      await _mutations.enqueueOutbox(
         type: 'delete_attachment',
         payload: {'attachment_name': name, 'memo_uid': memoUid},
       );

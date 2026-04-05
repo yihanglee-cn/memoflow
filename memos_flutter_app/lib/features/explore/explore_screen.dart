@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -2384,7 +2386,7 @@ class _ExploreMemoCardState extends State<_ExploreMemoCard> {
         imageUrl: url,
         fit: BoxFit.cover,
         placeholder: (context, _) => fallbackWidget,
-        errorWidget: (context, _, __) => fallbackWidget,
+        errorWidget: (context, imageUrl, error) => fallbackWidget,
       ),
     );
   }

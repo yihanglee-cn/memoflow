@@ -14,17 +14,20 @@ import '../../data/local_library/local_library_parser.dart';
 import '../../data/models/attachment.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo_location.dart';
+import 'local_library_scan_mutation_service.dart';
 import 'sync_error.dart';
 import 'sync_types.dart';
 
 class LocalLibraryScanService {
   LocalLibraryScanService({
     required this.db,
+    LocalLibraryScanMutationService? mutations,
     required this.fileSystem,
     required this.attachmentStore,
-  });
+  }) : _mutations = mutations ?? LocalLibraryScanMutationService(db: db);
 
   final AppDatabase db;
+  final LocalLibraryScanMutationService _mutations;
   final LocalLibraryFileSystem fileSystem;
   final LocalAttachmentStore attachmentStore;
 
@@ -219,6 +222,7 @@ class LocalLibraryScanService {
           uid,
           parsed,
           attachments,
+          sidecar: diskMemo.sidecar,
           displayTime: _resolvedDisplayTimeForInsert(
             parsed: parsed,
             sidecar: diskMemo.sidecar,
@@ -227,8 +231,8 @@ class LocalLibraryScanService {
           relationCount: _resolvedRelationCountForInsert(
             sidecar: diskMemo.sidecar,
           ),
+          clearOutbox: false,
         );
-        await _applySidecarToDb(uid: uid, sidecar: diskMemo.sidecar);
         insertedCount++;
         if (insertedSampleUids.length < 8) {
           insertedSampleUids.add(uid);
@@ -275,12 +279,12 @@ class LocalLibraryScanService {
       }
       if (!useDisk) continue;
 
-      await db.deleteOutboxForMemo(uid);
       outboxClearedCount++;
       await _upsertMemoFromDisk(
         uid,
         parsed,
         attachments,
+        sidecar: diskMemo.sidecar,
         displayTime: _resolvedDisplayTimeForUpdate(
           localMemo: localMemo,
           parsed: parsed,
@@ -294,8 +298,8 @@ class LocalLibraryScanService {
           localMemo: localMemo,
           sidecar: diskMemo.sidecar,
         ),
+        clearOutbox: true,
       );
-      await _applySidecarToDb(uid: uid, sidecar: diskMemo.sidecar);
       updatedCount++;
       if (updatedSampleUids.length < 8) {
         updatedSampleUids.add(uid);
@@ -339,9 +343,8 @@ class LocalLibraryScanService {
       }
       if (!useDisk) continue;
 
-      await db.deleteOutboxForMemo(normalized);
       outboxClearedCount++;
-      await db.deleteMemoByUid(normalized);
+      await _mutations.deleteMemoFromDisk(normalized);
       deletedCount++;
       if (deletedSampleUids.length < 8) {
         deletedSampleUids.add(normalized);
@@ -513,14 +516,15 @@ class LocalLibraryScanService {
           uid,
           parsed,
           attachments,
+          sidecar: sidecar,
           displayTime: _resolvedDisplayTimeForInsert(
             parsed: parsed,
             sidecar: sidecar,
           ),
           location: _resolvedLocationForInsert(sidecar: sidecar),
           relationCount: _resolvedRelationCountForInsert(sidecar: sidecar),
+          clearOutbox: false,
         );
-        await _applySidecarToDb(uid: uid, sidecar: sidecar);
         insertedCount++;
         if (insertedSampleUids.length < 8) {
           insertedSampleUids.add(uid);
@@ -558,12 +562,12 @@ class LocalLibraryScanService {
               conflictSkippedSampleUids.add(uid);
             }
           } else {
-            await db.deleteOutboxForMemo(uid);
             outboxClearedCount++;
             await _upsertMemoFromDisk(
               uid,
               parsed,
               attachments,
+              sidecar: sidecar,
               displayTime: _resolvedDisplayTimeForUpdate(
                 localMemo: localMemo,
                 parsed: parsed,
@@ -577,8 +581,8 @@ class LocalLibraryScanService {
                 localMemo: localMemo,
                 sidecar: sidecar,
               ),
+              clearOutbox: true,
             );
-            await _applySidecarToDb(uid: uid, sidecar: sidecar);
             updatedCount++;
             if (updatedSampleUids.length < 8) {
               updatedSampleUids.add(uid);
@@ -657,9 +661,8 @@ class LocalLibraryScanService {
         continue;
       }
 
-      await db.deleteOutboxForMemo(uid);
       outboxClearedCount++;
-      await db.deleteMemoByUid(uid);
+      await _mutations.deleteMemoFromDisk(uid);
       deletedCount++;
       if (deletedSampleUids.length < 8) {
         deletedSampleUids.add(uid);
@@ -818,12 +821,14 @@ class LocalLibraryScanService {
     String uid,
     LocalLibraryParsedMemo parsed,
     List<Attachment> attachments, {
+    required LocalLibraryMemoSidecar? sidecar,
     required DateTime? displayTime,
     required MemoLocation? location,
     required int relationCount,
+    required bool clearOutbox,
   }) async {
     final mergedTags = _mergeTags(parsed.tags, parsed.content);
-    await db.upsertMemo(
+    await _mutations.replaceMemoFromDisk(
       uid: uid,
       content: parsed.content.trimRight(),
       visibility: parsed.visibility,
@@ -833,6 +838,7 @@ class LocalLibraryScanService {
       displayTimeSec: displayTime == null
           ? null
           : displayTime.toUtc().millisecondsSinceEpoch ~/ 1000,
+      displayTimeSpecified: true,
       updateTimeSec: parsed.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: mergedTags,
       attachments: attachments.map((a) => a.toJson()).toList(growable: false),
@@ -840,6 +846,9 @@ class LocalLibraryScanService {
       relationCount: relationCount,
       syncState: 0,
       lastError: null,
+      clearOutbox: clearOutbox,
+      relationsMode: _relationsModeForSidecar(sidecar),
+      relationsJson: _relationsJsonForSidecar(sidecar),
     );
   }
 
@@ -1001,20 +1010,18 @@ class LocalLibraryScanService {
     return db.getMemoRelationsCacheJson(uid);
   }
 
-  Future<void> _applySidecarToDb({
-    required String uid,
-    required LocalLibraryMemoSidecar? sidecar,
-  }) async {
-    if (sidecar == null || !sidecar.hasRelationMetadata) return;
-    if (!sidecar.relationsAreComplete) return;
-    if (sidecar.relations.isEmpty) {
-      await db.deleteMemoRelationsCache(uid);
-      return;
+  String _relationsModeForSidecar(LocalLibraryMemoSidecar? sidecar) {
+    if (sidecar == null || !sidecar.hasRelationMetadata) return 'none';
+    if (!sidecar.relationsAreComplete) return 'none';
+    return sidecar.relations.isEmpty ? 'clear' : 'set';
+  }
+
+  String? _relationsJsonForSidecar(LocalLibraryMemoSidecar? sidecar) {
+    if (sidecar == null || !sidecar.hasRelationMetadata) return null;
+    if (!sidecar.relationsAreComplete || sidecar.relations.isEmpty) {
+      return null;
     }
-    await db.upsertMemoRelationsCache(
-      uid,
-      relationsJson: encodeMemoRelationsJson(sidecar.relations),
-    );
+    return encodeMemoRelationsJson(sidecar.relations);
   }
 
   DateTime? _resolvedDisplayTimeForInsert({

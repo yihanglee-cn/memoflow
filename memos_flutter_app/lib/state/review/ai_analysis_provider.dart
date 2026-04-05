@@ -8,7 +8,10 @@ import '../settings/ai_settings_provider.dart';
 import '../system/database_provider.dart';
 
 final aiAnalysisRepositoryProvider = Provider<AiAnalysisRepository>((ref) {
-  return AiAnalysisRepository(ref.watch(databaseProvider));
+  return AiAnalysisRepository(
+    ref.watch(databaseProvider),
+    writeGateway: ref.watch(desktopDbWriteGatewayProvider),
+  );
 });
 
 final aiAnalysisServiceProvider = Provider<AiAnalysisService>((ref) {

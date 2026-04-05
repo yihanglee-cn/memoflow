@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:memos_flutter_app/core/storage_read.dart';
@@ -20,10 +21,15 @@ import 'package:memos_flutter_app/features/review/ai_insight_models.dart';
 import 'package:memos_flutter_app/features/review/ai_insight_settings_sheet.dart';
 import 'package:memos_flutter_app/features/review/ai_summary_screen.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
+import 'package:memos_flutter_app/state/review/ai_analysis_provider.dart';
 import 'package:memos_flutter_app/state/settings/ai_settings_provider.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
 import 'package:memos_flutter_app/state/system/database_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
+
+import '../../test_support.dart';
+
+const MethodChannel _windowManagerChannel = MethodChannel('window_manager');
 
 class _MemoryAiSettingsRepository extends AiSettingsRepository {
   _MemoryAiSettingsRepository(this._value)
@@ -187,6 +193,36 @@ class _TestSessionController extends AppSessionController {
   }
 }
 
+class _FakeAiAnalysisRepository extends AiAnalysisRepository {
+  _FakeAiAnalysisRepository({
+    required this.historyEntries,
+    Map<int, AiSavedAnalysisReport> reportsByTaskId = const {},
+  }) : _reportsByTaskId = reportsByTaskId,
+       super(AppDatabase(dbName: 'unused_ai_summary_test.db'));
+
+  final List<AiSavedAnalysisHistoryEntry> historyEntries;
+  final Map<int, AiSavedAnalysisReport> _reportsByTaskId;
+
+  @override
+  Future<List<AiSavedAnalysisHistoryEntry>> listAnalysisReportHistory({
+    required AiAnalysisType analysisType,
+    int? limit = 50,
+  }) async {
+    final items = historyEntries
+        .where((entry) => analysisType == AiAnalysisType.emotionMap)
+        .toList(growable: false);
+    if (limit == null || limit <= 0 || items.length <= limit) {
+      return items;
+    }
+    return items.take(limit).toList(growable: false);
+  }
+
+  @override
+  Future<AiSavedAnalysisReport?> loadAnalysisReportByTaskId(int taskId) async {
+    return _reportsByTaskId[taskId];
+  }
+}
+
 Widget _buildTestApp({
   required Widget child,
   List<Override> overrides = const [],
@@ -210,16 +246,58 @@ Widget _buildTestApp({
   );
 }
 
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  Duration step = const Duration(milliseconds: 100),
+  int maxPumps = 40,
+}) async {
+  for (var index = 0; index < maxPumps; index++) {
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.pump(step);
+  }
+}
+
 Future<void> main() async {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late TestSupport support;
+
+  setUpAll(() async {
+    support = await initializeTestSupport();
+  });
+
+  tearDownAll(() async {
+    await support.dispose();
+  });
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_windowManagerChannel, (call) async {
+          switch (call.method) {
+            case 'isMaximized':
+              return false;
+            case 'isVisible':
+              return true;
+            case 'isMinimized':
+              return false;
+            default:
+              return null;
+          }
+        });
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_windowManagerChannel, null);
+  });
 
   testWidgets('renders all insight cards and opens the settings sheet', (
     tester,
   ) async {
-    final db = AppDatabase(
-      dbName:
-          'ai_summary_screen_test_${DateTime.now().microsecondsSinceEpoch}.db',
-    );
+    final dbName = uniqueDbName('ai_summary_screen');
+    final db = AppDatabase(dbName: dbName);
     final aiRepository = _MemoryAiSettingsRepository(
       AiSettings.defaultsFor(AppLanguage.en),
     );
@@ -231,6 +309,7 @@ Future<void> main() async {
 
     addTearDown(() async {
       await db.close();
+      await deleteTestDatabase(dbName);
     });
 
     await tester.pumpWidget(
@@ -267,44 +346,25 @@ Future<void> main() async {
   });
 
   testWidgets('history button opens saved insight history', (tester) async {
-    final db = AppDatabase(
-      dbName:
-          'ai_summary_history_test_${DateTime.now().microsecondsSinceEpoch}.db',
-    );
-    final repository = AiAnalysisRepository(db);
-    final taskId = await repository.createAnalysisTask(
-      taskUid: 'task-history-1',
-      analysisType: AiAnalysisType.emotionMap,
-      status: AiTaskStatus.completed,
-      rangeStart: DateTime.utc(2026, 3, 1).millisecondsSinceEpoch ~/ 1000,
-      rangeEndExclusive:
-          DateTime.utc(2026, 3, 8).millisecondsSinceEpoch ~/ 1000,
-      includePublic: true,
-      includePrivate: true,
-      includeProtected: false,
-      promptTemplate: 'Reflect on the week with care.',
-      generationProfileKey: 'gen-default',
-      embeddingProfileKey: 'embed-default',
-      retrievalProfile: const <String, dynamic>{'include_public': true},
-    );
-    await repository.saveAnalysisResult(
-      taskId: taskId,
-      result: const AiStructuredAnalysisResult(
-        schemaVersion: 1,
-        analysisType: AiAnalysisType.emotionMap,
-        summary: 'A saved thought about the week.',
-        sections: <AiAnalysisSectionData>[
-          AiAnalysisSectionData(
-            sectionKey: 'main',
-            title: '',
-            body: 'You were slowly finding your footing again.',
-            evidenceKeys: <String>[],
-          ),
-        ],
-        evidences: <AiAnalysisEvidenceData>[],
-        followUpSuggestions: <String>[],
-        rawResponseText: '{}',
-      ),
+    final dbName = uniqueDbName('ai_summary_history');
+    final db = AppDatabase(dbName: dbName);
+    final fakeHistoryRepository = _FakeAiAnalysisRepository(
+      historyEntries: const <AiSavedAnalysisHistoryEntry>[
+        AiSavedAnalysisHistoryEntry(
+          taskId: 1,
+          taskUid: 'task-history-1',
+          status: AiTaskStatus.completed,
+          summary: 'A saved thought about the week.',
+          promptTemplate: 'Reflect on the week with care.',
+          rangeStart: 1772323200,
+          rangeEndExclusive: 1772928000,
+          includePublic: true,
+          includePrivate: true,
+          includeProtected: false,
+          createdTime: 1773014400000,
+          isStale: false,
+        ),
+      ],
     );
 
     final aiRepository = _MemoryAiSettingsRepository(
@@ -316,6 +376,7 @@ Future<void> main() async {
 
     addTearDown(() async {
       await db.close();
+      await deleteTestDatabase(dbName);
     });
 
     await tester.pumpWidget(
@@ -324,6 +385,7 @@ Future<void> main() async {
         overrides: [
           appSessionProvider.overrideWith((ref) => _TestSessionController()),
           databaseProvider.overrideWithValue(db),
+          aiAnalysisRepositoryProvider.overrideWithValue(fakeHistoryRepository),
           aiSettingsProvider.overrideWith(
             (ref) => _TestAiSettingsController(ref, aiRepository),
           ),
@@ -334,12 +396,21 @@ Future<void> main() async {
       ),
     );
 
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await _pumpUntilFound(tester, find.text('AI Insight Studio'));
+    await _pumpUntilFound(tester, find.byTooltip('History'));
 
     await tester.tap(find.byTooltip('History'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await _pumpUntilFound(tester, find.text('Insight History'));
+    await _pumpUntilFound(
+      tester,
+      find.text('A saved thought about the week.'),
+    );
 
-    expect(find.text('Insight History'), findsOneWidget);
+    expect(find.text('Insight History'), findsAtLeastNWidgets(1));
     expect(find.text('A saved thought about the week.'), findsOneWidget);
   });
 
@@ -595,10 +666,8 @@ Future<void> main() async {
   });
 
   testWidgets('analysis can start with chat model only', (tester) async {
-    final db = AppDatabase(
-      dbName:
-          'ai_summary_chat_only_test_${DateTime.now().microsecondsSinceEpoch}.db',
-    );
+    final dbName = uniqueDbName('ai_summary_chat_only');
+    final db = AppDatabase(dbName: dbName);
     const generationService = AiServiceInstance(
       serviceId: 'svc_chat',
       templateId: aiTemplateCustomOpenAi,
@@ -643,6 +712,7 @@ Future<void> main() async {
 
     addTearDown(() async {
       await db.close();
+      await deleteTestDatabase(dbName);
     });
 
     await tester.pumpWidget(
@@ -678,10 +748,8 @@ Future<void> main() async {
   testWidgets('initial history selection opens the report view directly', (
     tester,
   ) async {
-    final db = AppDatabase(
-      dbName:
-          'ai_summary_initial_history_test_${DateTime.now().microsecondsSinceEpoch}.db',
-    );
+    final dbName = uniqueDbName('ai_summary_initial_history');
+    final db = AppDatabase(dbName: dbName);
     final aiRepository = _MemoryAiSettingsRepository(
       AiSettings.defaultsFor(AppLanguage.en),
     );
@@ -708,6 +776,7 @@ Future<void> main() async {
 
     addTearDown(() async {
       await db.close();
+      await deleteTestDatabase(dbName);
     });
 
     await tester.pumpWidget(

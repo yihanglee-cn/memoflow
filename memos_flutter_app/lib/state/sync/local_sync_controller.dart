@@ -25,6 +25,7 @@ import '../../data/models/local_memo.dart';
 import '../../data/models/memoflow_bridge_settings.dart';
 import '../../data/repositories/memoflow_bridge_settings_repository.dart';
 import '../../data/logs/sync_status_tracker.dart';
+import 'local_sync_mutation_service.dart';
 import 'sync_controller_base.dart';
 
 class BridgeBulkPushResult {
@@ -56,6 +57,7 @@ class LocalSyncController extends SyncControllerBase {
 
   LocalSyncController({
     required this.db,
+    required this.mutations,
     required this.fileSystem,
     required this.attachmentStore,
     required this.bridgeSettingsRepository,
@@ -65,6 +67,7 @@ class LocalSyncController extends SyncControllerBase {
   }) : super(const AsyncValue.data(null));
 
   final AppDatabase db;
+  final LocalSyncMutationService mutations;
   final LocalLibraryFileSystem fileSystem;
   final LocalAttachmentStore attachmentStore;
   final MemoFlowBridgeSettingsRepository bridgeSettingsRepository;
@@ -142,7 +145,7 @@ class LocalSyncController extends SyncControllerBase {
       },
     );
     syncStatusTracker.markSyncStarted();
-    await db.recoverOutboxRunningTasks();
+    await mutations.recoverOutboxRunningTasks();
     syncQueueProgressTracker.markSyncStarted(totalTasks: totalPendingAtStart);
     AsyncValue<void> next;
     try {
@@ -352,7 +355,7 @@ class LocalSyncController extends SyncControllerBase {
         break;
       }
       if (headState == AppDatabase.outboxStateRunning) {
-        await db.recoverOutboxRunningTasks();
+        await mutations.recoverOutboxRunningTasks();
         continue;
       }
 
@@ -371,7 +374,7 @@ class LocalSyncController extends SyncControllerBase {
         }
       }
 
-      final row = await db.claimOutboxTaskById(headId, nowMs: nowMs);
+      final row = await mutations.claimOutboxTaskById(headId, nowMs: nowMs);
       if (row == null) continue;
 
       final taskResult = await _runClaimedOutboxTask(
@@ -426,7 +429,7 @@ class LocalSyncController extends SyncControllerBase {
       final isAttachmentType = _isAttachmentOutboxType(type);
       if (state == AppDatabase.outboxStateRunning) {
         if (candidates.isEmpty) {
-          await db.recoverOutboxRunningTasks();
+          await mutations.recoverOutboxRunningTasks();
         }
         break;
       }
@@ -552,7 +555,7 @@ class LocalSyncController extends SyncControllerBase {
     required _OutboxCounters counters,
   }) async {
     for (final candidate in group) {
-      final claimed = await db.claimOutboxTaskById(
+      final claimed = await mutations.claimOutboxTaskById(
         candidate.id,
         nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
       );
@@ -587,7 +590,7 @@ class LocalSyncController extends SyncControllerBase {
     try {
       payload = (jsonDecode(payloadRaw) as Map).cast<String, dynamic>();
     } catch (error) {
-      await db.markOutboxError(id, error: 'Invalid payload: $error');
+      await mutations.markOutboxError(id, error: 'Invalid payload: $error');
       counters.markFailure();
       LogManager.instance.warn(
         'LocalSync outbox: invalid_payload',
@@ -628,8 +631,7 @@ class LocalSyncController extends SyncControllerBase {
         type != 'delete_memo' &&
         await db.hasMemoDeleteMarker(memoUid);
     if (suppressDeletedMemoTask) {
-      await db.markOutboxDone(id);
-      await db.deleteOutbox(id);
+      await mutations.completeOutboxTask(id);
       counters.markSuccess();
       if (isUploadTask) {
         await syncQueueProgressTracker.markTaskCompleted(outboxId: id);
@@ -654,27 +656,24 @@ class LocalSyncController extends SyncControllerBase {
           final memo = await _handleUpsertMemo(payload);
           final hasAttachments = payload['has_attachments'] as bool? ?? false;
           if (!hasAttachments && memo != null && memo.uid.isNotEmpty) {
-            await db.updateMemoSyncState(memo.uid, syncState: 0);
+            await mutations.markMemoSynchronized(memo.uid);
             await _syncMemoToBridgeIfEnabled(memo);
           }
-          await db.markOutboxDone(id);
-          await db.deleteOutbox(id);
+          await mutations.completeOutboxTask(id);
           break;
         case 'update_memo':
           final memo = await _handleUpsertMemo(payload);
           final hasPendingAttachments =
               payload['has_pending_attachments'] as bool? ?? false;
           if (!hasPendingAttachments && memo != null && memo.uid.isNotEmpty) {
-            await db.updateMemoSyncState(memo.uid, syncState: 0);
+            await mutations.markMemoSynchronized(memo.uid);
             await _syncMemoToBridgeIfEnabled(memo);
           }
-          await db.markOutboxDone(id);
-          await db.deleteOutbox(id);
+          await mutations.completeOutboxTask(id);
           break;
         case 'delete_memo':
           await _handleDeleteMemo(payload);
-          await db.markOutboxDone(id);
-          await db.deleteOutbox(id);
+          await mutations.completeOutboxTask(id);
           break;
         case 'upload_attachment':
           final finalized = await _handleUploadAttachment(
@@ -683,27 +682,25 @@ class LocalSyncController extends SyncControllerBase {
           );
           final memoUid = payload['memo_uid'] as String?;
           if (finalized && memoUid != null && memoUid.isNotEmpty) {
-            await db.updateMemoSyncState(memoUid, syncState: 0);
+            await mutations.markMemoSynchronized(memoUid);
             final memo = await _loadMemoByUid(memoUid);
             if (memo != null) {
               await _syncMemoToBridgeIfEnabled(memo);
             }
           }
-          await db.markOutboxDone(id);
-          await db.deleteOutbox(id);
+          await mutations.completeOutboxTask(id);
           break;
         case 'delete_attachment':
           await _handleDeleteAttachment(payload);
           final memoUid = payload['memo_uid'] as String?;
           if (memoUid != null && memoUid.isNotEmpty) {
-            await db.updateMemoSyncState(memoUid, syncState: 0);
+            await mutations.markMemoSynchronized(memoUid);
             final memo = await _loadMemoByUid(memoUid);
             if (memo != null) {
               await _syncMemoToBridgeIfEnabled(memo);
             }
           }
-          await db.markOutboxDone(id);
-          await db.deleteOutbox(id);
+          await mutations.completeOutboxTask(id);
           break;
         default:
           throw StateError('Unknown op type: $type');
@@ -750,14 +747,14 @@ class LocalSyncController extends SyncControllerBase {
         final retryAt =
             DateTime.now().toUtc().millisecondsSinceEpoch +
             delay.inMilliseconds;
-        await db.markOutboxRetryScheduled(
+        await mutations.scheduleOutboxRetry(
           id,
           error: memoError,
           retryAtMs: retryAt,
         );
         blockedReason = 'retry_scheduled';
         if (failedMemoUid != null && failedMemoUid.isNotEmpty) {
-          await db.updateMemoSyncState(failedMemoUid, syncState: 1);
+          await mutations.markMemoPendingSync(failedMemoUid);
         }
       } else {
         if (failedMemoUid != null && failedMemoUid.isNotEmpty) {
@@ -774,13 +771,12 @@ class LocalSyncController extends SyncControllerBase {
             presentationParams: {'type': type},
             cause: baseError,
           );
-          await db.updateMemoSyncState(
+          await mutations.markMemoSyncError(
             failedMemoUid,
-            syncState: 2,
             lastError: encodeSyncError(syncError),
           );
         }
-        await db.markOutboxError(id, error: memoError);
+        await mutations.markOutboxError(id, error: memoError);
         blockedReason = 'error';
       }
       if (!discardedMissingSourceUpload) {
@@ -843,22 +839,12 @@ class LocalSyncController extends SyncControllerBase {
     final attachmentUid = (payload['uid'] as String? ?? '').trim();
     final filePath = (payload['file_path'] as String? ?? '').trim();
 
-    await db.deleteOutbox(outboxId);
-    if (memoUid.isNotEmpty && attachmentUid.isNotEmpty) {
-      await db.removePendingAttachmentPlaceholder(
-        memoUid: memoUid,
-        attachmentUid: attachmentUid,
-      );
-    }
+    await mutations.discardMissingSourceUploadTask(
+      outboxId: outboxId,
+      memoUid: memoUid,
+      attachmentUid: attachmentUid,
+    );
     await _deleteManagedUploadSourceIfUnused(filePath);
-    if (memoUid.isNotEmpty) {
-      final hasMorePending = await db.hasPendingOutboxTaskForMemo(memoUid);
-      await db.updateMemoSyncState(
-        memoUid,
-        syncState: hasMorePending ? 1 : 0,
-        lastError: null,
-      );
-    }
     LogManager.instance.warn(
       'LocalSync outbox: discard_missing_source_upload',
       error: error,
@@ -1166,8 +1152,8 @@ class LocalSyncController extends SyncControllerBase {
       }
       next.add(attachment.toJson());
     }
-    await db.updateMemoAttachmentsJson(
-      memoUid,
+    await mutations.updateMemoAttachmentsJson(
+      memoUid: memoUid,
       attachmentsJson: jsonEncode(next),
     );
 
@@ -1198,8 +1184,8 @@ class LocalSyncController extends SyncControllerBase {
     if (!replaced) {
       next.add(attachment.toJson());
     }
-    await db.updateMemoAttachmentsJson(
-      memoUid,
+    await mutations.updateMemoAttachmentsJson(
+      memoUid: memoUid,
       attachmentsJson: jsonEncode(next),
     );
     await _writeMemoFromDb(memoUid);

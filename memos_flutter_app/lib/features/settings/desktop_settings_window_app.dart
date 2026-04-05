@@ -9,19 +9,28 @@ import 'package:flutter/foundation.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/app_localization.dart';
+import '../../core/desktop_db_write_channel.dart';
 import '../../core/desktop/shortcuts.dart';
+import '../../core/desktop_sync_channel.dart';
 import '../../core/app_theme.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/desktop_quick_input_channel.dart';
 import '../../core/top_toast.dart';
+import '../../application/sync/desktop_remote_sync_facade.dart';
+import '../../application/sync/sync_coordinator.dart';
 import '../../application/desktop/desktop_workspace_snapshot.dart';
+import '../../data/db/db_write_protocol.dart';
+import '../../data/logs/webdav_backup_progress_tracker.dart';
 import '../../data/repositories/ai_settings_repository.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/settings/ai_settings_provider.dart';
+import '../../state/sync/sync_coordinator_provider.dart';
 import '../../state/system/local_library_provider.dart';
+import '../../state/system/database_provider.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
+import '../../state/webdav/webdav_backup_provider.dart';
 import '../../data/models/local_library.dart';
 import '../stats/stats_screen.dart';
 import 'about_us_screen.dart';
@@ -449,6 +458,152 @@ class _DesktopSettingsWindowScreenState
     if (call.method == desktopSettingsFocusMethod) {
       await _bringWindowToFront();
       return true;
+    }
+    if (call.method == desktopDbChangedMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final event = DesktopDbChangeEvent.fromJson(
+          Map<Object?, Object?>.from(args),
+        );
+        final container = ProviderScope.containerOf(context, listen: false);
+        final currentKey =
+            container
+                .read(appSessionProvider)
+                .valueOrNull
+                ?.currentKey
+                ?.trim() ??
+            '';
+        final expectedDbName = currentKey.isEmpty
+            ? null
+            : databaseNameForAccountKey(currentKey);
+        if (currentKey == event.workspaceKey &&
+            expectedDbName == event.dbName) {
+          try {
+            container.read(databaseProvider).notifyDataChanged();
+          } catch (_) {}
+        }
+      }
+      return true;
+    }
+    if (call.method == desktopSyncStateChangedMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final map = Map<Object?, Object?>.from(
+          args,
+        ).map<String, dynamic>((key, value) => MapEntry(key.toString(), value));
+        final container = ProviderScope.containerOf(context, listen: false);
+        final currentKey =
+            container
+                .read(appSessionProvider)
+                .valueOrNull
+                ?.currentKey
+                ?.trim() ??
+            '';
+        final eventKey = (map['workspaceKey'] as String? ?? '').trim();
+        if (currentKey.isEmpty || eventKey.isEmpty || currentKey == eventKey) {
+          final rawState = map['state'];
+          if (rawState is Map) {
+            container
+                .read(desktopSyncFacadeProvider)
+                .applyRemoteStateSnapshot(
+                  SyncCoordinatorState.fromJson(
+                    Map<Object?, Object?>.from(
+                      rawState,
+                    ).cast<String, dynamic>(),
+                  ),
+                );
+          }
+        }
+      }
+      return true;
+    }
+    if (call.method == desktopSyncProgressChangedMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final map = Map<Object?, Object?>.from(
+          args,
+        ).map<String, dynamic>((key, value) => MapEntry(key.toString(), value));
+        final container = ProviderScope.containerOf(context, listen: false);
+        final currentKey =
+            container
+                .read(appSessionProvider)
+                .valueOrNull
+                ?.currentKey
+                ?.trim() ??
+            '';
+        final eventKey = (map['workspaceKey'] as String? ?? '').trim();
+        if (currentKey.isEmpty || eventKey.isEmpty || currentKey == eventKey) {
+          final rawProgress = map['progress'];
+          if (rawProgress is Map) {
+            container
+                .read(webDavBackupProgressTrackerProvider)
+                .applySnapshot(
+                  WebDavBackupProgressSnapshot.fromJson(
+                    Map<Object?, Object?>.from(
+                      rawProgress,
+                    ).cast<String, dynamic>(),
+                  ),
+                );
+          }
+        }
+      }
+      return true;
+    }
+    if (call.method == desktopSyncPromptBackupExportIssueMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final map = Map<Object?, Object?>.from(
+          args,
+        ).map<String, dynamic>((key, value) => MapEntry(key.toString(), value));
+        final metadata = DesktopSyncPromptMetadata.fromJson(map);
+        final rawIssue = map['issue'];
+        if (rawIssue is Map) {
+          final container = ProviderScope.containerOf(context, listen: false);
+          final resolution = await container
+              .read(desktopSyncFacadeProvider)
+              .handleBackupExportIssuePrompt(
+                deserializeWebDavBackupExportIssue(
+                  Map<Object?, Object?>.from(rawIssue).cast<String, dynamic>(),
+                ),
+              );
+          return serializeWebDavBackupExportPromptResponse(
+            metadata: metadata,
+            resolution: resolution,
+          );
+        }
+      }
+      return serializeWebDavBackupExportPromptResponse(
+        metadata: const DesktopSyncPromptMetadata(requestId: '', sessionId: ''),
+        resolution: const WebDavBackupExportResolution(
+          action: WebDavBackupExportAction.abort,
+        ),
+      );
+    }
+    if (call.method == desktopSyncPromptBackupConfigRestoreMethod) {
+      final args = call.arguments;
+      if (args is Map) {
+        final map = Map<Object?, Object?>.from(
+          args,
+        ).map<String, dynamic>((key, value) => MapEntry(key.toString(), value));
+        final metadata = DesktopSyncPromptMetadata.fromJson(map);
+        final rawTypes = map['configTypes'];
+        if (rawTypes is List) {
+          final container = ProviderScope.containerOf(context, listen: false);
+          final selected = await container
+              .read(desktopSyncFacadeProvider)
+              .handleBackupConfigRestorePrompt(
+                deserializeWebDavBackupConfigTypes(rawTypes),
+              );
+          return serializeWebDavBackupConfigPromptResponse(
+            metadata: metadata,
+            selected: selected,
+          );
+        }
+      }
+      return serializeWebDavBackupConfigPromptResponse(
+        metadata: const DesktopSyncPromptMetadata(requestId: '', sessionId: ''),
+        selected: const [],
+      );
     }
     if (call.method == desktopSubWindowExitMethod) {
       unawaited(_closeWindowForExit());

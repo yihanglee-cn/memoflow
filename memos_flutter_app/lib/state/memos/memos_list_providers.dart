@@ -2,8 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/memo_relations.dart';
-import '../../core/tags.dart';
 import '../../core/log_sanitizer.dart';
 import '../../data/api/server_api_profile.dart';
 import '../../data/db/app_database.dart';
@@ -12,11 +10,8 @@ import '../../data/models/memo_location.dart';
 import '../../data/models/shortcut.dart';
 import '../system/database_provider.dart';
 import '../system/logging_provider.dart';
-import 'create_memo_outbox_enqueue.dart';
-import 'create_memo_outbox_payload.dart';
 import 'memo_delete_service.dart';
-import 'memo_sync_constraints.dart';
-import 'memo_timeline_provider.dart';
+import 'memo_mutation_service.dart';
 import 'memos_providers.dart';
 import 'memo_composer_state.dart';
 import '../system/session_provider.dart';

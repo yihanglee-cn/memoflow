@@ -8,25 +8,25 @@ import '../../data/models/app_preferences.dart';
 import '../../state/memos/app_sync_adapter_provider.dart';
 import '../sync/sync_request.dart';
 
-typedef _StatsWidgetUpdater = Future<void> Function({required bool force});
-typedef _SyncFeedbackToast = void Function({required bool succeeded});
-typedef _SyncProgressToast = void Function();
+typedef StatsWidgetUpdater = Future<void> Function({required bool force});
+typedef SyncFeedbackToast = void Function({required bool succeeded});
+typedef SyncProgressToast = void Function();
 
 class AppSyncOrchestrator {
   AppSyncOrchestrator({
     required WidgetRef ref,
-    required _StatsWidgetUpdater updateStatsWidgetIfNeeded,
-    required _SyncFeedbackToast showFeedbackToast,
-    required _SyncProgressToast showProgressToast,
+    required StatsWidgetUpdater updateStatsWidgetIfNeeded,
+    required SyncFeedbackToast showFeedbackToast,
+    required SyncProgressToast showProgressToast,
   }) : _ref = ref,
        _updateStatsWidgetIfNeeded = updateStatsWidgetIfNeeded,
        _showFeedbackToast = showFeedbackToast,
        _showProgressToast = showProgressToast;
 
   final WidgetRef _ref;
-  final _StatsWidgetUpdater _updateStatsWidgetIfNeeded;
-  final _SyncFeedbackToast _showFeedbackToast;
-  final _SyncProgressToast _showProgressToast;
+  final StatsWidgetUpdater _updateStatsWidgetIfNeeded;
+  final SyncFeedbackToast _showFeedbackToast;
+  final SyncProgressToast _showProgressToast;
 
   DateTime? _lastResumeAutoSyncAt;
   bool _autoSyncRunning = false;

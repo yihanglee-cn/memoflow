@@ -21,6 +21,7 @@ import '../../data/models/memo_reminder.dart';
 import 'reminder_utils.dart';
 import 'database_provider.dart';
 import 'logging_provider.dart';
+import 'reminder_mutation_service.dart';
 import '../settings/preferences_provider.dart';
 import '../settings/reminder_settings_provider.dart';
 import 'session_provider.dart';
@@ -120,7 +121,8 @@ class ReminderScheduler {
     _initCompleter = Completer<void>();
     final initContext = <String, Object?>{
       if (caller != null && caller.trim().isNotEmpty) 'caller': caller,
-      if (kDebugMode && !_initLogEmitted) 'stack': StackTrace.current.toString(),
+      if (kDebugMode && !_initLogEmitted)
+        'stack': StackTrace.current.toString(),
     };
     _initLogEmitted = true;
     if (!_supportsReminderNotifications) {
@@ -243,6 +245,7 @@ class ReminderScheduler {
     _logInfo('reschedule_cancel_all');
 
     final db = _ref.read(databaseProvider);
+    final reminderMutations = _ref.read(reminderMutationServiceProvider);
     final rows = await db.listMemoReminders();
     if (rows.isEmpty) {
       _logInfo('reschedule_empty');
@@ -299,16 +302,16 @@ class ReminderScheduler {
 
       final deduped = _dedupeTimes(pendingTimes);
       if (deduped.isEmpty) {
-        await db.deleteMemoReminder(reminder.memoUid);
+        await reminderMutations.deleteReminder(reminder.memoUid);
         removedCount++;
         continue;
       }
 
       if (!_sameTimes(deduped, reminder.times)) {
-        await db.upsertMemoReminder(
+        await reminderMutations.saveReminder(
           memoUid: reminder.memoUid,
-          mode: reminder.mode.name,
-          timesJson: MemoReminder.encodeTimes(deduped),
+          mode: reminder.mode,
+          times: deduped,
         );
       }
 
@@ -418,6 +421,7 @@ class ReminderScheduler {
     _logInfo('reschedule_cancel_all');
 
     final db = _ref.read(databaseProvider);
+    final reminderMutations = _ref.read(reminderMutationServiceProvider);
     final rows = await db.listMemoReminders();
     if (rows.isEmpty) {
       _logInfo('reschedule_empty');
@@ -467,16 +471,16 @@ class ReminderScheduler {
 
       final deduped = _dedupeTimes(pendingTimes);
       if (deduped.isEmpty) {
-        await db.deleteMemoReminder(reminder.memoUid);
+        await reminderMutations.deleteReminder(reminder.memoUid);
         removedCount++;
         continue;
       }
 
       if (!_sameTimes(deduped, reminder.times)) {
-        await db.upsertMemoReminder(
+        await reminderMutations.saveReminder(
           memoUid: reminder.memoUid,
-          mode: reminder.mode.name,
-          timesJson: MemoReminder.encodeTimes(deduped),
+          mode: reminder.mode,
+          times: deduped,
         );
       }
 

@@ -1,4 +1,4 @@
-part of memos_api;
+part of '../memos_api.dart';
 
 abstract class _MemosApiBase {
   _MemosApiBase._(

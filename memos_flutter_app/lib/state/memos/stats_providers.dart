@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/tag_colors.dart';
+import 'stats_cache_mutation_service.dart';
 import '../system/database_provider.dart';
 
 class LocalStats {
@@ -368,6 +369,7 @@ final annualInsightsProvider = StreamProvider.family<AnnualInsights, MonthKey>((
 
 final localStatsProvider = StreamProvider<LocalStats>((ref) async* {
   final db = ref.watch(databaseProvider);
+  final mutations = ref.watch(statsCacheMutationServiceProvider);
 
   Future<LocalStats> load() async {
     final sqlite = await db.db;
@@ -401,7 +403,7 @@ final localStatsProvider = StreamProvider<LocalStats>((ref) async* {
       limit: 1,
     );
     if (statsRows.isEmpty) {
-      await db.rebuildStatsCache();
+      await mutations.rebuildStatsCache();
       statsRows = await sqlite.query(
         'stats_cache',
         columns: const [

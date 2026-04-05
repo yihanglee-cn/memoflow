@@ -86,6 +86,51 @@ class WebDavBackupProgressSnapshot {
       itemGroup: itemGroup ?? this.itemGroup,
     );
   }
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'running': running,
+    'paused': paused,
+    'operation': operation?.name,
+    'stage': stage?.name,
+    'completed': completed,
+    'total': total,
+    'currentPath': currentPath,
+    'itemGroup': itemGroup?.name,
+  };
+
+  factory WebDavBackupProgressSnapshot.fromJson(Map<String, dynamic> json) {
+    T? readEnum<T extends Enum>(List<T> values, Object? raw) {
+      if (raw is! String) return null;
+      for (final value in values) {
+        if (value.name == raw) return value;
+      }
+      return null;
+    }
+
+    int readInt(Object? raw) {
+      if (raw is int) return raw;
+      if (raw is num) return raw.toInt();
+      if (raw is String) return int.tryParse(raw.trim()) ?? 0;
+      return 0;
+    }
+
+    return WebDavBackupProgressSnapshot(
+      running: json['running'] == true,
+      paused: json['paused'] == true,
+      operation: readEnum(
+        WebDavBackupProgressOperation.values,
+        json['operation'],
+      ),
+      stage: readEnum(WebDavBackupProgressStage.values, json['stage']),
+      completed: readInt(json['completed']),
+      total: readInt(json['total']),
+      currentPath: json['currentPath'] as String?,
+      itemGroup: readEnum(
+        WebDavBackupProgressItemGroup.values,
+        json['itemGroup'],
+      ),
+    );
+  }
 }
 
 class WebDavBackupProgressTracker extends ChangeNotifier {
@@ -156,6 +201,10 @@ class WebDavBackupProgressTracker extends ChangeNotifier {
     _pauseCompleter?.complete();
     _pauseCompleter = null;
     _setSnapshot(WebDavBackupProgressSnapshot.idle);
+  }
+
+  void applySnapshot(WebDavBackupProgressSnapshot next) {
+    _setSnapshot(next);
   }
 
   void _setSnapshot(WebDavBackupProgressSnapshot next) {

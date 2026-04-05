@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -717,7 +719,7 @@ class _NotificationMemoCommentTileState
             width: size,
             height: size,
             fit: BoxFit.cover,
-            placeholder: (_, __) => Container(
+            placeholder: (context, imageUrl) => Container(
               width: size,
               height: size,
               color: bgColor,
@@ -728,7 +730,7 @@ class _NotificationMemoCommentTileState
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
-            errorWidget: (_, __, ___) =>
+            errorWidget: (context, imageUrl, error) =>
                 _textPreviewFallback(previewText, size, bgColor, borderColor),
           ),
         );
@@ -839,7 +841,7 @@ class _NotificationMemoCommentTileState
           width: size,
           height: size,
           fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => fallbackWidget,
+          errorBuilder: (context, error, stackTrace) => fallbackWidget,
         ),
       );
     }
@@ -850,8 +852,8 @@ class _NotificationMemoCommentTileState
         width: size,
         height: size,
         fit: BoxFit.cover,
-        placeholder: (_, __) => fallbackWidget,
-        errorWidget: (_, __, ___) => fallbackWidget,
+        placeholder: (context, imageUrl) => fallbackWidget,
+        errorWidget: (context, imageUrl, error) => fallbackWidget,
       ),
     );
   }

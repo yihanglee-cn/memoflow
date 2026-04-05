@@ -22,4 +22,40 @@ class WebDavExportStatus {
   final String? plainRemindAfter;
   final String? lastExportSuccessAt;
   final String? lastUploadSuccessAt;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'webDavConfigured': webDavConfigured,
+    'encSignature': encSignature?.toJson(),
+    'plainSignature': plainSignature?.toJson(),
+    'plainDetected': plainDetected,
+    'plainDeprecated': plainDeprecated,
+    'plainDetectedAt': plainDetectedAt,
+    'plainRemindAfter': plainRemindAfter,
+    'lastExportSuccessAt': lastExportSuccessAt,
+    'lastUploadSuccessAt': lastUploadSuccessAt,
+  };
+
+  factory WebDavExportStatus.fromJson(Map<String, dynamic> json) {
+    final rawEnc = json['encSignature'];
+    final rawPlain = json['plainSignature'];
+    return WebDavExportStatus(
+      webDavConfigured: json['webDavConfigured'] == true,
+      encSignature: rawEnc is Map
+          ? WebDavExportSignature.fromJson(
+              Map<Object?, Object?>.from(rawEnc).cast<String, dynamic>(),
+            )
+          : null,
+      plainSignature: rawPlain is Map
+          ? WebDavExportSignature.fromJson(
+              Map<Object?, Object?>.from(rawPlain).cast<String, dynamic>(),
+            )
+          : null,
+      plainDetected: json['plainDetected'] == true,
+      plainDeprecated: json['plainDeprecated'] == true,
+      plainDetectedAt: json['plainDetectedAt'] as String?,
+      plainRemindAfter: json['plainRemindAfter'] as String?,
+      lastExportSuccessAt: json['lastExportSuccessAt'] as String?,
+      lastUploadSuccessAt: json['lastUploadSuccessAt'] as String?,
+    );
+  }
 }

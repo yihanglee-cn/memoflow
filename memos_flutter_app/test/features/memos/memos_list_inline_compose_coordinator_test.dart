@@ -9,7 +9,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:memos_flutter_app/core/memo_template_renderer.dart';
 import 'package:memos_flutter_app/core/top_toast.dart';
+import 'package:memos_flutter_app/application/attachments/queued_attachment_stager.dart';
 import 'package:memos_flutter_app/data/models/attachment.dart';
+import 'package:memos_flutter_app/data/models/account.dart';
+import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/data/models/memo.dart';
 import 'package:memos_flutter_app/data/models/memo_location.dart';
 import 'package:memos_flutter_app/data/models/user_setting.dart';
@@ -20,7 +23,9 @@ import 'package:memos_flutter_app/features/voice/voice_record_screen.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
 import 'package:memos_flutter_app/state/memos/memo_composer_controller.dart';
 import 'package:memos_flutter_app/state/memos/memo_composer_state.dart';
+import 'package:memos_flutter_app/state/attachments/queued_attachment_stager_provider.dart';
 import 'package:memos_flutter_app/state/settings/user_settings_provider.dart';
+import 'package:memos_flutter_app/state/system/session_provider.dart';
 
 void main() {
   setUp(() => LocaleSettings.setLocale(AppLocale.en));
@@ -461,10 +466,17 @@ Future<_CoordinatorHarnessHandle> _pumpCoordinatorHarness(
   InlineComposeWindowsCapture? captureWindowsPhotoOverride,
 }) async {
   final completer = Completer<_CoordinatorHarnessHandle>();
+  final stagedAttachmentStager = _TestQueuedAttachmentStager();
 
   await tester.pumpWidget(
     ProviderScope(
-      overrides: overrides,
+      overrides: [
+        appSessionProvider.overrideWith((ref) => _TestSessionController()),
+        queuedAttachmentStagerProvider.overrideWith(
+          (ref) => stagedAttachmentStager,
+        ),
+        ...overrides,
+      ],
       child: TranslationProvider(
         child: MaterialApp(
           locale: AppLocale.en.flutterLocale,
@@ -479,6 +491,8 @@ Future<_CoordinatorHarnessHandle> _pumpCoordinatorHarness(
             selectLinkedMemoOverride: selectLinkedMemoOverride,
             openAttachmentViewerOverride: openAttachmentViewerOverride,
             captureWindowsPhotoOverride: captureWindowsPhotoOverride,
+            queuedAttachmentStagerOverride: stagedAttachmentStager,
+            workspaceKeyOverride: () => 'test-workspace',
             onReady: (handle) {
               if (!completer.isCompleted) {
                 completer.complete(handle);
@@ -515,6 +529,8 @@ class _CoordinatorHarness extends ConsumerStatefulWidget {
     this.selectLinkedMemoOverride,
     this.openAttachmentViewerOverride,
     this.captureWindowsPhotoOverride,
+    this.queuedAttachmentStagerOverride,
+    this.workspaceKeyOverride,
   });
 
   final MemoComposerController composer;
@@ -526,6 +542,8 @@ class _CoordinatorHarness extends ConsumerStatefulWidget {
   final InlineComposeLinkedMemoSelector? selectLinkedMemoOverride;
   final InlineComposeAttachmentViewer? openAttachmentViewerOverride;
   final InlineComposeWindowsCapture? captureWindowsPhotoOverride;
+  final QueuedAttachmentStager? queuedAttachmentStagerOverride;
+  final String? Function()? workspaceKeyOverride;
 
   @override
   ConsumerState<_CoordinatorHarness> createState() =>
@@ -550,6 +568,8 @@ class _CoordinatorHarnessState extends ConsumerState<_CoordinatorHarness> {
       selectLinkedMemoOverride: widget.selectLinkedMemoOverride,
       openAttachmentViewerOverride: widget.openAttachmentViewerOverride,
       captureWindowsPhotoOverride: widget.captureWindowsPhotoOverride,
+      queuedAttachmentStagerOverride: widget.queuedAttachmentStagerOverride,
+      workspaceKeyOverride: widget.workspaceKeyOverride,
       showToastOverride: (_, _, {duration = const Duration(seconds: 4)}) {},
       showSnackBarOverride: (_, _) {},
     );
@@ -574,6 +594,107 @@ class _CoordinatorHarnessState extends ConsumerState<_CoordinatorHarness> {
   Widget build(BuildContext context) {
     return const Scaffold(body: SizedBox.expand());
   }
+}
+
+class _TestQueuedAttachmentStager extends QueuedAttachmentStager {
+  _TestQueuedAttachmentStager();
+
+  @override
+  Future<StagedAttachment> stageDraftAttachment({
+    required String uid,
+    required String filePath,
+    required String filename,
+    required String mimeType,
+    required int size,
+    required String scopeKey,
+  }) async {
+    final resolvedFilename = filename.trim().isNotEmpty
+        ? filename.trim()
+        : filePath.split(Platform.pathSeparator).last;
+    final resolvedMimeType = mimeType.trim().isNotEmpty
+        ? mimeType.trim()
+        : 'application/octet-stream';
+    return StagedAttachment(
+      uid: uid.trim(),
+      filePath: filePath,
+      filename: resolvedFilename,
+      mimeType: resolvedMimeType,
+      size: size,
+    );
+  }
+
+  @override
+  Future<void> deleteManagedFile(String path) async {}
+}
+
+class _TestSessionController extends AppSessionController {
+  _TestSessionController()
+    : super(
+        const AsyncValue.data(
+          AppSessionState(accounts: <Account>[], currentKey: null),
+        ),
+      );
+
+  @override
+  Future<void> addAccountWithPat({
+    required Uri baseUrl,
+    required String personalAccessToken,
+    bool? useLegacyApiOverride,
+    String? serverVersionOverride,
+  }) async {}
+
+  @override
+  Future<void> addAccountWithPassword({
+    required Uri baseUrl,
+    required String username,
+    required String password,
+    required bool useLegacyApi,
+    String? serverVersionOverride,
+  }) async {}
+
+  @override
+  Future<InstanceProfile> detectCurrentAccountInstanceProfile() async {
+    return const InstanceProfile.empty();
+  }
+
+  @override
+  Future<void> refreshCurrentUser({bool ignoreErrors = true}) async {}
+
+  @override
+  Future<void> reloadFromStorage() async {}
+
+  @override
+  Future<void> removeAccount(String accountKey) async {}
+
+  @override
+  String resolveEffectiveServerVersionForAccount({required Account account}) =>
+      account.serverVersionOverride ?? account.instanceProfile.version;
+
+  @override
+  InstanceProfile resolveEffectiveInstanceProfileForAccount({
+    required Account account,
+  }) => account.instanceProfile;
+
+  @override
+  bool resolveUseLegacyApiForAccount({
+    required Account account,
+    required bool globalDefault,
+  }) => globalDefault;
+
+  @override
+  Future<void> setCurrentAccountServerVersionOverride(String? version) async {}
+
+  @override
+  Future<void> setCurrentAccountUseLegacyApiOverride(bool value) async {}
+
+  @override
+  Future<void> setCurrentKey(String? key) async {}
+
+  @override
+  Future<void> switchAccount(String accountKey) async {}
+
+  @override
+  Future<void> switchWorkspace(String workspaceKey) async {}
 }
 
 Memo _buildMemo({required String name, required String content}) {

@@ -4,15 +4,204 @@ import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
 
 import '../db/app_database.dart';
+import '../db/app_database_write_dao.dart';
+import '../db/db_write_protocol.dart';
+import '../db/desktop_db_write_gateway.dart';
 import 'ai_analysis_models.dart';
 import '../repositories/ai_settings_repository.dart';
 
 class AiAnalysisRepository {
-  AiAnalysisRepository(this._appDatabase);
+  AiAnalysisRepository(this._appDatabase, {DesktopDbWriteGateway? writeGateway})
+    : _writeGateway = writeGateway;
 
   final AppDatabase _appDatabase;
+  final DesktopDbWriteGateway? _writeGateway;
+  late final AppDatabaseWriteDao _writeDao = AppDatabaseWriteDao(
+    db: _appDatabase,
+  );
+  int _localWriteDepth = 0;
 
   Future<Database> get _db => _appDatabase.db;
+
+  bool get _writeProxyEnabled => _writeGateway != null;
+
+  Future<T> _runLocalWrite<T>(Future<T> Function() action) async {
+    _localWriteDepth += 1;
+    try {
+      return await action();
+    } finally {
+      _localWriteDepth -= 1;
+    }
+  }
+
+  Future<T> _dispatchWriteCommand<T>({
+    required String operation,
+    required Map<String, dynamic> payload,
+    required T Function(Object? raw) decode,
+  }) async {
+    final gateway = _writeGateway;
+    if (gateway == null) {
+      throw StateError('Write gateway is not configured.');
+    }
+    final result = await gateway.execute<T>(
+      workspaceKey: _appDatabase.workspaceKey,
+      dbName: _appDatabase.dbName,
+      commandType: aiAnalysisRepositoryWriteCommandType,
+      operation: operation,
+      payload: payload,
+      localExecute: () =>
+          _executeWriteOperationLocally(operation: operation, payload: payload),
+      decode: decode,
+    );
+    if (gateway.isRemote) {
+      _appDatabase.notifyDataChanged();
+    }
+    return result;
+  }
+
+  Future<Object?> executeWriteEnvelopeLocally(DbWriteEnvelope envelope) async {
+    if (envelope.commandType != aiAnalysisRepositoryWriteCommandType) {
+      throw UnsupportedError(
+        'Unsupported AI analysis repository command type.',
+      );
+    }
+    final gateway = _writeGateway;
+    if (gateway is OwnerDesktopDbWriteGateway) {
+      return gateway.executeEnvelope<Object?>(
+        envelope: envelope,
+        localExecute: () => _executeWriteOperationLocally(
+          operation: envelope.operation,
+          payload: envelope.payload,
+        ),
+        decode: (raw) => raw,
+      );
+    }
+    return _executeWriteOperationLocally(
+      operation: envelope.operation,
+      payload: envelope.payload,
+    );
+  }
+
+  Future<Object?> _executeWriteOperationLocally({
+    required String operation,
+    required Map<String, dynamic> payload,
+  }) async {
+    switch (operation) {
+      case 'upsertMemoPolicy':
+        await _runLocalWrite(
+          () => upsertMemoPolicy(
+            memoUid: _requiredString(payload, 'memoUid'),
+            allowAi: _readBoolPayload(payload, 'allowAi'),
+          ),
+        );
+        return null;
+      case 'enqueueIndexJob':
+        return _runLocalWrite(
+          () => enqueueIndexJob(
+            memoUid: payload['memoUid'] as String?,
+            reason: aiIndexJobReasonFromStorage(
+              payload['reason'] as String? ?? '',
+            ),
+            memoContentHash: payload['memoContentHash'] as String? ?? '',
+            embeddingProfileKey:
+                payload['embeddingProfileKey'] as String? ?? '',
+            priority: _optionalInt(payload, 'priority') ?? 100,
+          ),
+        );
+      case 'updateIndexJobStatus':
+        await _runLocalWrite(
+          () => updateIndexJobStatus(
+            _requiredInt(payload, 'jobId'),
+            status: aiIndexJobStatusFromStorage(
+              payload['status'] as String? ?? '',
+            ),
+            attemptCount: _optionalInt(payload, 'attemptCount'),
+            errorText: payload['errorText'] as String?,
+            markStarted: _readBoolPayload(payload, 'markStarted'),
+            markFinished: _readBoolPayload(payload, 'markFinished'),
+          ),
+        );
+        return null;
+      case 'invalidateActiveChunksForMemo':
+        await _runLocalWrite(
+          () => invalidateActiveChunksForMemo(
+            _requiredString(payload, 'memoUid'),
+          ),
+        );
+        return null;
+      case 'insertActiveChunks':
+        return _runLocalWrite(
+          () => insertActiveChunks(
+            memoUid: _requiredString(payload, 'memoUid'),
+            chunks: _readChunkDraftListPayload(payload, 'chunks'),
+          ),
+        );
+      case 'insertEmbeddingRecord':
+        await _runLocalWrite(
+          () => insertEmbeddingRecord(
+            chunkId: _requiredInt(payload, 'chunkId'),
+            profile: _readEmbeddingProfilePayload(payload, 'profile'),
+            status: aiEmbeddingStatusFromStorage(
+              payload['status'] as String? ?? '',
+            ),
+            vector: _readFloat32VectorPayload(payload, 'vector'),
+            errorText: payload['errorText'] as String?,
+          ),
+        );
+        return null;
+      case 'createAnalysisTask':
+        return _runLocalWrite(
+          () => createAnalysisTask(
+            taskUid: payload['taskUid'] as String? ?? '',
+            analysisType: aiAnalysisTypeFromStorage(
+              payload['analysisType'] as String? ?? '',
+            ),
+            status: aiTaskStatusFromStorage(payload['status'] as String? ?? ''),
+            rangeStart: _requiredInt(payload, 'rangeStart'),
+            rangeEndExclusive: _requiredInt(payload, 'rangeEndExclusive'),
+            includePublic: _readBoolPayload(payload, 'includePublic'),
+            includePrivate: _readBoolPayload(payload, 'includePrivate'),
+            includeProtected: _readBoolPayload(payload, 'includeProtected'),
+            promptTemplate: payload['promptTemplate'] as String? ?? '',
+            generationProfileKey:
+                payload['generationProfileKey'] as String? ?? '',
+            embeddingProfileKey:
+                payload['embeddingProfileKey'] as String? ?? '',
+            retrievalProfile: _readStringDynamicMapPayload(
+              payload,
+              'retrievalProfile',
+            ),
+          ),
+        );
+      case 'updateAnalysisTaskStatus':
+        await _runLocalWrite(
+          () => updateAnalysisTaskStatus(
+            _requiredInt(payload, 'taskId'),
+            status: aiTaskStatusFromStorage(payload['status'] as String? ?? ''),
+            errorText: payload['errorText'] as String?,
+            markCompleted: _readBoolPayload(payload, 'markCompleted'),
+          ),
+        );
+        return null;
+      case 'saveAnalysisResult':
+        await _runLocalWrite(
+          () => saveAnalysisResult(
+            taskId: _requiredInt(payload, 'taskId'),
+            result: _readStructuredAnalysisResultPayload(payload, 'result'),
+          ),
+        );
+        return null;
+      case 'markResultsStaleForMemo':
+        await _runLocalWrite(
+          () => markResultsStaleForMemo(_requiredString(payload, 'memoUid')),
+        );
+        return null;
+      default:
+        throw UnsupportedError(
+          'Unsupported AI analysis repository operation: $operation',
+        );
+    }
+  }
 
   Future<void> upsertMemoPolicy({
     required String memoUid,
@@ -20,13 +209,15 @@ class AiAnalysisRepository {
   }) async {
     final trimmedUid = memoUid.trim();
     if (trimmedUid.isEmpty) return;
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.insert('ai_memo_policy', <String, Object?>{
-      'memo_uid': trimmedUid,
-      'allow_ai': allowAi ? 1 : 0,
-      'updated_time': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'upsertMemoPolicy',
+        payload: <String, dynamic>{'memoUid': trimmedUid, 'allowAi': allowAi},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.upsertAiMemoPolicy(memoUid: trimmedUid, allowAi: allowAi);
   }
 
   Future<bool> getMemoAllowAi(String memoUid) async {
@@ -99,18 +290,26 @@ LIMIT 1;
     required String embeddingProfileKey,
     int priority = 100,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    return db.insert('ai_index_jobs', <String, Object?>{
-      'memo_uid': memoUid?.trim(),
-      'reason': aiIndexJobReasonToStorage(reason),
-      'memo_content_hash': memoContentHash,
-      'embedding_profile_key': embeddingProfileKey,
-      'status': aiIndexJobStatusToStorage(AiIndexJobStatus.queued),
-      'attempt_count': 0,
-      'priority': priority,
-      'created_time': now,
-    });
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'enqueueIndexJob',
+        payload: <String, dynamic>{
+          'memoUid': memoUid?.trim(),
+          'reason': aiIndexJobReasonToStorage(reason),
+          'memoContentHash': memoContentHash,
+          'embeddingProfileKey': embeddingProfileKey,
+          'priority': priority,
+        },
+        decode: (raw) => _readInt(raw) ?? 0,
+      );
+    }
+    return _writeDao.enqueueAiIndexJob(
+      memoUid: memoUid,
+      reason: reason,
+      memoContentHash: memoContentHash,
+      embeddingProfileKey: embeddingProfileKey,
+      priority: priority,
+    );
   }
 
   Future<List<Map<String, dynamic>>> listPendingIndexJobs({
@@ -139,69 +338,43 @@ LIMIT 1;
     bool markStarted = false,
     bool markFinished = false,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final values = <String, Object?>{
-      'status': aiIndexJobStatusToStorage(status),
-      'error_text': errorText,
-    };
-    if (attemptCount != null) {
-      values['attempt_count'] = attemptCount;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'updateIndexJobStatus',
+        payload: <String, dynamic>{
+          'jobId': jobId,
+          'status': aiIndexJobStatusToStorage(status),
+          'attemptCount': attemptCount,
+          'errorText': errorText,
+          'markStarted': markStarted,
+          'markFinished': markFinished,
+        },
+        decode: (_) {},
+      );
+      return;
     }
-    if (markStarted) {
-      values['started_time'] = now;
-    }
-    if (markFinished) {
-      values['finished_time'] = now;
-    }
-    await db.update(
-      'ai_index_jobs',
-      values,
-      where: 'id = ?',
-      whereArgs: <Object?>[jobId],
+    await _writeDao.updateAiIndexJobStatus(
+      jobId,
+      status: status,
+      attemptCount: attemptCount,
+      errorText: errorText,
+      markStarted: markStarted,
+      markFinished: markFinished,
     );
   }
 
   Future<void> invalidateActiveChunksForMemo(String memoUid) async {
     final trimmedUid = memoUid.trim();
     if (trimmedUid.isEmpty) return;
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
-      final rows = await txn.query(
-        'ai_chunks',
-        columns: const ['id'],
-        where: 'memo_uid = ? AND is_active = 1',
-        whereArgs: <Object?>[trimmedUid],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'invalidateActiveChunksForMemo',
+        payload: <String, dynamic>{'memoUid': trimmedUid},
+        decode: (_) {},
       );
-      final chunkIds = rows
-          .map((row) => row['id'] as int?)
-          .whereType<int>()
-          .toList(growable: false);
-      await txn.update(
-        'ai_chunks',
-        <String, Object?>{
-          'is_active': 0,
-          'invalidated_time': now,
-          'updated_time': now,
-        },
-        where: 'memo_uid = ? AND is_active = 1',
-        whereArgs: <Object?>[trimmedUid],
-      );
-      if (chunkIds.isNotEmpty) {
-        final placeholders = List.filled(chunkIds.length, '?').join(', ');
-        await txn.rawUpdate(
-          'UPDATE ai_embeddings SET status = ?, updated_time = ? WHERE chunk_id IN ($placeholders) AND status != ?',
-          <Object?>[
-            aiEmbeddingStatusToStorage(AiEmbeddingStatus.stale),
-            now,
-            ...chunkIds,
-            aiEmbeddingStatusToStorage(AiEmbeddingStatus.stale),
-          ],
-        );
-      }
-    });
-    await markResultsStaleForMemo(trimmedUid);
+      return;
+    }
+    await _writeDao.invalidateAiActiveChunksForMemo(trimmedUid);
   }
 
   Future<List<Map<String, dynamic>>> listActiveChunkRowsForMemo(
@@ -258,31 +431,17 @@ LIMIT 1;
   }) async {
     final trimmedUid = memoUid.trim();
     if (trimmedUid.isEmpty || chunks.isEmpty) return const <int>[];
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final ids = <int>[];
-    await db.transaction((txn) async {
-      for (final chunk in chunks) {
-        final id = await txn.insert('ai_chunks', <String, Object?>{
-          'memo_uid': trimmedUid,
-          'chunk_index': chunk.chunkIndex,
-          'content': chunk.content,
-          'content_hash': chunk.contentHash,
-          'memo_content_hash': chunk.memoContentHash,
-          'char_start': chunk.charStart,
-          'char_end': chunk.charEnd,
-          'token_estimate': chunk.tokenEstimate,
-          'memo_create_time': chunk.memoCreateTime,
-          'memo_update_time': chunk.memoUpdateTime,
-          'memo_visibility': chunk.memoVisibility,
-          'is_active': 1,
-          'created_time': now,
-          'updated_time': now,
-        });
-        ids.add(id);
-      }
-    });
-    return ids;
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<List<int>>(
+        operation: 'insertActiveChunks',
+        payload: <String, dynamic>{
+          'memoUid': trimmedUid,
+          'chunks': chunks.map(_serializeChunkDraft).toList(growable: false),
+        },
+        decode: (raw) => _readIntList(raw),
+      );
+    }
+    return _writeDao.insertAiActiveChunks(memoUid: trimmedUid, chunks: chunks);
   }
 
   Future<void> insertEmbeddingRecord({
@@ -292,31 +451,29 @@ LIMIT 1;
     Float32List? vector,
     String? errorText,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    Uint8List? vectorBlob;
-    var dimensions = 0;
-    if (vector != null && vector.isNotEmpty) {
-      vectorBlob = vector.buffer.asUint8List(
-        vector.offsetInBytes,
-        vector.lengthInBytes,
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'insertEmbeddingRecord',
+        payload: <String, dynamic>{
+          'chunkId': chunkId,
+          'profile': profile.toJson(),
+          'status': aiEmbeddingStatusToStorage(status),
+          'vector': vector
+              ?.map((value) => value.toDouble())
+              .toList(growable: false),
+          'errorText': errorText,
+        },
+        decode: (_) {},
       );
-      dimensions = vector.length;
+      return;
     }
-    await db.insert('ai_embeddings', <String, Object?>{
-      'chunk_id': chunkId,
-      'backend_kind': _backendKindToStorage(profile.backendKind),
-      'provider_kind': _providerKindToStorage(profile.providerKind),
-      'base_url': profile.baseUrl,
-      'model': profile.model,
-      'model_version': '',
-      'dimensions': dimensions,
-      'vector_blob': vectorBlob,
-      'status': aiEmbeddingStatusToStorage(status),
-      'error_text': errorText,
-      'created_time': now,
-      'updated_time': now,
-    });
+    await _writeDao.insertAiEmbeddingRecord(
+      chunkId: chunkId,
+      profile: profile,
+      status: status,
+      vector: vector,
+      errorText: errorText,
+    );
   }
 
   Future<Map<String, dynamic>> countCandidateChunkStatuses({
@@ -455,27 +612,40 @@ LIMIT ?;
     required String embeddingProfileKey,
     required Map<String, dynamic> retrievalProfile,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    return db.insert('ai_analysis_tasks', <String, Object?>{
-      'task_uid': taskUid,
-      'analysis_type': aiAnalysisTypeToStorage(analysisType),
-      'status': aiTaskStatusToStorage(status),
-      'range_start': rangeStart,
-      'range_end_exclusive': rangeEndExclusive,
-      'include_public': includePublic ? 1 : 0,
-      'include_private': includePrivate ? 1 : 0,
-      'include_protected': includeProtected ? 1 : 0,
-      'prompt_template': promptTemplate,
-      'generation_profile_key': generationProfileKey,
-      'embedding_profile_key': embeddingProfileKey,
-      'retrieval_profile_json': jsonEncode(retrievalProfile),
-      'mailbox_delivery_state': 'hidden',
-      'mailbox_open_state': 'unread',
-      'reply_animation_state': 'idle',
-      'created_time': now,
-      'updated_time': now,
-    });
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      return _dispatchWriteCommand<int>(
+        operation: 'createAnalysisTask',
+        payload: <String, dynamic>{
+          'taskUid': taskUid,
+          'analysisType': aiAnalysisTypeToStorage(analysisType),
+          'status': aiTaskStatusToStorage(status),
+          'rangeStart': rangeStart,
+          'rangeEndExclusive': rangeEndExclusive,
+          'includePublic': includePublic,
+          'includePrivate': includePrivate,
+          'includeProtected': includeProtected,
+          'promptTemplate': promptTemplate,
+          'generationProfileKey': generationProfileKey,
+          'embeddingProfileKey': embeddingProfileKey,
+          'retrievalProfile': retrievalProfile,
+        },
+        decode: (raw) => _readInt(raw) ?? 0,
+      );
+    }
+    return _writeDao.createAiAnalysisTask(
+      taskUid: taskUid,
+      analysisType: analysisType,
+      status: status,
+      rangeStart: rangeStart,
+      rangeEndExclusive: rangeEndExclusive,
+      includePublic: includePublic,
+      includePrivate: includePrivate,
+      includeProtected: includeProtected,
+      promptTemplate: promptTemplate,
+      generationProfileKey: generationProfileKey,
+      embeddingProfileKey: embeddingProfileKey,
+      retrievalProfile: retrievalProfile,
+    );
   }
 
   Future<void> updateAnalysisTaskStatus(
@@ -484,18 +654,24 @@ LIMIT ?;
     String? errorText,
     bool markCompleted = false,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.update(
-      'ai_analysis_tasks',
-      <String, Object?>{
-        'status': aiTaskStatusToStorage(status),
-        'error_text': errorText,
-        'updated_time': now,
-        if (markCompleted) 'completed_time': now,
-      },
-      where: 'id = ?',
-      whereArgs: <Object?>[taskId],
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'updateAnalysisTaskStatus',
+        payload: <String, dynamic>{
+          'taskId': taskId,
+          'status': aiTaskStatusToStorage(status),
+          'errorText': errorText,
+          'markCompleted': markCompleted,
+        },
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.updateAiAnalysisTaskStatus(
+      taskId,
+      status: status,
+      errorText: errorText,
+      markCompleted: markCompleted,
     );
   }
 
@@ -503,76 +679,32 @@ LIMIT ?;
     required int taskId,
     required AiStructuredAnalysisResult result,
   }) async {
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.transaction((txn) async {
-      final resultId = await txn.insert(
-        'ai_analysis_results',
-        <String, Object?>{
-          'task_id': taskId,
-          'schema_version': result.schemaVersion,
-          'analysis_type': aiAnalysisTypeToStorage(result.analysisType),
-          'summary': result.summary,
-          'follow_up_suggestions_json': jsonEncode(result.followUpSuggestions),
-          'raw_response_text': result.rawResponseText,
-          'normalized_result_json': result.normalizedResultJson,
-          'is_stale': 0,
-          'created_time': now,
-          'updated_time': now,
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'saveAnalysisResult',
+        payload: <String, dynamic>{
+          'taskId': taskId,
+          'result': _serializeStructuredAnalysisResult(result),
         },
+        decode: (_) {},
       );
-      final sectionIdByKey = <String, int>{};
-      for (var index = 0; index < result.sections.length; index++) {
-        final section = result.sections[index];
-        final sectionId = await txn
-            .insert('ai_analysis_sections', <String, Object?>{
-              'result_id': resultId,
-              'section_key': section.sectionKey,
-              'section_order': index,
-              'title': section.title,
-              'body': section.body,
-              'created_time': now,
-            });
-        sectionIdByKey[section.sectionKey] = sectionId;
-      }
-      for (var index = 0; index < result.evidences.length; index++) {
-        final evidence = result.evidences[index];
-        final sectionId = sectionIdByKey[evidence.sectionKey];
-        if (sectionId == null) continue;
-        await txn.insert('ai_analysis_evidences', <String, Object?>{
-          'result_id': resultId,
-          'section_id': sectionId,
-          'evidence_order': index,
-          'memo_uid': evidence.memoUid,
-          'chunk_id': evidence.chunkId,
-          'quote_text': evidence.quoteText,
-          'char_start': evidence.charStart,
-          'char_end': evidence.charEnd,
-          'relevance_score': evidence.relevanceScore,
-          'created_time': now,
-        });
-      }
-    });
+      return;
+    }
+    await _writeDao.saveAiAnalysisResult(taskId: taskId, result: result);
   }
 
   Future<void> markResultsStaleForMemo(String memoUid) async {
     final trimmedUid = memoUid.trim();
     if (trimmedUid.isEmpty) return;
-    final db = await _db;
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    await db.rawUpdate(
-      '''
-UPDATE ai_analysis_results
-SET is_stale = 1,
-    updated_time = ?
-WHERE id IN (
-  SELECT DISTINCT result_id
-  FROM ai_analysis_evidences
-  WHERE memo_uid = ?
-);
-''',
-      <Object?>[now, trimmedUid],
-    );
+    if (_writeProxyEnabled && _localWriteDepth == 0) {
+      await _dispatchWriteCommand<void>(
+        operation: 'markResultsStaleForMemo',
+        payload: <String, dynamic>{'memoUid': trimmedUid},
+        decode: (_) {},
+      );
+      return;
+    }
+    await _writeDao.markAiResultsStaleForMemo(trimmedUid);
   }
 
   Future<AiSavedAnalysisReport?> loadLatestAnalysisReport({
@@ -764,17 +896,235 @@ LIMIT 1;
   }
 }
 
-String _backendKindToStorage(AiBackendKind value) => switch (value) {
-  AiBackendKind.remoteApi => 'remote_api',
-  AiBackendKind.localApi => 'local_api',
-};
-
-String _providerKindToStorage(AiProviderKind value) => switch (value) {
-  AiProviderKind.openAiCompatible => 'openai_compatible',
-  AiProviderKind.anthropicCompatible => 'anthropic_compatible',
-};
+AiAnalysisType aiAnalysisTypeFromStorage(String value) {
+  return switch (value.trim().toLowerCase()) {
+    'emotion_map' => AiAnalysisType.emotionMap,
+    _ => AiAnalysisType.emotionMap,
+  };
+}
 
 T? _firstOrNull<T>(Iterable<T> values) {
   if (values.isEmpty) return null;
   return values.first;
+}
+
+Map<String, dynamic> _serializeChunkDraft(AiChunkDraft chunk) =>
+    <String, dynamic>{
+      'chunkIndex': chunk.chunkIndex,
+      'content': chunk.content,
+      'contentHash': chunk.contentHash,
+      'memoContentHash': chunk.memoContentHash,
+      'charStart': chunk.charStart,
+      'charEnd': chunk.charEnd,
+      'tokenEstimate': chunk.tokenEstimate,
+      'memoCreateTime': chunk.memoCreateTime,
+      'memoUpdateTime': chunk.memoUpdateTime,
+      'memoVisibility': chunk.memoVisibility,
+    };
+
+Map<String, dynamic> _serializeStructuredAnalysisResult(
+  AiStructuredAnalysisResult result,
+) => <String, dynamic>{
+  'schemaVersion': result.schemaVersion,
+  'analysisType': aiAnalysisTypeToStorage(result.analysisType),
+  'summary': result.summary,
+  'sections': result.sections
+      .map((item) => item.toJson())
+      .toList(growable: false),
+  'evidences': result.evidences
+      .map((item) => item.toJson())
+      .toList(growable: false),
+  'followUpSuggestions': result.followUpSuggestions,
+  'rawResponseText': result.rawResponseText,
+};
+
+AiStructuredAnalysisResult _readStructuredAnalysisResultPayload(
+  Map<String, dynamic> payload,
+  String key,
+) {
+  final raw = payload[key];
+  if (raw is! Map) {
+    throw FormatException('Missing $key payload.');
+  }
+  final map = Map<Object?, Object?>.from(raw).map<String, dynamic>(
+    (entryKey, value) => MapEntry(entryKey.toString(), value),
+  );
+  final sections = _readMapListValue(map['sections'])
+      .map(
+        (item) => AiAnalysisSectionData(
+          sectionKey: item['section_key'] as String? ?? '',
+          title: item['title'] as String? ?? '',
+          body: item['body'] as String? ?? '',
+          evidenceKeys: _readStringListValue(item['evidence_keys']),
+        ),
+      )
+      .toList(growable: false);
+  final evidences = _readMapListValue(map['evidences'])
+      .map(
+        (item) => AiAnalysisEvidenceData(
+          evidenceKey: item['evidence_key'] as String? ?? '',
+          sectionKey: item['section_key'] as String? ?? '',
+          memoUid: item['memo_uid'] as String? ?? '',
+          chunkId: _readInt(item['chunk_id']) ?? 0,
+          quoteText: item['quote_text'] as String? ?? '',
+          charStart: _readInt(item['char_start']) ?? 0,
+          charEnd: _readInt(item['char_end']) ?? 0,
+          relevanceScore: _readDouble(item['relevance_score']) ?? 0,
+        ),
+      )
+      .toList(growable: false);
+  return AiStructuredAnalysisResult(
+    schemaVersion: _readInt(map['schemaVersion']) ?? 0,
+    analysisType: aiAnalysisTypeFromStorage(
+      map['analysisType'] as String? ?? '',
+    ),
+    summary: map['summary'] as String? ?? '',
+    sections: sections,
+    evidences: evidences,
+    followUpSuggestions: _readStringListValue(map['followUpSuggestions']),
+    rawResponseText: map['rawResponseText'] as String? ?? '',
+  );
+}
+
+AiEmbeddingProfile _readEmbeddingProfilePayload(
+  Map<String, dynamic> payload,
+  String key,
+) {
+  final raw = payload[key];
+  if (raw is! Map) {
+    throw FormatException('Missing $key payload.');
+  }
+  return AiEmbeddingProfile.fromJson(
+    Map<Object?, Object?>.from(raw).map<String, dynamic>(
+      (entryKey, value) => MapEntry(entryKey.toString(), value),
+    ),
+  );
+}
+
+List<AiChunkDraft> _readChunkDraftListPayload(
+  Map<String, dynamic> payload,
+  String key,
+) {
+  final raw = payload[key];
+  if (raw is! List) return const <AiChunkDraft>[];
+  final result = <AiChunkDraft>[];
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final map = Map<Object?, Object?>.from(item).map<String, dynamic>(
+      (entryKey, value) => MapEntry(entryKey.toString(), value),
+    );
+    result.add(
+      AiChunkDraft(
+        chunkIndex: _readInt(map['chunkIndex']) ?? 0,
+        content: map['content'] as String? ?? '',
+        contentHash: map['contentHash'] as String? ?? '',
+        memoContentHash: map['memoContentHash'] as String? ?? '',
+        charStart: _readInt(map['charStart']) ?? 0,
+        charEnd: _readInt(map['charEnd']) ?? 0,
+        tokenEstimate: _readInt(map['tokenEstimate']) ?? 0,
+        memoCreateTime: _readInt(map['memoCreateTime']) ?? 0,
+        memoUpdateTime: _readInt(map['memoUpdateTime']) ?? 0,
+        memoVisibility: map['memoVisibility'] as String? ?? '',
+      ),
+    );
+  }
+  return result;
+}
+
+Map<String, dynamic> _readStringDynamicMapPayload(
+  Map<String, dynamic> payload,
+  String key,
+) {
+  final raw = payload[key];
+  if (raw is! Map) return const <String, dynamic>{};
+  return Map<Object?, Object?>.from(raw).map<String, dynamic>(
+    (entryKey, value) => MapEntry(entryKey.toString(), value),
+  );
+}
+
+Float32List? _readFloat32VectorPayload(
+  Map<String, dynamic> payload,
+  String key,
+) {
+  final raw = payload[key];
+  if (raw is! List || raw.isEmpty) return null;
+  final values = raw
+      .whereType<num>()
+      .map((value) => value.toDouble())
+      .toList(growable: false);
+  if (values.isEmpty) return null;
+  return Float32List.fromList(values);
+}
+
+List<int> _readIntList(Object? raw) {
+  if (raw is! List) return const <int>[];
+  return raw.map(_readInt).whereType<int>().toList(growable: false);
+}
+
+List<String> _readStringListValue(Object? raw) {
+  if (raw is! List) return const <String>[];
+  return raw
+      .whereType<String>()
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .toList(growable: false);
+}
+
+List<Map<String, dynamic>> _readMapListValue(Object? raw) {
+  if (raw is! List) return const <Map<String, dynamic>>[];
+  final result = <Map<String, dynamic>>[];
+  for (final item in raw) {
+    if (item is! Map) continue;
+    result.add(
+      Map<Object?, Object?>.from(item).map<String, dynamic>(
+        (entryKey, value) => MapEntry(entryKey.toString(), value),
+      ),
+    );
+  }
+  return result;
+}
+
+String _requiredString(Map<String, dynamic> payload, String key) {
+  final value = payload[key];
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  throw FormatException('Missing or invalid $key.');
+}
+
+int _requiredInt(Map<String, dynamic> payload, String key) {
+  final value = _readInt(payload[key]);
+  if (value != null) return value;
+  throw FormatException('Missing or invalid $key.');
+}
+
+int? _optionalInt(Map<String, dynamic> payload, String key) {
+  return _readInt(payload[key]);
+}
+
+bool _readBoolPayload(Map<String, dynamic> payload, String key) {
+  final value = payload[key];
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1') return true;
+    if (normalized == 'false' || normalized == '0') return false;
+  }
+  return false;
+}
+
+int? _readInt(Object? raw) {
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  if (raw is String) return int.tryParse(raw.trim());
+  return null;
+}
+
+double? _readDouble(Object? raw) {
+  if (raw is double) return raw;
+  if (raw is num) return raw.toDouble();
+  if (raw is String) return double.tryParse(raw.trim());
+  return null;
 }

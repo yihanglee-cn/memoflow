@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously, unused_element
+
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -66,8 +68,6 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
   var _rememberVaultPassword = true;
   var _dirty = false;
   var _backupRestoring = false;
-  SyncError? _backupRestoreError;
-
   @override
   void initState() {
     super.initState();
@@ -768,13 +768,11 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
     try {
       final settings = ref.read(webDavSettingsProvider);
       final accountKey = ref.read(appSessionProvider).valueOrNull?.currentKey;
-      await ref
-          .read(webDavBackupServiceProvider)
-          .listSnapshots(
-            settings: settings,
-            accountKey: accountKey,
-            password: password,
-          );
+      await ref.read(desktopSyncFacadeProvider).listWebDavBackupSnapshots(
+        settings: settings,
+        accountKey: accountKey,
+        password: password,
+      );
       return true;
     } catch (e) {
       if (!mounted) return false;
@@ -936,8 +934,9 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
     try {
       final settings = ref.read(webDavSettingsProvider);
       final accountKey = ref.read(appSessionProvider).valueOrNull?.currentKey;
-      final service = ref.read(webDavBackupServiceProvider);
-      final newRecoveryCode = await service.recoverBackupPassword(
+      final newRecoveryCode = await ref
+          .read(desktopSyncFacadeProvider)
+          .recoverWebDavBackupPassword(
         settings: settings,
         accountKey: accountKey,
         recoveryCode: recoveryCode,
@@ -1026,7 +1025,7 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
   }
 
   Future<void> _backupNow() async {
-    final coordinator = ref.read(syncCoordinatorProvider.notifier);
+    final coordinator = ref.read(desktopSyncFacadeProvider);
     final settingsNotifier = ref.read(webDavSettingsProvider.notifier);
     if (_backupConfigScope != WebDavBackupConfigScope.none ||
         _backupContentMemos) {
@@ -1153,12 +1152,11 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
 
     final settings = ref.read(webDavSettingsProvider);
     final accountKey = ref.read(appSessionProvider).valueOrNull?.currentKey;
-    final service = ref.read(webDavBackupServiceProvider);
+    final coordinator = ref.read(desktopSyncFacadeProvider);
 
     if (mounted) {
       setState(() {
         _backupRestoring = true;
-        _backupRestoreError = null;
       });
     }
 
@@ -1169,7 +1167,6 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
       if (!mounted) return false;
       switch (result) {
         case WebDavRestoreSuccess(:final missingAttachments, :final exportPath):
-          setState(() => _backupRestoreError = null);
           if (createdManagedRestoreWorkspace && exportLibrary != null) {
             ref.read(localLibrariesProvider.notifier).upsert(exportLibrary);
             await ref
@@ -1200,9 +1197,6 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
           }
           return true;
         case WebDavRestoreSkipped(:final reason):
-          if (mounted) {
-            setState(() => _backupRestoreError = reason);
-          }
           final message = reason == null
               ? context.t.strings.legacy.msg_restore_failed(e: '')
               : _formatBackupError(reason);
@@ -1211,9 +1205,6 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
           ).showSnackBar(SnackBar(content: Text(message)));
           return false;
         case WebDavRestoreFailure(:final error):
-          if (mounted) {
-            setState(() => _backupRestoreError = error);
-          }
           final message = _formatBackupError(error);
           ScaffoldMessenger.of(
             context,
@@ -1286,20 +1277,20 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
               ) ??
               false;
           if (!mounted || !confirmed) return;
-          final result = await service.restorePlainBackup(
+          final result = await coordinator.restoreWebDavPlainBackup(
             settings: settings,
             accountKey: accountKey,
             activeLocalLibrary: localLibrary,
-            configDecisionHandler: _promptConfigRestoreDecision,
+            onConfigRestorePrompt: _promptConfigRestoreDecision,
           );
           final success = await handleResult(
             result,
-            (decisions) => service.restorePlainBackup(
+            (decisions) => coordinator.restoreWebDavPlainBackup(
               settings: settings,
               accountKey: accountKey,
               activeLocalLibrary: localLibrary,
               conflictDecisions: decisions,
-              configDecisionHandler: _promptConfigRestoreDecision,
+              onConfigRestorePrompt: _promptConfigRestoreDecision,
             ),
           );
           if (!success && createdManagedRestoreWorkspace) {
@@ -1308,21 +1299,21 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
           return;
         }
 
-        final result = await service.restorePlainBackupToDirectory(
+        final result = await coordinator.restoreWebDavPlainBackupToDirectory(
           settings: settings,
           accountKey: accountKey,
           exportLibrary: exportLibrary!,
           exportPrefix: exportPrefix!,
-          configDecisionHandler: _promptConfigRestoreDecision,
+          onConfigRestorePrompt: _promptConfigRestoreDecision,
         );
         final success = await handleResult(
           result,
-          (_) => service.restorePlainBackupToDirectory(
+          (_) => coordinator.restoreWebDavPlainBackupToDirectory(
             settings: settings,
             accountKey: accountKey,
             exportLibrary: exportLibrary!,
             exportPrefix: exportPrefix!,
-            configDecisionHandler: _promptConfigRestoreDecision,
+            onConfigRestorePrompt: _promptConfigRestoreDecision,
           ),
         );
         if (!success && createdManagedRestoreWorkspace) {
@@ -1336,7 +1327,7 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
 
       List<WebDavBackupSnapshotInfo> snapshots;
       try {
-        snapshots = await service.listSnapshots(
+        snapshots = await coordinator.listWebDavBackupSnapshots(
           settings: settings,
           accountKey: accountKey,
           password: password,
@@ -1344,7 +1335,6 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
       } catch (e) {
         if (!mounted) return;
         final message = _formatBackupError(e);
-        setState(() => _backupRestoreError = e is SyncError ? e : null);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
@@ -1391,7 +1381,8 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
                   Expanded(
                     child: ListView.separated(
                       itemCount: snapshots.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final item = snapshots[index];
                         return ListTile(
@@ -1433,49 +1424,49 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
       if (!mounted || selected == null) return;
 
       if (usesServerMode) {
-        final result = await service.restoreSnapshotToDirectory(
+        final result = await coordinator.restoreWebDavSnapshotToDirectory(
           settings: settings,
           accountKey: accountKey,
           snapshot: selected,
           password: password,
           exportLibrary: exportLibrary!,
           exportPrefix: exportPrefix!,
-          configDecisionHandler: _promptConfigRestoreDecision,
+          onConfigRestorePrompt: _promptConfigRestoreDecision,
         );
         final success = await handleResult(
           result,
-          (_) => service.restoreSnapshotToDirectory(
+          (_) => coordinator.restoreWebDavSnapshotToDirectory(
             settings: settings,
             accountKey: accountKey,
             snapshot: selected,
             password: password,
             exportLibrary: exportLibrary!,
             exportPrefix: exportPrefix!,
-            configDecisionHandler: _promptConfigRestoreDecision,
+            onConfigRestorePrompt: _promptConfigRestoreDecision,
           ),
         );
         if (!success && createdManagedRestoreWorkspace) {
           await _cleanupManagedRestoreWorkspace(exportLibrary);
         }
       } else {
-        final result = await service.restoreSnapshot(
+        final result = await coordinator.restoreWebDavSnapshot(
           settings: settings,
           accountKey: accountKey,
           activeLocalLibrary: localLibrary,
           snapshot: selected,
           password: password,
-          configDecisionHandler: _promptConfigRestoreDecision,
+          onConfigRestorePrompt: _promptConfigRestoreDecision,
         );
         await handleResult(
           result,
-          (decisions) => service.restoreSnapshot(
+          (decisions) => coordinator.restoreWebDavSnapshot(
             settings: settings,
             accountKey: accountKey,
             activeLocalLibrary: localLibrary,
             snapshot: selected,
             password: password,
             conflictDecisions: decisions,
-            configDecisionHandler: _promptConfigRestoreDecision,
+            onConfigRestorePrompt: _promptConfigRestoreDecision,
           ),
         );
       }
@@ -1538,19 +1529,11 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
   }
 
   Future<Set<WebDavBackupConfigType>> _promptConfigRestoreDecision(
-    WebDavBackupConfigBundle bundle,
+    Set<WebDavBackupConfigType> candidates,
   ) async {
-    final candidates = <WebDavBackupConfigType>[
-      if (bundle.webDavSettings != null) WebDavBackupConfigType.webdavSettings,
-      if (bundle.imageBedSettings != null)
-        WebDavBackupConfigType.imageBedSettings,
-      if (bundle.imageCompressionSettings != null)
-        WebDavBackupConfigType.imageCompressionSettings,
-      if (bundle.appLockSnapshot != null) WebDavBackupConfigType.appLock,
-      if (bundle.aiSettings != null) WebDavBackupConfigType.aiSettings,
-    ];
     if (candidates.isEmpty) return const {};
-    var selected = candidates.toSet();
+    final options = candidates.toList(growable: false);
+    var selected = options.toSet();
     final result =
         await showDialog<Set<WebDavBackupConfigType>>(
           context: context,
@@ -1566,7 +1549,7 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
                     context.t.strings.legacy.msg_restore_config_confirm_hint,
                   ),
                   const SizedBox(height: 12),
-                  for (final item in candidates)
+                  for (final item in options)
                     CheckboxListTile(
                       value: selected.contains(item),
                       dense: true,
@@ -1745,7 +1728,7 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
   Future<void> _syncNow() async {
     ref.read(webDavSettingsProvider.notifier).setAutoSyncAllowed(true);
     final result = await ref
-        .read(syncCoordinatorProvider.notifier)
+        .read(desktopSyncFacadeProvider)
         .requestSync(
           const SyncRequest(
             kind: SyncRequestKind.webDavSync,
@@ -1756,9 +1739,7 @@ class _WebDavSyncScreenState extends ConsumerState<WebDavSyncScreen> {
     if (result is SyncRunConflict) {
       final choices = await _resolveWebDavConflicts(result.conflicts);
       if (!mounted || choices == null) return;
-      await ref
-          .read(syncCoordinatorProvider.notifier)
-          .resolveWebDavConflicts(choices);
+      await ref.read(desktopSyncFacadeProvider).resolveWebDavConflicts(choices);
     }
   }
 
@@ -2754,7 +2735,6 @@ class _InputRow extends StatelessWidget {
     required this.textMuted,
     required this.onChanged,
     this.keyboardType,
-    this.obscureText = false,
     this.onEditingComplete,
     this.suffixIcon,
   });
@@ -2766,7 +2746,6 @@ class _InputRow extends StatelessWidget {
   final Color textMuted;
   final ValueChanged<String> onChanged;
   final TextInputType? keyboardType;
-  final bool obscureText;
   final VoidCallback? onEditingComplete;
   final Widget? suffixIcon;
 
@@ -2781,7 +2760,6 @@ class _InputRow extends StatelessWidget {
       subtitle: TextField(
         controller: controller,
         keyboardType: keyboardType,
-        obscureText: obscureText,
         onChanged: onChanged,
         onEditingComplete: onEditingComplete,
         style: TextStyle(color: textMain, fontWeight: FontWeight.w500),
@@ -2811,7 +2789,6 @@ class _InlineInputRow extends StatelessWidget {
     required this.textMuted,
     required this.onChanged,
     this.keyboardType,
-    this.onEditingComplete,
   });
 
   final String label;
@@ -2821,7 +2798,6 @@ class _InlineInputRow extends StatelessWidget {
   final Color textMuted;
   final ValueChanged<String> onChanged;
   final TextInputType? keyboardType;
-  final VoidCallback? onEditingComplete;
 
   @override
   Widget build(BuildContext context) {
@@ -2837,7 +2813,6 @@ class _InlineInputRow extends StatelessWidget {
           controller: controller,
           keyboardType: keyboardType,
           onChanged: onChanged,
-          onEditingComplete: onEditingComplete,
           textAlign: TextAlign.end,
           style: TextStyle(color: textMain, fontWeight: FontWeight.w500),
           decoration: InputDecoration(
@@ -2888,18 +2863,15 @@ class _InfoRow extends StatelessWidget {
     required this.value,
     required this.textMain,
     required this.textMuted,
-    this.emphasize = false,
   });
 
   final String label;
   final String value;
   final Color textMain;
   final Color textMuted;
-  final bool emphasize;
 
   @override
   Widget build(BuildContext context) {
-    final color = emphasize ? MemoFlowPalette.primary : textMuted;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
       title: Text(
@@ -2910,7 +2882,7 @@ class _InfoRow extends StatelessWidget {
         padding: const EdgeInsets.only(top: 4),
         child: Text(
           value,
-          style: TextStyle(fontSize: 12, color: color, height: 1.3),
+          style: TextStyle(fontSize: 12, color: textMuted, height: 1.3),
         ),
       ),
     );
@@ -3053,7 +3025,7 @@ class _WebDavConnectionScreenState
       _testingConnection = true;
     });
     final result = await ref
-        .read(syncCoordinatorProvider.notifier)
+        .read(desktopSyncFacadeProvider)
         .testWebDavConnection(settings: _draftSettings());
     if (!mounted) return;
     setState(() {
@@ -3664,8 +3636,14 @@ class _WebDavBackupSettingsScreenState
         _backupContentMemos && !widget.backupAvailable;
     final busy = backupStatus.running || widget.backupRestoring;
 
-    return WillPopScope(
-      onWillPop: _handleExitGuard,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final allow = await _handleExitGuard();
+        if (!mounted || !allow) return;
+        Navigator.of(context).maybePop();
+      },
       child: Scaffold(
         backgroundColor: bg,
         appBar: AppBar(
@@ -3997,7 +3975,7 @@ class _WebDavLogsScreenState extends ConsumerState<WebDavLogsScreen> {
         child: ListView.separated(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           itemCount: items.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          separatorBuilder: (context, index) => const SizedBox(height: 10),
           itemBuilder: (context, index) {
             final entry = items[index];
             return Material(

@@ -123,6 +123,25 @@ class WebDavConnectionTestResult {
   final bool success;
   final bool cleanupFailed;
   final SyncError? error;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'success': success,
+    'cleanupFailed': cleanupFailed,
+    'error': error?.toJson(),
+  };
+
+  factory WebDavConnectionTestResult.fromJson(Map<String, dynamic> json) {
+    final rawError = json['error'];
+    return WebDavConnectionTestResult._(
+      success: json['success'] == true,
+      cleanupFailed: json['cleanupFailed'] == true,
+      error: rawError is Map
+          ? SyncError.fromJson(
+              Map<Object?, Object?>.from(rawError).cast<String, Object?>(),
+            )
+          : null,
+    );
+  }
 }
 
 class WebDavSyncService {

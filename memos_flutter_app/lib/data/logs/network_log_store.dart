@@ -116,7 +116,6 @@ class NetworkLogStore {
   NetworkLogStore({this.maxEntries = 200, this.maxFileBytes = 1024 * 1024});
 
   static const int _maxUrlChars = 800;
-  static const int _maxHeaderChars = 1200;
   static const int _maxBodyChars = 2000;
   static const int _maxErrorChars = 1200;
   static const int _maxRequestIdChars = 120;

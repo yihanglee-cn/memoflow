@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/logs/debug_log_store.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../../data/local_library/local_library_fs.dart';
+import '../../data/models/local_library.dart';
+import '../../data/models/webdav_backup.dart';
 import '../../data/models/webdav_export_status.dart';
 import '../../data/models/webdav_sync_meta.dart';
 import '../../data/models/webdav_settings.dart';
@@ -71,9 +73,201 @@ class SyncCoordinatorState {
     pendingWebDavConflicts: <String>[],
     pendingLocalScanConflicts: <LocalScanConflict>[],
   );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'memos': memos.toJson(),
+    'webDavSync': webDavSync.toJson(),
+    'webDavBackup': webDavBackup.toJson(),
+    'localScan': localScan.toJson(),
+    'webDavLastBackupAtMs': webDavLastBackupAt?.millisecondsSinceEpoch,
+    'webDavRestoring': webDavRestoring,
+    'pendingWebDavConflicts': pendingWebDavConflicts,
+    'pendingLocalScanConflicts': pendingLocalScanConflicts
+        .map((item) => item.toJson())
+        .toList(growable: false),
+  };
+
+  factory SyncCoordinatorState.fromJson(Map<String, dynamic> json) {
+    bool readBool(Object? raw) {
+      if (raw is bool) return raw;
+      if (raw is num) return raw != 0;
+      if (raw is String) {
+        final normalized = raw.trim().toLowerCase();
+        if (normalized == 'true' || normalized == '1') return true;
+        if (normalized == 'false' || normalized == '0') return false;
+      }
+      return false;
+    }
+
+    DateTime? readDateTime(Object? raw) {
+      if (raw is int) {
+        return DateTime.fromMillisecondsSinceEpoch(raw);
+      }
+      if (raw is num) {
+        return DateTime.fromMillisecondsSinceEpoch(raw.toInt());
+      }
+      if (raw is String) {
+        final parsed = int.tryParse(raw.trim());
+        if (parsed != null) {
+          return DateTime.fromMillisecondsSinceEpoch(parsed);
+        }
+      }
+      return null;
+    }
+
+    Map<String, dynamic> readMap(Object? raw) {
+      if (raw is Map) {
+        return Map<Object?, Object?>.from(raw).map<String, dynamic>(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+      return const <String, dynamic>{};
+    }
+
+    return SyncCoordinatorState(
+      memos: SyncFlowStatus.fromJson(readMap(json['memos'])),
+      webDavSync: SyncFlowStatus.fromJson(readMap(json['webDavSync'])),
+      webDavBackup: SyncFlowStatus.fromJson(readMap(json['webDavBackup'])),
+      localScan: SyncFlowStatus.fromJson(readMap(json['localScan'])),
+      webDavLastBackupAt: readDateTime(json['webDavLastBackupAtMs']),
+      webDavRestoring: readBool(json['webDavRestoring']),
+      pendingWebDavConflicts: (json['pendingWebDavConflicts'] as List? ??
+              const <Object?>[])
+          .whereType<String>()
+          .toList(growable: false),
+      pendingLocalScanConflicts:
+          (json['pendingLocalScanConflicts'] as List? ?? const <Object?>[])
+              .whereType<Map>()
+              .map(
+                (item) => LocalScanConflict.fromJson(
+                  Map<Object?, Object?>.from(item).cast<String, dynamic>(),
+                ),
+              )
+              .toList(growable: false),
+    );
+  }
 }
 
-class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
+typedef WebDavBackupConfigRestorePromptHandler =
+    Future<Set<WebDavBackupConfigType>> Function(
+      Set<WebDavBackupConfigType> candidates,
+    );
+
+abstract class DesktopSyncFacade extends StateNotifier<SyncCoordinatorState> {
+  DesktopSyncFacade(super.state);
+
+  Future<SyncRunResult> requestSync(SyncRequest request);
+
+  Future<SyncRunResult> requestWebDavBackup({
+    required SyncRequestReason reason,
+    String? password,
+    WebDavBackupExportIssueHandler? onExportIssue,
+  });
+
+  Future<WebDavSyncMeta?> fetchWebDavSyncMeta();
+
+  Future<WebDavSyncMeta?> cleanWebDavDeprecatedPlainFiles();
+
+  Future<WebDavConnectionTestResult> testWebDavConnection({
+    required WebDavSettings settings,
+  });
+
+  Future<SyncError?> verifyWebDavBackup({
+    required String password,
+    required bool deep,
+  });
+
+  Future<WebDavExportStatus> fetchWebDavExportStatus();
+
+  Future<WebDavExportCleanupStatus> cleanWebDavPlainExport();
+
+  Future<List<WebDavBackupSnapshotInfo>> listWebDavBackupSnapshots({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String password,
+  });
+
+  Future<String> recoverWebDavBackupPassword({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String recoveryCode,
+    required String newPassword,
+  });
+
+  Future<WebDavRestoreResult> restoreWebDavPlainBackup({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  });
+
+  Future<WebDavRestoreResult> restoreWebDavPlainBackupToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  });
+
+  Future<WebDavRestoreResult> restoreWebDavSnapshot({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  });
+
+  Future<WebDavRestoreResult> restoreWebDavSnapshotToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  });
+
+  Future<void> resolveWebDavConflicts(Map<String, bool> resolutions);
+
+  Future<void> resolveLocalScanConflicts(Map<String, bool> resolutions);
+
+  Future<void> retryPending();
+
+  Future<WebDavBackupExportResolution> handleBackupExportIssuePrompt(
+    WebDavBackupExportIssue issue,
+  ) async {
+    return const WebDavBackupExportResolution(
+      action: WebDavBackupExportAction.abort,
+    );
+  }
+
+  Future<Set<WebDavBackupConfigType>> handleBackupConfigRestorePrompt(
+    Set<WebDavBackupConfigType> candidates,
+  ) async {
+    return const <WebDavBackupConfigType>{};
+  }
+
+  void applyRemoteStateSnapshot(SyncCoordinatorState next) {}
+}
+
+Set<WebDavBackupConfigType> extractBackupConfigPromptCandidates(
+  WebDavBackupConfigBundle bundle,
+) {
+  return <WebDavBackupConfigType>{
+    if (bundle.webDavSettings != null) WebDavBackupConfigType.webdavSettings,
+    if (bundle.imageBedSettings != null)
+      WebDavBackupConfigType.imageBedSettings,
+    if (bundle.imageCompressionSettings != null)
+      WebDavBackupConfigType.imageCompressionSettings,
+    if (bundle.appLockSnapshot != null) WebDavBackupConfigType.appLock,
+    if (bundle.aiSettings != null) WebDavBackupConfigType.aiSettings,
+  };
+}
+
+class SyncCoordinator extends DesktopSyncFacade {
   SyncCoordinator(this._deps)
     : _webDavSyncService = _deps.webDavSyncService,
       _webDavBackupService = _deps.webDavBackupService,
@@ -245,6 +439,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<SyncRunResult> requestSync(SyncRequest request) async {
     if (request.kind == SyncRequestKind.webDavSync ||
         request.kind == SyncRequestKind.webDavBackup) {
@@ -300,6 +495,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     return _processQueue();
   }
 
+  @override
   Future<SyncRunResult> requestWebDavBackup({
     required SyncRequestReason reason,
     String? password,
@@ -314,6 +510,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<WebDavSyncMeta?> fetchWebDavSyncMeta() async {
     final settings = _deps.readWebDavSettings();
     final accountKey = _deps.readCurrentAccountKey();
@@ -323,6 +520,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<WebDavSyncMeta?> cleanWebDavDeprecatedPlainFiles() async {
     final settings = _deps.readWebDavSettings();
     final accountKey = _deps.readCurrentAccountKey();
@@ -332,6 +530,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<WebDavConnectionTestResult> testWebDavConnection({
     required WebDavSettings settings,
   }) async {
@@ -342,6 +541,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<SyncError?> verifyWebDavBackup({
     required String password,
     required bool deep,
@@ -356,6 +556,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<WebDavExportStatus> fetchWebDavExportStatus() async {
     final settings = _deps.readWebDavSettings();
     final accountKey = _deps.readCurrentAccountKey();
@@ -367,6 +568,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
   Future<WebDavExportCleanupStatus> cleanWebDavPlainExport() async {
     final settings = _deps.readWebDavSettings();
     final accountKey = _deps.readCurrentAccountKey();
@@ -378,6 +580,127 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     );
   }
 
+  @override
+  Future<List<WebDavBackupSnapshotInfo>> listWebDavBackupSnapshots({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String password,
+  }) {
+    return _webDavBackupService.listSnapshots(
+      settings: settings,
+      accountKey: accountKey,
+      password: password,
+    );
+  }
+
+  @override
+  Future<String> recoverWebDavBackupPassword({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required String recoveryCode,
+    required String newPassword,
+  }) {
+    return _webDavBackupService.recoverBackupPassword(
+      settings: settings,
+      accountKey: accountKey,
+      recoveryCode: recoveryCode,
+      newPassword: newPassword,
+    );
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavPlainBackup({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) {
+    return _webDavBackupService.restorePlainBackup(
+      settings: settings,
+      accountKey: accountKey,
+      activeLocalLibrary: activeLocalLibrary,
+      conflictDecisions: conflictDecisions,
+      configDecisionHandler: onConfigRestorePrompt == null
+          ? null
+          : (bundle) => onConfigRestorePrompt(
+              extractBackupConfigPromptCandidates(bundle),
+            ),
+    );
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavPlainBackupToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) {
+    return _webDavBackupService.restorePlainBackupToDirectory(
+      settings: settings,
+      accountKey: accountKey,
+      exportLibrary: exportLibrary,
+      exportPrefix: exportPrefix,
+      configDecisionHandler: onConfigRestorePrompt == null
+          ? null
+          : (bundle) => onConfigRestorePrompt(
+              extractBackupConfigPromptCandidates(bundle),
+            ),
+    );
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavSnapshot({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required LocalLibrary? activeLocalLibrary,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    Map<String, bool>? conflictDecisions,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) {
+    return _webDavBackupService.restoreSnapshot(
+      settings: settings,
+      accountKey: accountKey,
+      activeLocalLibrary: activeLocalLibrary,
+      snapshot: snapshot,
+      password: password,
+      conflictDecisions: conflictDecisions,
+      configDecisionHandler: onConfigRestorePrompt == null
+          ? null
+          : (bundle) => onConfigRestorePrompt(
+              extractBackupConfigPromptCandidates(bundle),
+            ),
+    );
+  }
+
+  @override
+  Future<WebDavRestoreResult> restoreWebDavSnapshotToDirectory({
+    required WebDavSettings settings,
+    required String? accountKey,
+    required WebDavBackupSnapshotInfo snapshot,
+    required String password,
+    required LocalLibrary exportLibrary,
+    required String exportPrefix,
+    WebDavBackupConfigRestorePromptHandler? onConfigRestorePrompt,
+  }) {
+    return _webDavBackupService.restoreSnapshotToDirectory(
+      settings: settings,
+      accountKey: accountKey,
+      snapshot: snapshot,
+      password: password,
+      exportLibrary: exportLibrary,
+      exportPrefix: exportPrefix,
+      configDecisionHandler: onConfigRestorePrompt == null
+          ? null
+          : (bundle) => onConfigRestorePrompt(
+              extractBackupConfigPromptCandidates(bundle),
+            ),
+    );
+  }
+
+  @override
   Future<void> resolveWebDavConflicts(Map<String, bool> resolutions) async {
     _pendingWebDavConflictResolutions = resolutions;
     _queueRequest(
@@ -389,6 +712,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     await _processQueue();
   }
 
+  @override
   Future<void> resolveLocalScanConflicts(Map<String, bool> resolutions) async {
     _pendingLocalScanResolutions = resolutions;
     _queueRequest(
@@ -400,6 +724,7 @@ class SyncCoordinator extends StateNotifier<SyncCoordinatorState> {
     await _processQueue();
   }
 
+  @override
   Future<void> retryPending() async {
     await _processQueue();
   }

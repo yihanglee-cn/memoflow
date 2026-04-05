@@ -13,3 +13,7 @@ extension DesktopRuntimeRoleX on DesktopRuntimeRole {
 final desktopRuntimeRoleProvider = Provider<DesktopRuntimeRole>((ref) {
   return DesktopRuntimeRole.mainApp;
 });
+
+final desktopWindowIdProvider = Provider<int>((ref) {
+  return 0;
+});

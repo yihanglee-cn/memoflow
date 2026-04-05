@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../application/sync/sync_coordinator.dart';
 import '../../application/sync/sync_dependencies.dart';
+import '../../application/sync/desktop_remote_sync_facade.dart';
 import '../../application/sync/webdav_backup_service.dart';
 import '../../application/sync/webdav_sync_service.dart';
+import '../../core/desktop_runtime_role.dart';
 import '../../data/local_library/local_attachment_store.dart';
 import '../system/database_provider.dart';
 import '../system/local_library_provider.dart';
@@ -26,7 +28,17 @@ import '../webdav/webdav_sync_provider.dart'
 import '../webdav/webdav_vault_provider.dart';
 
 final syncCoordinatorProvider =
-    StateNotifierProvider<SyncCoordinator, SyncCoordinatorState>((ref) {
+    StateNotifierProvider<DesktopSyncFacade, SyncCoordinatorState>((ref) {
+      final runtimeRole = ref.watch(desktopRuntimeRoleProvider);
+      if (runtimeRole != DesktopRuntimeRole.mainApp) {
+        final currentKey = ref.watch(
+          appSessionProvider.select((state) => state.valueOrNull?.currentKey),
+        );
+        return DesktopRemoteSyncFacade(
+          originWindowId: ref.watch(desktopWindowIdProvider),
+          workspaceKey: currentKey,
+        );
+      }
       final container = ref.container;
       final attachmentStore = LocalAttachmentStore();
       final localAdapter = RiverpodWebDavSyncLocalAdapter(container);
@@ -75,3 +87,7 @@ final syncCoordinatorProvider =
       );
       return SyncCoordinator(deps);
     });
+
+final desktopSyncFacadeProvider = Provider<DesktopSyncFacade>((ref) {
+  return ref.watch(syncCoordinatorProvider.notifier);
+});

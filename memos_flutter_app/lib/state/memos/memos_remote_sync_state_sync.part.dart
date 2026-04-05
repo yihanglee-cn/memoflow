@@ -96,7 +96,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
         (localLastError == null || localLastError.trim().isEmpty)
         ? null
         : localLastError.trim();
-    await db.upsertMemo(
+    await _mutations.upsertMemo(
       uid: duplicateUid,
       content: localMemo.content,
       visibility: localMemo.visibility,
@@ -107,6 +107,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
       displayTimeSec: localMemo.displayTime == null
           ? null
           : localMemo.displayTime!.toUtc().millisecondsSinceEpoch ~/ 1000,
+      displayTimeSpecified: true,
       updateTimeSec:
           localMemo.updateTime.toUtc().millisecondsSinceEpoch ~/ 1000,
       tags: localMemo.tags,
@@ -118,7 +119,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
       syncState: 1,
       lastError: normalizedError,
     );
-    final rewritten = await db.rewriteOutboxMemoUids(
+    final rewritten = await _mutations.rewriteOutboxMemoUids(
       oldUid: localMemo.uid,
       newUid: duplicateUid,
     );
@@ -130,7 +131,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
         content: localMemo.content,
       );
       if (allowed) {
-        await db.enqueueOutbox(
+        await _mutations.enqueueOutbox(
           type: 'create_memo',
           payload: buildCreateMemoOutboxPayload(
             uid: duplicateUid,
@@ -398,13 +399,13 @@ extension _RemoteSyncStateSync on RemoteSyncController {
               ? draftMemo.location
               : memo.location;
           if (draftMemo == null) {
-            await db.upsertMemoRelationsCache(
+            await _mutations.upsertMemoRelationsCache(
               memo.uid,
               relationsJson: encodeMemoRelationsJson(memo.relations),
             );
           }
 
-          await db.upsertMemo(
+          await _mutations.upsertMemo(
             uid: memo.uid,
             content: content,
             visibility: visibility,
@@ -412,6 +413,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
             state: memoState,
             createTimeSec: createTimeSec,
             displayTimeSec: displayTimeSec,
+            displayTimeSpecified: true,
             updateTimeSec: updateTimeSec,
             tags: tags,
             attachments: mergedAttachments,
@@ -572,7 +574,7 @@ extension _RemoteSyncStateSync on RemoteSyncController {
           (visibility == 'PRIVATE' || visibility == 'PROTECTED')) {
         continue;
       }
-      await db.deleteMemoByUid(uid);
+      await _mutations.deleteMemoByUid(uid);
       deletedCount++;
     }
     return deletedCount;

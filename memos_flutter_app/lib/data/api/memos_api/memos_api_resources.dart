@@ -1,4 +1,4 @@
-part of memos_api;
+part of '../memos_api.dart';
 
 mixin _MemosApiResources on _MemosApiBase {
   Future<Attachment> createAttachment({
