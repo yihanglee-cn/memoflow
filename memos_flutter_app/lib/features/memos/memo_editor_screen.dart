@@ -36,6 +36,7 @@ import '../../state/attachments/queued_attachment_stager_provider.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_editor_draft_provider.dart';
 import '../../state/memos/memo_composer_state.dart';
+import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/settings/preferences_provider.dart';
 import '../../state/memos/memo_editor_providers.dart';
@@ -1229,7 +1230,14 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
   Future<void> _pickGalleryAttachments() async {
     if (_saving) return;
     try {
-      final result = await pickGalleryAttachments(context);
+      final compressionSettings = await ref
+          .read(imageCompressionSettingsRepositoryProvider)
+          .read();
+      if (!mounted) return;
+      final result = await pickGalleryAttachments(
+        context,
+        enableOriginalToggle: compressionSettings.enabled,
+      );
       if (!mounted || result == null) return;
       if (result.attachments.isEmpty) {
         final msg = result.skippedCount > 0

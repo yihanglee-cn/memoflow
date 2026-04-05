@@ -31,6 +31,7 @@ import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/attachments/queued_attachment_stager_provider.dart';
+import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/compose_draft_provider.dart';
@@ -1740,7 +1741,14 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   Future<void> _pickGalleryAttachments() async {
     if (_busy) return;
     try {
-      final result = await pickGalleryAttachments(context);
+      final compressionSettings = await ref
+          .read(imageCompressionSettingsRepositoryProvider)
+          .read();
+      if (!mounted) return;
+      final result = await pickGalleryAttachments(
+        context,
+        enableOriginalToggle: compressionSettings.enabled,
+      );
       if (!mounted || result == null) return;
       if (result.attachments.isEmpty) {
         final msg = result.skippedCount > 0

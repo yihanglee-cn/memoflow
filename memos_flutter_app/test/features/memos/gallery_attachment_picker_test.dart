@@ -22,6 +22,45 @@ AssetEntity _asset({
 }
 
 void main() {
+  test('normalizeGalleryOriginalAssetIds keeps only selected images', () {
+    final image = _asset(id: 'img-1', type: AssetType.image);
+    final video = _asset(id: 'video-1', type: AssetType.video);
+
+    final normalized = normalizeGalleryOriginalAssetIds(
+      selectedAssets: [image, video],
+      originalAssetIds: const {'img-1', 'video-1', 'missing'},
+    );
+
+    expect(normalized, {'img-1'});
+  });
+
+  test('shouldReadOriginalGalleryAssetFile only applies to marked images', () {
+    final image = _asset(id: 'img-1', type: AssetType.image);
+    final video = _asset(id: 'video-1', type: AssetType.video);
+
+    expect(
+      shouldReadOriginalGalleryAssetFile(
+        asset: image,
+        originalAssetIds: const {'img-1'},
+      ),
+      isTrue,
+    );
+    expect(
+      shouldReadOriginalGalleryAssetFile(
+        asset: image,
+        originalAssetIds: const {'other'},
+      ),
+      isFalse,
+    );
+    expect(
+      shouldReadOriginalGalleryAssetFile(
+        asset: video,
+        originalAssetIds: const {'video-1'},
+      ),
+      isFalse,
+    );
+  });
+
   test('buildPickedLocalAttachment defaults to gallery source', () {
     final attachment = buildPickedLocalAttachment(
       filePath: '/tmp/sample.png',
@@ -32,6 +71,18 @@ void main() {
     expect(attachment.mimeType, 'image/png');
     expect(attachment.source, PickedLocalAttachmentSource.gallery);
     expect(attachment.skipCompression, isFalse);
+  });
+
+  test('buildPickedLocalAttachment can set skipCompression', () {
+    final attachment = buildPickedLocalAttachment(
+      filePath: '/tmp/sample.png',
+      filename: 'sample.png',
+      size: 42,
+      skipCompression: true,
+    );
+
+    expect(attachment.mimeType, 'image/png');
+    expect(attachment.skipCompression, isTrue);
   });
 
   test('buildPickedLocalAttachment can mark camera source', () {

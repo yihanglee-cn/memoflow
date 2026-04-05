@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 
 import 'gallery_attachment_picker_constants.dart';
+import 'gallery_attachment_original_picker.dart';
 import 'windows_camera_capture_screen.dart';
 
 enum PickedLocalAttachmentSource { gallery, camera }
@@ -89,25 +90,47 @@ String guessLocalAttachmentMimeType(String filename) {
 Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
   BuildContext context, {
   int maxAssets = 100,
+  bool enableOriginalToggle = false,
 }) async {
-  final themeColor = Theme.of(context).colorScheme.primary;
-  final assets = await AssetPicker.pickAssets(
-    context,
-    pickerConfig: AssetPickerConfig(
-      requestType: RequestType.common,
+  OriginalToggleGalleryAssetPickResult? originalPickResult;
+  List<AssetEntity>? assets;
+  if (enableOriginalToggle) {
+    originalPickResult = await pickGalleryAssetsWithOriginalToggle(
+      context,
       maxAssets: maxAssets,
-      themeColor: themeColor,
-      previewThumbnailSize: memoGalleryPreviewThumbnailSize,
-    ),
-  );
+    );
+    assets = originalPickResult?.assets;
+  } else {
+    final themeColor = Theme.of(context).colorScheme.primary;
+    assets = await AssetPicker.pickAssets(
+      context,
+      pickerConfig: AssetPickerConfig(
+        requestType: RequestType.common,
+        maxAssets: maxAssets,
+        themeColor: themeColor,
+        previewThumbnailSize: memoGalleryPreviewThumbnailSize,
+      ),
+    );
+  }
   if (assets == null || assets.isEmpty) {
     return null;
   }
 
+  final originalAssetIds = normalizeGalleryOriginalAssetIds(
+    selectedAssets: assets,
+    originalAssetIds: originalPickResult?.originalAssetIds ?? const <String>{},
+  );
+
   final attachments = <PickedLocalAttachment>[];
   var skippedCount = 0;
   for (final asset in assets) {
-    final rawFile = await asset.file;
+    final rawFile =
+        await (shouldReadOriginalGalleryAssetFile(
+              asset: asset,
+              originalAssetIds: originalAssetIds,
+            )
+            ? asset.originFile
+            : asset.file);
     final path = rawFile?.path.trim() ?? '';
     if (path.isEmpty) {
       skippedCount++;
@@ -129,6 +152,9 @@ Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
         filename: filename,
         size: await file.length(),
         source: PickedLocalAttachmentSource.gallery,
+        skipCompression:
+            asset.type == AssetType.image &&
+            originalAssetIds.contains(asset.id),
       ),
     );
   }
@@ -137,6 +163,26 @@ Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
     attachments: attachments,
     skippedCount: skippedCount,
   );
+}
+
+@visibleForTesting
+bool shouldReadOriginalGalleryAssetFile({
+  required AssetEntity asset,
+  required Set<String> originalAssetIds,
+}) {
+  return asset.type == AssetType.image && originalAssetIds.contains(asset.id);
+}
+
+@visibleForTesting
+Set<String> normalizeGalleryOriginalAssetIds({
+  required Iterable<AssetEntity> selectedAssets,
+  required Iterable<String> originalAssetIds,
+}) {
+  final selectedImageIds = selectedAssets
+      .where((asset) => asset.type == AssetType.image)
+      .map((asset) => asset.id)
+      .toSet();
+  return originalAssetIds.where(selectedImageIds.contains).toSet();
 }
 
 Future<PickedLocalAttachment?> captureCameraAttachment({
@@ -183,6 +229,7 @@ PickedLocalAttachment buildPickedLocalAttachment({
   required String filename,
   required int size,
   PickedLocalAttachmentSource source = PickedLocalAttachmentSource.gallery,
+  bool skipCompression = false,
 }) {
   return PickedLocalAttachment(
     filePath: filePath,
@@ -190,5 +237,6 @@ PickedLocalAttachment buildPickedLocalAttachment({
     mimeType: guessLocalAttachmentMimeType(filename),
     size: size,
     source: source,
+    skipCompression: skipCompression,
   );
 }

@@ -22,6 +22,7 @@ import '../../i18n/strings.g.dart';
 import '../../state/attachments/queued_attachment_stager_provider.dart';
 import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
+import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/location_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/settings/user_settings_provider.dart';
@@ -472,7 +473,18 @@ class MemosListInlineComposeCoordinator extends ChangeNotifier {
       print('inline-compose: pickGallery before result');
       final result = await (pickGalleryOverride != null
           ? pickGalleryOverride!(context)
-          : gallery_picker.pickGalleryAttachments(context));
+          : () async {
+              final compressionSettings = await _ref
+                  .read(imageCompressionSettingsRepositoryProvider)
+                  .read();
+              if (!context.mounted) {
+                return null;
+              }
+              return gallery_picker.pickGalleryAttachments(
+                context,
+                enableOriginalToggle: compressionSettings.enabled,
+              );
+            }());
       // ignore: avoid_print
       print('inline-compose: pickGallery after result');
       if (!context.mounted || result == null) return;
