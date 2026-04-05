@@ -31,7 +31,6 @@ import '../../state/memos/memo_composer_controller.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/attachments/queued_attachment_stager_provider.dart';
-import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/compose_draft_provider.dart';
@@ -54,7 +53,6 @@ import 'gallery_attachment_picker.dart';
 import 'memo_video_grid.dart';
 import 'tag_autocomplete.dart';
 import 'link_memo_sheet.dart';
-import 'windows_camera_capture_screen.dart';
 import '../voice/voice_record_screen.dart';
 import '../location_picker/show_location_picker.dart';
 import '../../i18n/strings.g.dart';
@@ -1742,14 +1740,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
   Future<void> _pickGalleryAttachments() async {
     if (_busy) return;
     try {
-      final compressionSettings = await ref
-          .read(imageCompressionSettingsRepositoryProvider)
-          .read();
-      if (!mounted) return;
-      final result = await pickGalleryAttachments(
-        context,
-        enableOriginalToggle: compressionSettings.enabled,
-      );
+      final result = await pickGalleryAttachments(context);
       if (!mounted || result == null) return;
       if (result.attachments.isEmpty) {
         final msg = result.skippedCount > 0
@@ -1952,45 +1943,20 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     if (_busy) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final navigator = Navigator.of(context);
-      final photo = Platform.isWindows
-          ? await WindowsCameraCaptureScreen.captureWithNavigator(navigator)
-          : await _imagePicker.pickImage(source: ImageSource.camera);
-      if (!mounted || photo == null) return;
-
-      final path = photo.path;
-      if (path.trim().isEmpty) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(context.t.strings.legacy.msg_camera_file_missing),
-          ),
-        );
-        return;
-      }
-
-      final file = File(path);
-      if (!file.existsSync()) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(context.t.strings.legacy.msg_camera_file_missing),
-          ),
-        );
-        return;
-      }
-
-      final size = await file.length();
-      if (!mounted) return;
-
-      final filename = path.split(Platform.pathSeparator).last;
-      final mimeType = _guessMimeType(filename);
+      final attachment = await captureCameraAttachment(
+        navigator: Navigator.of(context),
+        imagePicker: _imagePicker,
+      );
+      if (!mounted || attachment == null) return;
       if (!mounted) return;
       final stagedAttachments = await _stagePendingAttachments([
         _PendingAttachment(
           uid: generateUid(),
-          filePath: path,
-          filename: filename,
-          mimeType: mimeType,
-          size: size,
+          filePath: attachment.filePath,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          skipCompression: attachment.skipCompression,
         ),
       ]);
       if (!mounted || stagedAttachments.isEmpty) return;
@@ -2001,6 +1967,13 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
       showTopToast(
         context,
         context.t.strings.legacy.msg_added_photo_attachment,
+      );
+    } on CameraAttachmentFileMissingException {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_camera_file_missing),
+        ),
       );
     } catch (e) {
       if (!mounted) return;

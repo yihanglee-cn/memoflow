@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 
 import 'package:memos_flutter_app/features/memos/gallery_attachment_original_picker.dart';
@@ -19,47 +22,68 @@ AssetEntity _asset({
 }
 
 void main() {
-  test('normalizeGalleryOriginalAssetIds keeps only selected images', () {
-    final image = _asset(id: 'img-1', type: AssetType.image);
-    final video = _asset(id: 'video-1', type: AssetType.video);
-
-    final normalized = normalizeGalleryOriginalAssetIds(
-      selectedAssets: [image, video],
-      originalAssetIds: const {'img-1', 'video-1', 'missing'},
+  test('buildPickedLocalAttachment defaults to gallery source', () {
+    final attachment = buildPickedLocalAttachment(
+      filePath: '/tmp/sample.png',
+      filename: 'sample.png',
+      size: 42,
     );
 
-    expect(normalized, {'img-1'});
+    expect(attachment.mimeType, 'image/png');
+    expect(attachment.source, PickedLocalAttachmentSource.gallery);
+    expect(attachment.skipCompression, isFalse);
   });
 
-  test(
-    'buildPickedLocalAttachment marks selected image as skipCompression',
-    () {
-      final attachment = buildPickedLocalAttachment(
-        filePath: '/tmp/sample.png',
-        filename: 'sample.png',
-        size: 42,
-        assetType: AssetType.image,
-        assetId: 'img-1',
-        originalAssetIds: {'img-1'},
-      );
-
-      expect(attachment.mimeType, 'image/png');
-      expect(attachment.skipCompression, isTrue);
-    },
-  );
-
-  test('buildPickedLocalAttachment never marks videos as skipCompression', () {
+  test('buildPickedLocalAttachment can mark camera source', () {
     final attachment = buildPickedLocalAttachment(
       filePath: '/tmp/sample.mp4',
       filename: 'sample.mp4',
       size: 42,
-      assetType: AssetType.video,
-      assetId: 'video-1',
-      originalAssetIds: {'video-1'},
+      source: PickedLocalAttachmentSource.camera,
     );
 
     expect(attachment.mimeType, 'video/mp4');
+    expect(attachment.source, PickedLocalAttachmentSource.camera);
     expect(attachment.skipCompression, isFalse);
+  });
+
+  test(
+    'captureCameraAttachment returns a camera attachment from override',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'memo_gallery_camera_test',
+      );
+      addTearDown(() async {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final photo = File('${tempDir.path}${Platform.pathSeparator}captured.jpg')
+        ..writeAsBytesSync(const [1, 2, 3, 4]);
+
+      final attachment = await captureCameraAttachment(
+        imagePicker: ImagePicker(),
+        capturePhotoOverride: () async => XFile(photo.path),
+      );
+
+      expect(attachment, isNotNull);
+      expect(attachment!.filePath, photo.path);
+      expect(attachment.filename, 'captured.jpg');
+      expect(attachment.mimeType, 'image/jpeg');
+      expect(attachment.size, 4);
+      expect(attachment.source, PickedLocalAttachmentSource.camera);
+      expect(attachment.skipCompression, isFalse);
+    },
+  );
+
+  test('captureCameraAttachment throws for missing file paths', () async {
+    await expectLater(
+      () => captureCameraAttachment(
+        imagePicker: ImagePicker(),
+        capturePhotoOverride: () async => XFile(''),
+      ),
+      throwsA(isA<CameraAttachmentFileMissingException>()),
+    );
   });
 
   test(

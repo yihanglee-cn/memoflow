@@ -32,7 +32,6 @@ import 'attachment_gallery_screen.dart';
 import 'compose_toolbar_shared.dart';
 import 'gallery_attachment_picker.dart' as gallery_picker;
 import 'link_memo_sheet.dart';
-import 'windows_camera_capture_screen.dart';
 
 typedef InlineComposeLocationPicker =
     Future<MemoLocation?> Function(
@@ -387,15 +386,15 @@ class MemosListInlineComposeCoordinator extends ChangeNotifier {
         queuedAttachmentStagerOverride ??
         _ref.read(queuedAttachmentStagerProvider);
     final staged = await attachmentStager.stageDraftAttachment(
-          uid: attachment.uid,
-          filePath: attachment.filePath,
-          filename: attachment.filename,
-          mimeType: attachment.mimeType,
-          size: attachment.size,
-          scopeKey: resolvedWorkspaceKey.trim().isEmpty
-              ? 'default'
-              : resolvedWorkspaceKey,
-        );
+      uid: attachment.uid,
+      filePath: attachment.filePath,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      scopeKey: resolvedWorkspaceKey.trim().isEmpty
+          ? 'default'
+          : resolvedWorkspaceKey,
+    );
     // ignore: avoid_print
     print('inline-compose: stage done ${attachment.filename}');
     return attachment.copyWith(
@@ -642,47 +641,31 @@ class MemosListInlineComposeCoordinator extends ChangeNotifier {
 
   Future<void> capturePhoto(BuildContext context) async {
     try {
-      final navigator = Navigator.of(context);
-      final photo = Platform.isWindows
-          ? await (captureWindowsPhotoOverride != null
-                ? captureWindowsPhotoOverride!()
-                : WindowsCameraCaptureScreen.captureWithNavigator(navigator))
-          : await _imagePicker.pickImage(source: ImageSource.camera);
-      if (!context.mounted || photo == null) return;
-      final path = photo.path.trim();
-      if (path.isEmpty) {
-        _showSnackBar(
-          context,
-          SnackBar(
-            content: Text(context.t.strings.legacy.msg_camera_file_missing),
-          ),
-        );
-        return;
-      }
-      final file = File(path);
-      if (!file.existsSync()) {
-        _showSnackBar(
-          context,
-          SnackBar(
-            content: Text(context.t.strings.legacy.msg_camera_file_missing),
-          ),
-        );
-        return;
-      }
-      final size = file.lengthSync();
-      if (!context.mounted) return;
-      final filename = path.split(Platform.pathSeparator).last;
-      final mimeType = gallery_picker.guessLocalAttachmentMimeType(filename);
+      final attachment = await gallery_picker.captureCameraAttachment(
+        navigator: Navigator.of(context),
+        imagePicker: _imagePicker,
+        capturePhotoOverride: captureWindowsPhotoOverride,
+      );
+      if (!context.mounted || attachment == null) return;
       await _addPendingAttachmentsStaged([
         MemoComposerPendingAttachment(
           uid: generateUid(),
-          filePath: path,
-          filename: filename,
-          mimeType: mimeType,
-          size: size,
+          filePath: attachment.filePath,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          skipCompression: attachment.skipCompression,
         ),
       ]);
       _showToast(context, context.t.strings.legacy.msg_added_photo_attachment);
+    } on gallery_picker.CameraAttachmentFileMissingException {
+      if (!context.mounted) return;
+      _showSnackBar(
+        context,
+        SnackBar(
+          content: Text(context.t.strings.legacy.msg_camera_file_missing),
+        ),
+      );
     } catch (error) {
       if (!context.mounted) return;
       if (_isWindowsNoCameraError(error)) {

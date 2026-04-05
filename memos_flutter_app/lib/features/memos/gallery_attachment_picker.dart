@@ -2,10 +2,17 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 
 import 'gallery_attachment_picker_constants.dart';
-import 'gallery_attachment_original_picker.dart';
+import 'windows_camera_capture_screen.dart';
+
+enum PickedLocalAttachmentSource { gallery, camera }
+
+class CameraAttachmentFileMissingException implements Exception {
+  const CameraAttachmentFileMissingException();
+}
 
 @immutable
 class PickedLocalAttachment {
@@ -14,6 +21,7 @@ class PickedLocalAttachment {
     required this.filename,
     required this.mimeType,
     required this.size,
+    this.source = PickedLocalAttachmentSource.gallery,
     this.skipCompression = false,
   });
 
@@ -21,6 +29,7 @@ class PickedLocalAttachment {
   final String filename;
   final String mimeType;
   final int size;
+  final PickedLocalAttachmentSource source;
   final bool skipCompression;
 }
 
@@ -80,36 +89,20 @@ String guessLocalAttachmentMimeType(String filename) {
 Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
   BuildContext context, {
   int maxAssets = 100,
-  bool enableOriginalToggle = false,
 }) async {
-  OriginalToggleGalleryAssetPickResult? originalPickResult;
-  List<AssetEntity>? assets;
-  if (enableOriginalToggle) {
-    originalPickResult = await pickGalleryAssetsWithOriginalToggle(
-      context,
+  final themeColor = Theme.of(context).colorScheme.primary;
+  final assets = await AssetPicker.pickAssets(
+    context,
+    pickerConfig: AssetPickerConfig(
+      requestType: RequestType.common,
       maxAssets: maxAssets,
-    );
-    assets = originalPickResult?.assets;
-  } else {
-    final themeColor = Theme.of(context).colorScheme.primary;
-    assets = await AssetPicker.pickAssets(
-      context,
-      pickerConfig: AssetPickerConfig(
-        requestType: RequestType.common,
-        maxAssets: maxAssets,
-        themeColor: themeColor,
-        previewThumbnailSize: memoGalleryPreviewThumbnailSize,
-      ),
-    );
-  }
+      themeColor: themeColor,
+      previewThumbnailSize: memoGalleryPreviewThumbnailSize,
+    ),
+  );
   if (assets == null || assets.isEmpty) {
     return null;
   }
-
-  final originalAssetIds = normalizeGalleryOriginalAssetIds(
-    selectedAssets: assets,
-    originalAssetIds: originalPickResult?.originalAssetIds ?? const <String>{},
-  );
 
   final attachments = <PickedLocalAttachment>[];
   var skippedCount = 0;
@@ -135,9 +128,7 @@ Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
         filePath: path,
         filename: filename,
         size: await file.length(),
-        assetType: asset.type,
-        assetId: asset.id,
-        originalAssetIds: originalAssetIds,
+        source: PickedLocalAttachmentSource.gallery,
       ),
     );
   }
@@ -148,16 +139,42 @@ Future<GalleryAttachmentPickResult?> pickGalleryAttachments(
   );
 }
 
-@visibleForTesting
-Set<String> normalizeGalleryOriginalAssetIds({
-  required Iterable<AssetEntity> selectedAssets,
-  required Iterable<String> originalAssetIds,
-}) {
-  final selectedImageIds = selectedAssets
-      .where((asset) => asset.type == AssetType.image)
-      .map((asset) => asset.id)
-      .toSet();
-  return originalAssetIds.where(selectedImageIds.contains).toSet();
+Future<PickedLocalAttachment?> captureCameraAttachment({
+  NavigatorState? navigator,
+  required ImagePicker imagePicker,
+  Future<XFile?> Function()? capturePhotoOverride,
+}) async {
+  final photo = capturePhotoOverride != null
+      ? await capturePhotoOverride()
+      : Platform.isWindows
+      ? await WindowsCameraCaptureScreen.captureWithNavigator(
+          navigator ??
+              (throw StateError(
+                'navigator required for Windows camera capture',
+              )),
+        )
+      : await imagePicker.pickImage(source: ImageSource.camera);
+  if (photo == null) {
+    return null;
+  }
+
+  final path = photo.path.trim();
+  if (path.isEmpty) {
+    throw const CameraAttachmentFileMissingException();
+  }
+
+  final file = File(path);
+  if (!file.existsSync()) {
+    throw const CameraAttachmentFileMissingException();
+  }
+
+  final filename = path.split(Platform.pathSeparator).last;
+  return buildPickedLocalAttachment(
+    filePath: path,
+    filename: filename,
+    size: await file.length(),
+    source: PickedLocalAttachmentSource.camera,
+  );
 }
 
 @visibleForTesting
@@ -165,16 +182,13 @@ PickedLocalAttachment buildPickedLocalAttachment({
   required String filePath,
   required String filename,
   required int size,
-  required AssetType assetType,
-  required String assetId,
-  required Set<String> originalAssetIds,
+  PickedLocalAttachmentSource source = PickedLocalAttachmentSource.gallery,
 }) {
   return PickedLocalAttachment(
     filePath: filePath,
     filename: filename,
     mimeType: guessLocalAttachmentMimeType(filename),
     size: size,
-    skipCompression:
-        assetType == AssetType.image && originalAssetIds.contains(assetId),
+    source: source,
   );
 }
