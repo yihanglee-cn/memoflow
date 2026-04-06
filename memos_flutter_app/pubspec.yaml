@@ -108,7 +108,8 @@ dependencies:
   word_cloud: ^1.0.3
   phosphor_flutter: ^2.1.0
   wechat_assets_picker: 10.1.1
-  image_compress_plus: ^3.0.0
+  image_compress_plus_platform_interface: ^2.0.0
+  image_compress_plus_windows: ^2.0.0
   bonsoir: ^6.0.2
   pretty_qr_code: ^3.6.0
 
@@ -195,4 +196,3 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
-
