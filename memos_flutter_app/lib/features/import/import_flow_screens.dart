@@ -19,23 +19,28 @@ import '../../application/sync/sync_request.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/system/home_loading_overlay_provider.dart';
 import '../../state/system/local_library_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../memos/memos_list_screen.dart';
 import 'flomo_import_service.dart';
+import 'swashbuckler_diary_import_service.dart' as swashbuckler_diary;
 import '../../i18n/strings.g.dart';
 
 const _flomoImportIconAsset = 'assets/images/flomo_import_logo.svg';
+
+enum ImportSourceKind { flomoLike, swashbucklerDiary }
 
 class ImportSourceScreen extends StatelessWidget {
   const ImportSourceScreen({
     super.key,
     this.onSelectFlomo,
     this.onSelectMarkdown,
+    this.onSelectSwashbucklerDiary,
   });
 
   final VoidCallback? onSelectFlomo;
   final VoidCallback? onSelectMarkdown;
+  final VoidCallback? onSelectSwashbucklerDiary;
 
   String _sanitizeFilename(String input, {required String fallbackExtension}) {
     final trimmed = input.trim();
@@ -43,16 +48,19 @@ class ImportSourceScreen extends StatelessWidget {
     return sanitized.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   }
 
-  Future<void> _selectFlomoFile(BuildContext context) async {
+  Future<({String filePath, String fileName})?> _pickImportFile(
+    BuildContext context, {
+    required List<String> allowedExtensions,
+  }) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['zip', 'html', 'htm'],
+      allowedExtensions: allowedExtensions,
       withData: true,
     );
-    if (!context.mounted || result == null) return;
+    if (!context.mounted || result == null) return null;
 
     final file = result.files.isNotEmpty ? result.files.first : null;
-    if (file == null) return;
+    if (file == null) return null;
 
     var path = file.path;
     final fileName = file.name.trim();
@@ -64,7 +72,7 @@ class ImportSourceScreen extends StatelessWidget {
     if ((path == null || path.trim().isEmpty || !File(path).existsSync()) &&
         bytes != null) {
       final tempDir = await getTemporaryDirectory();
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       final fallbackExt = (file.extension ?? '').trim().isNotEmpty
           ? file.extension!.trim()
           : 'zip';
@@ -74,90 +82,72 @@ class ImportSourceScreen extends StatelessWidget {
       );
       final tempPath = p.join(tempDir.path, safeName);
       await File(tempPath).writeAsBytes(bytes, flush: true);
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       path = tempPath;
     }
 
     if (path == null || path.trim().isEmpty) {
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(context.t.strings.legacy.msg_unable_read_file_path),
         ),
       );
-      return;
+      return null;
     }
 
-    if (!context.mounted) return;
+    if (!context.mounted) return null;
     final resolvedPath = path;
     final shownName = displayName.isNotEmpty
         ? displayName
         : p.basename(resolvedPath);
 
+    return (filePath: resolvedPath, fileName: shownName);
+  }
+
+  Future<void> _openImportRunScreen(
+    BuildContext context, {
+    required List<String> allowedExtensions,
+    required ImportSourceKind sourceKind,
+  }) async {
+    final picked = await _pickImportFile(
+      context,
+      allowedExtensions: allowedExtensions,
+    );
+    if (!context.mounted || picked == null) return;
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            ImportRunScreen(filePath: resolvedPath, fileName: shownName),
+        builder: (_) => ImportRunScreen(
+          filePath: picked.filePath,
+          fileName: picked.fileName,
+          sourceKind: sourceKind,
+        ),
       ),
     );
   }
 
-  Future<void> _selectMarkdownZip(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['zip'],
-      withData: true,
+  Future<void> _selectFlomoFile(BuildContext context) {
+    return _openImportRunScreen(
+      context,
+      allowedExtensions: const ['zip', 'html', 'htm'],
+      sourceKind: ImportSourceKind.flomoLike,
     );
-    if (!context.mounted || result == null) return;
+  }
 
-    final file = result.files.isNotEmpty ? result.files.first : null;
-    if (file == null) return;
+  Future<void> _selectMarkdownZip(BuildContext context) {
+    return _openImportRunScreen(
+      context,
+      allowedExtensions: const ['zip'],
+      sourceKind: ImportSourceKind.flomoLike,
+    );
+  }
 
-    var path = file.path;
-    final fileName = file.name.trim();
-    final displayName = fileName.isNotEmpty
-        ? fileName
-        : (path == null ? '' : p.basename(path));
-    final bytes = file.bytes;
-
-    if ((path == null || path.trim().isEmpty || !File(path).existsSync()) &&
-        bytes != null) {
-      final tempDir = await getTemporaryDirectory();
-      if (!context.mounted) return;
-      final fallbackExt = (file.extension ?? '').trim().isNotEmpty
-          ? file.extension!.trim()
-          : 'zip';
-      final safeName = _sanitizeFilename(
-        displayName.isEmpty ? 'import.$fallbackExt' : displayName,
-        fallbackExtension: fallbackExt,
-      );
-      final tempPath = p.join(tempDir.path, safeName);
-      await File(tempPath).writeAsBytes(bytes, flush: true);
-      if (!context.mounted) return;
-      path = tempPath;
-    }
-
-    if (path == null || path.trim().isEmpty) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.t.strings.legacy.msg_unable_read_file_path),
-        ),
-      );
-      return;
-    }
-
-    if (!context.mounted) return;
-    final resolvedPath = path;
-    final shownName = displayName.isNotEmpty
-        ? displayName
-        : p.basename(resolvedPath);
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            ImportRunScreen(filePath: resolvedPath, fileName: shownName),
-      ),
+  Future<void> _selectSwashbucklerDiaryZip(BuildContext context) {
+    return _openImportRunScreen(
+      context,
+      allowedExtensions: const ['zip'],
+      sourceKind: ImportSourceKind.swashbucklerDiary,
     );
   }
 
@@ -261,6 +251,25 @@ class ImportSourceScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           _ImportSourceTile(
+                            title: 'SwashbucklerDiary',
+                            subtitle: 'JSON / Markdown / TXT ZIP',
+                            icon: const Icon(Icons.menu_book_rounded, size: 24),
+                            iconBg: MemoFlowPalette.primary.withValues(
+                              alpha: isDark ? 0.18 : 0.1,
+                            ),
+                            iconColor: MemoFlowPalette.primary.withValues(
+                              alpha: 0.9,
+                            ),
+                            card: card,
+                            textMain: textMain,
+                            textMuted: textMuted,
+                            shadow: shadow,
+                            onTap:
+                                onSelectSwashbucklerDiary ??
+                                () => _selectSwashbucklerDiaryZip(context),
+                          ),
+                          const SizedBox(height: 12),
+                          _ImportSourceTile(
                             title: context.t.strings.legacy.msg_import_markdown,
                             subtitle: context
                                 .t
@@ -321,10 +330,12 @@ class ImportRunScreen extends ConsumerStatefulWidget {
     super.key,
     required this.filePath,
     required this.fileName,
+    this.sourceKind = ImportSourceKind.flomoLike,
   });
 
   final String filePath;
   final String fileName;
+  final ImportSourceKind sourceKind;
 
   @override
   ConsumerState<ImportRunScreen> createState() => _ImportRunScreenState();
@@ -378,20 +389,36 @@ class _ImportRunScreenState extends ConsumerState<ImportRunScreen> {
     }
 
     final db = ref.read(databaseProvider);
-    final language = ref.read(appPreferencesProvider).language;
-    final importer = FlomoImportService(
-      db: db,
-      account: account,
-      importScopeKey: session?.currentKey,
-      language: language,
-    );
+    final language = ref.read(devicePreferencesProvider).language;
+    Future<ImportResult> runImport() {
+      return switch (widget.sourceKind) {
+        ImportSourceKind.swashbucklerDiary =>
+          swashbuckler_diary.SwashbucklerDiaryImportService(
+            db: db,
+            account: account,
+            importScopeKey: session?.currentKey,
+            language: language,
+          ).importFile(
+            filePath: widget.filePath,
+            onProgress: _handleProgress,
+            isCancelled: () => _cancelRequested,
+          ),
+        ImportSourceKind.flomoLike =>
+          FlomoImportService(
+            db: db,
+            account: account,
+            importScopeKey: session?.currentKey,
+            language: language,
+          ).importFile(
+            filePath: widget.filePath,
+            onProgress: _handleProgress,
+            isCancelled: () => _cancelRequested,
+          ),
+      };
+    }
 
     try {
-      final result = await importer.importFile(
-        filePath: widget.filePath,
-        onProgress: _handleProgress,
-        isCancelled: () => _cancelRequested,
-      );
+      final result = await runImport();
       if (!mounted) return;
 
       // Force memo streams to re-query after bulk import.
