@@ -28,7 +28,8 @@ import '../../data/models/webdav_settings.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 import '../../state/review/ai_analysis_provider.dart';
 import '../../state/settings/ai_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/tags/tag_repository.dart';
@@ -298,7 +299,10 @@ class DesktopWindowManager {
       case desktopMainReloadPreferencesMethod:
         final log = _bootstrapAdapter.readLogManager(_ref);
         try {
-          await _ref.read(appPreferencesProvider.notifier).reloadFromStorage();
+          await _ref.read(devicePreferencesProvider.notifier).reloadFromStorage();
+          await _ref
+              .read(currentWorkspacePreferencesProvider.notifier)
+              .reloadFromStorage();
           final quickInputWindowId = _desktopQuickInputWindowId;
           if (quickInputWindowId != null && quickInputWindowId > 0) {
             try {
@@ -1046,8 +1050,9 @@ class DesktopWindowManager {
       await _quickInputController.handleHotKey();
       return;
     }
+    final autoFocus = _bootstrapAdapter.readDevicePreferences(_ref).quickInputAutoFocus;
     unawaited(
-      _openQuickInput(autoFocus: AppPreferences.defaults.quickInputAutoFocus),
+      _openQuickInput(autoFocus: autoFocus),
     );
   }
 

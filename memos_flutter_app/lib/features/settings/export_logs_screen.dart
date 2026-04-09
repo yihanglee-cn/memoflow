@@ -13,7 +13,7 @@ import '../../core/top_toast.dart';
 import '../../state/system/debug_log_provider.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/system/network_log_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/webdav/webdav_log_provider.dart';
 import '../../i18n/strings.g.dart';
 
@@ -100,7 +100,7 @@ class _ExportLogsScreenState extends ConsumerState<ExportLogsScreen> {
       final reportPath = p.join(logDir.path, 'MemoFlow_log_$now.txt');
       await File(reportPath).writeAsString(text, flush: true);
       final networkEnabled = ref
-          .read(appPreferencesProvider)
+          .read(devicePreferencesProvider)
           .networkLoggingEnabled;
       final bundleFile = await ref
           .read(logBundleExporterProvider)
@@ -187,10 +187,10 @@ class _ExportLogsScreenState extends ConsumerState<ExportLogsScreen> {
         : Colors.black.withValues(alpha: 0.06);
     final actionsLocked = _busy || _clearing;
     final networkLoggingEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.networkLoggingEnabled),
+      devicePreferencesProvider.select((p) => p.networkLoggingEnabled),
     );
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void haptic() {
@@ -279,7 +279,7 @@ class _ExportLogsScreenState extends ConsumerState<ExportLogsScreen> {
                     onChanged: (v) {
                       haptic();
                       ref
-                          .read(appPreferencesProvider.notifier)
+                          .read(devicePreferencesProvider.notifier)
                           .setNetworkLoggingEnabled(v);
                     },
                   ),

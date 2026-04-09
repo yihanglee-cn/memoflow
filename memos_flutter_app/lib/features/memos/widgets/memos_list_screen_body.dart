@@ -9,6 +9,7 @@ import '../../../data/repositories/scene_micro_guide_repository.dart';
 import '../../../i18n/strings.g.dart';
 import '../../../state/memos/memos_providers.dart';
 import '../../home/app_drawer_menu_button.dart';
+import '../home_quick_actions.dart';
 import '../memos_list_screen_view_state.dart';
 import 'floating_collapse_button.dart';
 import 'memos_list_floating_actions.dart';
@@ -104,9 +105,7 @@ class MemosListScreenBody extends StatelessWidget {
     required this.onDismissGuide,
     required this.onCollapseFloatingMemo,
     required this.onScrollToTop,
-    required this.onWeeklyInsights,
-    required this.onAiSummary,
-    required this.onDailyReview,
+    required this.quickActions,
     required this.onMinimize,
     required this.onToggleMaximize,
     required this.onClose,
@@ -140,9 +139,7 @@ class MemosListScreenBody extends StatelessWidget {
   final VoidCallback onDismissGuide;
   final VoidCallback onCollapseFloatingMemo;
   final VoidCallback onScrollToTop;
-  final VoidCallback onWeeklyInsights;
-  final VoidCallback onAiSummary;
-  final VoidCallback onDailyReview;
+  final List<HomeQuickActionChipData> quickActions;
   final VoidCallback onMinimize;
   final VoidCallback onToggleMaximize;
   final VoidCallback onClose;
@@ -301,9 +298,7 @@ class MemosListScreenBody extends StatelessWidget {
                                         0,
                                       ),
                                       child: MemosListPillRow(
-                                        onWeeklyInsights: onWeeklyInsights,
-                                        onAiSummary: onAiSummary,
-                                        onDailyReview: onDailyReview,
+                                        quickActions: quickActions,
                                       ),
                                     ),
                                   ),
@@ -507,9 +502,7 @@ class MemosListScreenBody extends StatelessWidget {
                 searchFieldChild: searchFieldChild,
                 sortButton: sortButton,
                 onToggleSearch: onToggleWindowsHeaderSearch,
-                onWeeklyInsights: onWeeklyInsights,
-                onAiSummary: onAiSummary,
-                onDailyReview: onDailyReview,
+                quickActions: quickActions,
                 onMinimize: onMinimize,
                 onToggleMaximize: onToggleMaximize,
                 onClose: onClose,

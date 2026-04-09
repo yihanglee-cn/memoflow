@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -7,12 +9,17 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
+import 'package:memos_flutter_app/data/models/device_preferences.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/data/models/memo_toolbar_preferences.dart';
+import 'package:memos_flutter_app/data/models/workspace_preferences.dart';
 import 'package:memos_flutter_app/features/settings/memo_toolbar_settings_screen.dart';
 import 'package:memos_flutter_app/features/settings/preferences_settings_screen.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
+import 'package:memos_flutter_app/state/settings/device_preferences_provider.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/preferences_migration_service.dart';
+import 'package:memos_flutter_app/state/settings/workspace_preferences_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
 import 'package:memos_flutter_app/state/system/system_fonts_provider.dart';
 
@@ -92,7 +99,7 @@ void main() {
 
       expect(
         container
-            .read(appPreferencesProvider)
+            .read(currentWorkspacePreferencesProvider)
             .memoToolbarPreferences
             .hiddenActions,
         contains(MemoToolbarActionId.bold),
@@ -113,7 +120,7 @@ void main() {
 
       expect(
         container
-            .read(appPreferencesProvider)
+            .read(currentWorkspacePreferencesProvider)
             .memoToolbarPreferences
             .hiddenActions,
         isNot(contains(MemoToolbarActionId.bold)),
@@ -127,7 +134,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        container.read(appPreferencesProvider).memoToolbarPreferences,
+        container.read(currentWorkspacePreferencesProvider).memoToolbarPreferences,
         MemoToolbarPreferences.defaults,
       );
     },
@@ -157,7 +164,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final prefs = container.read(appPreferencesProvider).memoToolbarPreferences;
+    final prefs = container
+        .read(currentWorkspacePreferencesProvider)
+        .memoToolbarPreferences;
     expect(prefs.topRow.first, MemoToolbarActionId.list);
     expect(prefs.topRow[1], MemoToolbarActionId.bold);
   });
@@ -187,7 +196,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final prefs = container.read(appPreferencesProvider).memoToolbarPreferences;
+    final prefs = container
+        .read(currentWorkspacePreferencesProvider)
+        .memoToolbarPreferences;
     final visibleTop = prefs.visibleActionsForRow(MemoToolbarRow.top);
     expect(visibleTop.first, MemoToolbarActionId.bold);
     expect(visibleTop.last, MemoToolbarActionId.list);
@@ -206,7 +217,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final prefs = container.read(appPreferencesProvider).memoToolbarPreferences;
+    final prefs = container
+        .read(currentWorkspacePreferencesProvider)
+        .memoToolbarPreferences;
     expect(prefs.hiddenActions, MemoToolbarActionId.values.toSet());
     expect(
       find.byKey(const ValueKey('memo-toolbar-toolbox-bold')),
@@ -254,7 +267,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('memo-toolbar-create-save')));
     await tester.pumpAndSettle();
 
-    final prefs = container.read(appPreferencesProvider).memoToolbarPreferences;
+    final prefs = container
+        .read(currentWorkspacePreferencesProvider)
+        .memoToolbarPreferences;
     expect(prefs.customButtons, hasLength(1));
     expect(prefs.customButtons.single.label, 'H1');
     expect(
@@ -296,12 +311,23 @@ ProviderContainer _createContainer({
   MemoToolbarPreferences? initialPrefs,
 }) {
   final repository = _TestAppPreferencesRepository(initialPrefs: initialPrefs);
+  final deviceRepository = _TestDevicePreferencesRepository();
+  final workspaceRepository = _TestWorkspacePreferencesRepository(
+    initialPrefs: initialPrefs,
+  );
   return ProviderContainer(
     overrides: [
       if (includeSession)
         appSessionProvider.overrideWith((ref) => _TestSessionController()),
       appPreferencesProvider.overrideWith(
         (ref) => _TestAppPreferencesController(ref, repository),
+      ),
+      devicePreferencesProvider.overrideWith(
+        (ref) => _TestDevicePreferencesController(ref, deviceRepository),
+      ),
+      currentWorkspaceKeyProvider.overrideWith((ref) => 'test-workspace'),
+      currentWorkspacePreferencesProvider.overrideWith(
+        (ref) => _TestWorkspacePreferencesController(ref, workspaceRepository),
       ),
       if (includeSession)
         systemFontsProvider.overrideWith((ref) async => const []),
@@ -419,6 +445,29 @@ class _TestSessionController extends AppSessionController {
   }
 }
 
+class _TestDevicePreferencesRepository extends DevicePreferencesRepository {
+  _TestDevicePreferencesRepository()
+    : _prefs = DevicePreferences.defaultsForLanguage(AppLanguage.en),
+      super(PreferencesMigrationService(const FlutterSecureStorage()));
+
+  DevicePreferences _prefs;
+
+  @override
+  Future<StorageReadResult<DevicePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_prefs);
+  }
+
+  @override
+  Future<DevicePreferences> read() async {
+    return _prefs;
+  }
+
+  @override
+  Future<void> write(DevicePreferences prefs) async {
+    _prefs = prefs;
+  }
+}
+
 class _TestAppPreferencesRepository extends AppPreferencesRepository {
   _TestAppPreferencesRepository({MemoToolbarPreferences? initialPrefs})
     : _prefs = AppPreferences.defaultsForLanguage(AppLanguage.en).copyWith(
@@ -473,4 +522,50 @@ class _TestAppPreferencesController extends AppPreferencesController {
       ),
     );
   }
+}
+
+class _TestWorkspacePreferencesRepository extends WorkspacePreferencesRepository {
+  _TestWorkspacePreferencesRepository({MemoToolbarPreferences? initialPrefs})
+    : _prefs = WorkspacePreferences.defaults.copyWith(
+        memoToolbarPreferences: initialPrefs ?? MemoToolbarPreferences.defaults,
+      ),
+      super(
+        PreferencesMigrationService(const FlutterSecureStorage()),
+        workspaceKey: 'test-workspace',
+      );
+
+  WorkspacePreferences _prefs;
+
+  @override
+  Future<StorageReadResult<WorkspacePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_prefs);
+  }
+
+  @override
+  Future<WorkspacePreferences> read() async {
+    return _prefs;
+  }
+
+  @override
+  Future<void> write(WorkspacePreferences prefs) async {
+    _prefs = prefs;
+  }
+}
+
+class _TestWorkspacePreferencesController extends WorkspacePreferencesController {
+  _TestWorkspacePreferencesController(super.ref, super.repo)
+    : super(
+        onLoaded: () {
+          ref.read(workspacePreferencesLoadedProvider.notifier).state = true;
+        },
+      );
+}
+
+class _TestDevicePreferencesController extends DevicePreferencesController {
+  _TestDevicePreferencesController(super.ref, super.repo)
+    : super(
+        onLoaded: () {
+          ref.read(devicePreferencesLoadedProvider.notifier).state = true;
+        },
+      );
 }

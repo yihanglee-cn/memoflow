@@ -3,7 +3,7 @@ part of 'startup_coordinator.dart';
 class _StartupSnapshot {
   const _StartupSnapshot({
     required this.prefsLoaded,
-    required this.prefs,
+    required this.settings,
     required this.hasAccount,
     required this.hasWorkspace,
     required this.navigatorReady,
@@ -11,7 +11,7 @@ class _StartupSnapshot {
   });
 
   final bool prefsLoaded;
-  final AppPreferences prefs;
+  final ResolvedAppSettings settings;
   final bool hasAccount;
   final bool hasWorkspace;
   final bool navigatorReady;

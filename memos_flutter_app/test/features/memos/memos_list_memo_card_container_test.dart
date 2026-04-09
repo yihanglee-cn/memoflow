@@ -1,3 +1,6 @@
+// ignore_for_file: deprecated_member_use_from_same_package
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,12 +9,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
+import 'package:memos_flutter_app/data/models/attachment.dart';
 import 'package:memos_flutter_app/data/models/content_fingerprint.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/data/models/local_memo.dart';
 import 'package:memos_flutter_app/data/models/location_settings.dart';
 import 'package:memos_flutter_app/data/models/memo_reminder.dart';
 import 'package:memos_flutter_app/data/repositories/location_settings_repository.dart';
+import 'package:memos_flutter_app/features/memos/memo_media_grid.dart';
 import 'package:memos_flutter_app/features/memos/widgets/memos_list_memo_card.dart';
 import 'package:memos_flutter_app/features/memos/widgets/memos_list_memo_card_container.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
@@ -44,7 +49,9 @@ void main() {
     expect(card.syncStatus, MemoSyncStatus.failed);
   });
 
-  testWidgets('pending outbox status overrides memo sync error', (tester) async {
+  testWidgets('pending outbox status overrides memo sync error', (
+    tester,
+  ) async {
     final memo = _buildMemo(syncState: SyncState.error);
 
     await tester.pumpWidget(
@@ -86,37 +93,94 @@ void main() {
     expect(card.reminderText, expectedReminderText);
   });
 
-  testWidgets('inactive audio clears active listenables and forwards callbacks', (
-    tester,
-  ) async {
-    final memo = _buildMemo();
-    var tapCount = 0;
-    var actionCount = 0;
-    var toggleIndex = -1;
+  testWidgets(
+    'inactive audio clears active listenables and forwards callbacks',
+    (tester) async {
+      final memo = _buildMemo();
+      var tapCount = 0;
+      var actionCount = 0;
+      var toggleIndex = -1;
 
-    await tester.pumpWidget(
-      _buildHarness(
-        memo: memo,
-        playingMemoUid: 'other-memo',
-        onTap: () => tapCount++,
-        onAction: (_) => actionCount++,
-        onToggleTask: (index) => toggleIndex = index,
-      ),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _buildHarness(
+          memo: memo,
+          playingMemoUid: 'other-memo',
+          onTap: () => tapCount++,
+          onAction: (_) => actionCount++,
+          onToggleTask: (index) => toggleIndex = index,
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    final card = tester.widget<MemoListCard>(find.byType(MemoListCard));
-    expect(card.audioPositionListenable, isNull);
-    expect(card.audioDurationListenable, isNull);
-    expect(card.onAudioSeek, isNull);
+      final card = tester.widget<MemoListCard>(find.byType(MemoListCard));
+      expect(card.audioPositionListenable, isNull);
+      expect(card.audioDurationListenable, isNull);
+      expect(card.onAudioSeek, isNull);
 
-    card.onTap();
-    card.onAction(MemoCardAction.edit);
-    card.onToggleTask(2);
+      card.onTap();
+      card.onAction(MemoCardAction.edit);
+      card.onToggleTask(2);
 
-    expect(tapCount, 1);
-    expect(actionCount, 1);
-    expect(toggleIndex, 2);
+      expect(tapCount, 1);
+      expect(actionCount, 1);
+      expect(toggleIndex, 2);
+    },
+  );
+
+  testWidgets('Windows removing state suppresses media grid', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final memo = _buildMemo(
+        content: 'memo with image',
+        attachments: const <Attachment>[
+          Attachment(
+            name: 'attachments/demo',
+            filename: 'demo.png',
+            type: 'image/png',
+            size: 1,
+            externalLink: 'file:///C:/temp/demo.png',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_buildHarness(memo: memo, removing: true));
+      await tester.pump();
+
+      final card = tester.widget<MemoListCard>(find.byType(MemoListCard));
+      expect(card.mediaEntries, isEmpty);
+      expect(find.byType(MemoMediaGrid), findsNothing);
+      expect(find.byType(Hero), findsNothing);
+      expect(find.byIcon(Icons.more_horiz), findsNothing);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('Windows non-removing state keeps media grid', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      final memo = _buildMemo(
+        content: 'memo with image',
+        attachments: const <Attachment>[
+          Attachment(
+            name: 'attachments/demo',
+            filename: 'demo.png',
+            type: 'image/png',
+            size: 1,
+            externalLink: 'file:///C:/temp/demo.png',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(_buildHarness(memo: memo, removing: false));
+      await tester.pump();
+
+      final card = tester.widget<MemoListCard>(find.byType(MemoListCard));
+      expect(card.mediaEntries, hasLength(1));
+      expect(find.byType(MemoMediaGrid), findsOneWidget);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 }
 
@@ -126,6 +190,7 @@ Widget _buildHarness({
   Map<String, MemoReminder> reminderMap = const <String, MemoReminder>{},
   ReminderSettings? reminderSettings,
   String? playingMemoUid,
+  bool removing = false,
   VoidCallback? onTap,
   ValueChanged<MemoCardAction>? onAction,
   ValueChanged<int>? onToggleTask,
@@ -140,7 +205,8 @@ Widget _buildHarness({
         (ref) => _TestAppPreferencesController(ref, prefs),
       ),
       locationSettingsProvider.overrideWith(
-        (ref) => _TestLocationSettingsController(ref, LocationSettings.defaults),
+        (ref) =>
+            _TestLocationSettingsController(ref, LocationSettings.defaults),
       ),
       reminderSettingsProvider.overrideWith(
         (ref) => _TestReminderSettingsController(
@@ -165,7 +231,7 @@ Widget _buildHarness({
                 prefs: prefs,
                 outboxStatus: outboxStatus,
                 tagColors: TagColorLookup(const []),
-                removing: false,
+                removing: removing,
                 searching: false,
                 windowsHeaderSearchExpanded: false,
                 selectedQuickSearchKind: null,
@@ -201,6 +267,7 @@ LocalMemo _buildMemo({
   String uid = 'memo-1',
   String content = 'memo body',
   SyncState syncState = SyncState.synced,
+  List<Attachment> attachments = const <Attachment>[],
 }) {
   final now = DateTime(2024, 1, 2, 3, 4, 5);
   return LocalMemo(
@@ -213,7 +280,7 @@ LocalMemo _buildMemo({
     createTime: now,
     updateTime: now,
     tags: const <String>[],
-    attachments: const [],
+    attachments: attachments,
     relationCount: 0,
     syncState: syncState,
     lastError: null,

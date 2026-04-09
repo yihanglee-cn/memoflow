@@ -17,7 +17,7 @@ import '../../core/app_localization.dart';
 import '../../core/debug_ephemeral_storage.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../i18n/strings.g.dart';
 import 'android_quick_spectrum_recorder.dart';
 import 'quick_spectrum_animator.dart';
@@ -761,7 +761,7 @@ class _VoiceRecordScreenState extends ConsumerState<VoiceRecordScreen>
 
     try {
       final size = file.lengthSync();
-      final language = ref.read(appPreferencesProvider).language;
+      final language = ref.read(devicePreferencesProvider).language;
       final content = trByLanguageKey(
         language: language,
         key: 'legacy.msg_voice_memo',

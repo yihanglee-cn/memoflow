@@ -73,8 +73,23 @@ enum LaunchAction {
   }
 }
 
+enum HomeQuickAction {
+  monthlyStats,
+  aiSummary,
+  dailyReview,
+  explore,
+  notifications,
+  resources,
+  archived,
+}
+
 enum AppOnboardingMode { local, server }
 
+/// Legacy compatibility DTO used for migration and boundary adapters.
+///
+/// New runtime preference code should read and write
+/// `DevicePreferences`, `WorkspacePreferences`, or `ResolvedAppSettings`
+/// instead of depending on this mixed-scope model directly.
 class AppPreferences {
   static const Object _unset = Object();
   static final defaults = AppPreferences(
@@ -106,6 +121,9 @@ class AppPreferences {
     showDrawerAiSummary: true,
     showDrawerResources: true,
     showDrawerArchive: true,
+    homeQuickActionPrimary: HomeQuickAction.monthlyStats,
+    homeQuickActionSecondary: HomeQuickAction.aiSummary,
+    homeQuickActionTertiary: HomeQuickAction.dailyReview,
     aiSummaryAllowPrivateMemos: false,
     thirdPartyShareEnabled: false,
     windowsCloseToTray: true,
@@ -155,6 +173,9 @@ class AppPreferences {
     required this.showDrawerAiSummary,
     required this.showDrawerResources,
     required this.showDrawerArchive,
+    required this.homeQuickActionPrimary,
+    required this.homeQuickActionSecondary,
+    required this.homeQuickActionTertiary,
     required this.aiSummaryAllowPrivateMemos,
     required this.thirdPartyShareEnabled,
     required this.windowsCloseToTray,
@@ -195,6 +216,9 @@ class AppPreferences {
   final bool showDrawerAiSummary;
   final bool showDrawerResources;
   final bool showDrawerArchive;
+  final HomeQuickAction homeQuickActionPrimary;
+  final HomeQuickAction homeQuickActionSecondary;
+  final HomeQuickAction homeQuickActionTertiary;
   final bool aiSummaryAllowPrivateMemos;
   final bool thirdPartyShareEnabled;
   final bool windowsCloseToTray;
@@ -207,6 +231,10 @@ class AppPreferences {
   final int lastSeenAnnouncementId;
   final String lastSeenNoticeHash;
 
+  @Deprecated(
+    'Use ResolvedAppSettings.resolvedThemeColor or '
+    'WorkspacePreferences.themeColorOverride with DevicePreferences.themeColor.',
+  )
   AppThemeColor resolveThemeColor(String? accountKey) {
     if (accountKey != null) {
       final stored = accountThemeColors[accountKey];
@@ -215,6 +243,10 @@ class AppPreferences {
     return themeColor;
   }
 
+  @Deprecated(
+    'Use ResolvedAppSettings.resolvedCustomTheme or '
+    'WorkspacePreferences.customThemeOverride with DevicePreferences.customTheme.',
+  )
   CustomThemeSettings resolveCustomTheme(String? accountKey) {
     if (accountKey != null) {
       final stored = accountCustomThemes[accountKey];
@@ -256,6 +288,9 @@ class AppPreferences {
     'showDrawerAiSummary': showDrawerAiSummary,
     'showDrawerResources': showDrawerResources,
     'showDrawerArchive': showDrawerArchive,
+    'homeQuickActionPrimary': homeQuickActionPrimary.name,
+    'homeQuickActionSecondary': homeQuickActionSecondary.name,
+    'homeQuickActionTertiary': homeQuickActionTertiary.name,
     'aiSummaryAllowPrivateMemos': aiSummaryAllowPrivateMemos,
     'thirdPartyShareEnabled': thirdPartyShareEnabled,
     'windowsCloseToTray': windowsCloseToTray,
@@ -500,6 +535,17 @@ class AppPreferences {
       return MemoToolbarPreferences.fromJson(json['memoToolbarPreferences']);
     }
 
+    HomeQuickAction parseHomeQuickAction(String key, HomeQuickAction fallback) {
+      final raw = json[key];
+      if (raw is String) {
+        return HomeQuickAction.values.firstWhere(
+          (value) => value.name == raw,
+          orElse: () => fallback,
+        );
+      }
+      return fallback;
+    }
+
     final parsedFamily = parseFontFamily();
     final parsedFile = parseFontFile();
     final parsedCustomTheme = parseCustomTheme();
@@ -583,6 +629,18 @@ class AppPreferences {
         'showDrawerArchive',
         AppPreferences.defaults.showDrawerArchive,
       ),
+      homeQuickActionPrimary: parseHomeQuickAction(
+        'homeQuickActionPrimary',
+        AppPreferences.defaults.homeQuickActionPrimary,
+      ),
+      homeQuickActionSecondary: parseHomeQuickAction(
+        'homeQuickActionSecondary',
+        AppPreferences.defaults.homeQuickActionSecondary,
+      ),
+      homeQuickActionTertiary: parseHomeQuickAction(
+        'homeQuickActionTertiary',
+        AppPreferences.defaults.homeQuickActionTertiary,
+      ),
       aiSummaryAllowPrivateMemos: parseBool(
         'aiSummaryAllowPrivateMemos',
         AppPreferences.defaults.aiSummaryAllowPrivateMemos,
@@ -634,6 +692,9 @@ class AppPreferences {
     bool? showDrawerAiSummary,
     bool? showDrawerResources,
     bool? showDrawerArchive,
+    HomeQuickAction? homeQuickActionPrimary,
+    HomeQuickAction? homeQuickActionSecondary,
+    HomeQuickAction? homeQuickActionTertiary,
     bool? aiSummaryAllowPrivateMemos,
     bool? thirdPartyShareEnabled,
     bool? windowsCloseToTray,
@@ -685,6 +746,12 @@ class AppPreferences {
       showDrawerAiSummary: showDrawerAiSummary ?? this.showDrawerAiSummary,
       showDrawerResources: showDrawerResources ?? this.showDrawerResources,
       showDrawerArchive: showDrawerArchive ?? this.showDrawerArchive,
+      homeQuickActionPrimary:
+          homeQuickActionPrimary ?? this.homeQuickActionPrimary,
+      homeQuickActionSecondary:
+          homeQuickActionSecondary ?? this.homeQuickActionSecondary,
+      homeQuickActionTertiary:
+          homeQuickActionTertiary ?? this.homeQuickActionTertiary,
       aiSummaryAllowPrivateMemos:
           aiSummaryAllowPrivateMemos ?? this.aiSummaryAllowPrivateMemos,
       thirdPartyShareEnabled:

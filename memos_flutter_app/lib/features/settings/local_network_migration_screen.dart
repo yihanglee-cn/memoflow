@@ -5,7 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/memoflow_palette.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import 'migration/memoflow_migration_role_screen.dart';
 import 'memoflow_bridge_screen.dart';
 
@@ -32,7 +32,7 @@ class LocalNetworkMigrationScreen extends ConsumerWidget {
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void haptic() {

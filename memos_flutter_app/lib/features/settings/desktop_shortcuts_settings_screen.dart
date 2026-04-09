@@ -6,7 +6,7 @@ import '../../core/desktop/shortcuts.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 
 String _desktopShortcutActionLabel(
   BuildContext context,
@@ -64,7 +64,7 @@ class DesktopShortcutsSettingsScreen extends ConsumerWidget {
     WidgetRef ref, {
     required DesktopShortcutAction action,
   }) async {
-    final prefs = ref.read(appPreferencesProvider);
+    final prefs = ref.read(devicePreferencesProvider);
     final current =
         prefs.desktopShortcutBindings[action] ??
         desktopShortcutDefaultBindings[action]!;
@@ -75,7 +75,7 @@ class DesktopShortcutsSettingsScreen extends ConsumerWidget {
     );
     if (!context.mounted || captured == null) return;
 
-    final all = ref.read(appPreferencesProvider).desktopShortcutBindings;
+    final all = ref.read(devicePreferencesProvider).desktopShortcutBindings;
     for (final entry in all.entries) {
       if (entry.key == action) continue;
       if (entry.value == captured) {
@@ -91,7 +91,7 @@ class DesktopShortcutsSettingsScreen extends ConsumerWidget {
     }
 
     ref
-        .read(appPreferencesProvider.notifier)
+        .read(devicePreferencesProvider.notifier)
         .setDesktopShortcutBinding(action: action, binding: captured);
   }
 
@@ -105,7 +105,7 @@ class DesktopShortcutsSettingsScreen extends ConsumerWidget {
     required Color textMuted,
   }) {
     final bindings = ref.watch(
-      appPreferencesProvider.select((p) => p.desktopShortcutBindings),
+      devicePreferencesProvider.select((p) => p.desktopShortcutBindings),
     );
     return _Group(
       card: card,
@@ -166,7 +166,7 @@ class DesktopShortcutsSettingsScreen extends ConsumerWidget {
             onPressed: isDesktop
                 ? () {
                     ref
-                        .read(appPreferencesProvider.notifier)
+                        .read(devicePreferencesProvider.notifier)
                         .resetDesktopShortcutBindings();
                     showTopToast(
                       context,

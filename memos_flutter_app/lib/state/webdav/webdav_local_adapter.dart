@@ -5,20 +5,25 @@ import '../../data/models/image_compression_settings.dart';
 import '../../data/models/image_bed_settings.dart';
 import '../../data/models/location_settings.dart';
 import '../../data/models/memo_template_settings.dart';
+import '../../data/models/app_preferences.dart';
 import '../../data/models/compose_draft.dart';
+import '../../data/models/device_preferences.dart';
 import '../../data/models/tag_snapshot.dart';
 import '../../data/models/webdav_settings.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../../data/repositories/ai_settings_repository.dart';
 import '../memos/compose_draft_provider.dart';
 import '../settings/ai_settings_provider.dart';
 import '../settings/app_lock_provider.dart';
+import '../settings/device_preferences_provider.dart';
 import '../settings/image_bed_settings_provider.dart';
 import '../settings/image_compression_settings_provider.dart';
 import '../settings/location_settings_provider.dart';
 import '../settings/memo_template_settings_provider.dart';
 import '../memos/note_draft_provider.dart';
-import '../settings/preferences_provider.dart';
+import '../settings/resolved_preferences_provider.dart';
 import '../settings/reminder_settings_provider.dart';
+import '../settings/workspace_preferences_provider.dart';
 import '../system/session_provider.dart';
 import '../tags/tag_repository.dart';
 import 'webdav_settings_provider.dart';
@@ -34,10 +39,11 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
 
   @override
   Future<WebDavSyncLocalSnapshot> readSnapshot() async {
-    final prefs = _container.read(appPreferencesProvider);
+    final resolvedSettings = _container.read(resolvedAppSettingsProvider);
+    final devicePrefs = _container.read(devicePreferencesProvider);
     final ai = await _container
         .read(aiSettingsRepositoryProvider)
-        .read(language: prefs.language);
+        .read(language: devicePrefs.language);
     final reminder = _container.read(reminderSettingsProvider);
     final imageBed = _container.read(imageBedSettingsProvider);
     final imageCompression = _container.read(imageCompressionSettingsProvider);
@@ -50,7 +56,7 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
         .read(tagRepositoryProvider)
         .readSnapshot();
     return WebDavSyncLocalSnapshot(
-      preferences: prefs,
+      preferences: resolvedSettings.toLegacyAppPreferences(),
       aiSettings: ai,
       reminderSettings: reminder,
       imageBedSettings: imageBed,
@@ -65,9 +71,18 @@ class RiverpodWebDavSyncLocalAdapter implements WebDavSyncLocalAdapter {
 
   @override
   Future<void> applyPreferences(AppPreferences preferences) async {
+    final workspaceKey = currentWorkspaceKey;
+    final devicePrefs = DevicePreferences.fromLegacy(preferences);
+    final workspacePrefs = WorkspacePreferences.fromLegacy(
+      preferences,
+      workspaceKey: workspaceKey,
+    );
     await _container
-        .read(appPreferencesProvider.notifier)
-        .setAll(preferences, triggerSync: false);
+        .read(devicePreferencesProvider.notifier)
+        .setAll(devicePrefs, triggerSync: false);
+    await _container
+        .read(currentWorkspacePreferencesProvider.notifier)
+        .setAll(workspacePrefs, triggerSync: false);
   }
 
   @override

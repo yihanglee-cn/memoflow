@@ -6,18 +6,13 @@ import '../../../core/tag_colors.dart';
 import '../../../i18n/strings.g.dart';
 import '../../../state/memos/memos_providers.dart';
 import '../../../state/tags/tag_color_lookup.dart';
+import '../home_quick_actions.dart';
 
 class MemosListPillRow extends StatelessWidget {
-  const MemosListPillRow({
-    super.key,
-    required this.onWeeklyInsights,
-    required this.onAiSummary,
-    required this.onDailyReview,
-  });
+  const MemosListPillRow({super.key, required this.quickActions})
+    : assert(quickActions.length == 3);
 
-  final VoidCallback onWeeklyInsights;
-  final VoidCallback onAiSummary;
-  final VoidCallback onDailyReview;
+  final List<HomeQuickActionChipData> quickActions;
 
   @override
   Widget build(BuildContext context) {
@@ -37,39 +32,18 @@ class MemosListPillRow extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          MemosListPillButton(
-            icon: Icons.insights,
-            iconColor: MemoFlowPalette.primary,
-            label: context.t.strings.legacy.msg_monthly_stats,
-            onPressed: onWeeklyInsights,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
-          const SizedBox(width: 10),
-          MemosListPillButton(
-            icon: Icons.auto_awesome,
-            iconColor: isDark
-                ? MemoFlowPalette.aiChipBlueDark
-                : MemoFlowPalette.aiChipBlueLight,
-            label: context.t.strings.legacy.msg_ai_summary,
-            onPressed: onAiSummary,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
-          const SizedBox(width: 10),
-          MemosListPillButton(
-            icon: Icons.explore,
-            iconColor: isDark
-                ? MemoFlowPalette.reviewChipOrangeDark
-                : MemoFlowPalette.reviewChipOrangeLight,
-            label: context.t.strings.legacy.msg_random_review,
-            onPressed: onDailyReview,
-            backgroundColor: bgColor,
-            borderColor: borderColor,
-            textColor: textColor,
-          ),
+          for (var index = 0; index < quickActions.length; index++) ...[
+            if (index > 0) const SizedBox(width: 10),
+            MemosListPillButton(
+              icon: quickActions[index].icon,
+              iconColor: quickActions[index].iconColor,
+              label: quickActions[index].label,
+              onPressed: quickActions[index].onPressed,
+              backgroundColor: bgColor,
+              borderColor: borderColor,
+              textColor: textColor,
+            ),
+          ],
         ],
       ),
     );

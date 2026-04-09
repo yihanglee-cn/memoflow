@@ -17,7 +17,7 @@ import '../../core/top_toast.dart';
 import '../../data/repositories/scene_micro_guide_repository.dart';
 import '../../state/memos/memos_list_providers.dart';
 import '../../state/settings/app_lock_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../home/app_drawer.dart';
@@ -273,7 +273,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
       return true;
     }
 
-    if (!_read(appPreferencesProvider).confirmExitOnBack) {
+    if (!_read(devicePreferencesProvider).confirmExitOnBack) {
       _lastBackPressedAt = null;
       dismissTopToast();
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -297,7 +297,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   void navigateDrawer(AppDrawerDestination dest) {
     final context = _context;
-    if (_read(appPreferencesProvider).hapticsEnabled) {
+    if (_read(devicePreferencesProvider).hapticsEnabled) {
       HapticFeedback.selectionClick();
     }
     final hasAccount =
@@ -328,7 +328,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   void openNotifications() {
     final context = _context;
-    if (_read(appPreferencesProvider).hapticsEnabled) {
+    if (_read(devicePreferencesProvider).hapticsEnabled) {
       HapticFeedback.selectionClick();
     }
     final hasAccount =
@@ -345,7 +345,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   void openSyncQueue() {
     final context = _context;
-    if (_read(appPreferencesProvider).hapticsEnabled) {
+    if (_read(devicePreferencesProvider).hapticsEnabled) {
       HapticFeedback.selectionClick();
     }
     Navigator.of(
@@ -703,7 +703,7 @@ class MemosListRouteDelegate extends ChangeNotifier {
 
   void openShortcutOverviewPage() {
     final bindings = normalizeDesktopShortcutBindings(
-      _read(appPreferencesProvider).desktopShortcutBindings,
+      _read(devicePreferencesProvider).desktopShortcutBindings,
     );
     Navigator.of(_context).push(
       MaterialPageRoute<void>(

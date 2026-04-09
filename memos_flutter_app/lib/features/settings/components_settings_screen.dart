@@ -12,7 +12,7 @@ import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/location_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/reminder_scheduler.dart';
 import '../../state/settings/reminder_settings_provider.dart';
 import '../../state/webdav/webdav_settings_provider.dart';
@@ -31,7 +31,7 @@ class ComponentsSettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(appPreferencesProvider);
+    final prefs = ref.watch(devicePreferencesProvider);
     final reminderSettings = ref.watch(reminderSettingsProvider);
     final imageBedSettings = ref.watch(imageBedSettingsProvider);
     final imageCompressionSettings = ref.watch(
@@ -122,7 +122,7 @@ class ComponentsSettingsScreen extends ConsumerWidget {
                 onChanged: (nextValue) async {
                   if (!nextValue) {
                     ref
-                        .read(appPreferencesProvider.notifier)
+                        .read(devicePreferencesProvider.notifier)
                         .setThirdPartyShareEnabled(false);
                     return;
                   }
@@ -131,7 +131,7 @@ class ComponentsSettingsScreen extends ConsumerWidget {
                   );
                   if (!acknowledged) return;
                   ref
-                      .read(appPreferencesProvider.notifier)
+                      .read(devicePreferencesProvider.notifier)
                       .setThirdPartyShareEnabled(true);
                 },
               ),

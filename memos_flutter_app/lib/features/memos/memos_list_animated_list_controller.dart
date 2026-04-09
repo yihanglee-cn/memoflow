@@ -155,10 +155,12 @@ class MemosListAnimatedListController extends ChangeNotifier {
         'toSignature': signature,
         'beforeLength': beforeLength,
         'afterLength': afterLength,
+        'clearedMemoCardKeys': _memoCardKeys.isNotEmpty,
         if (metrics != null) 'pixels': metrics.pixels,
       });
       _listSignature = signature;
       _animatedMemos = filtered;
+      _memoCardKeys.clear();
       _listKey = GlobalKey<SliverAnimatedListState>();
       return;
     }

@@ -7,7 +7,7 @@ import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../data/models/user_setting.dart';
 import '../../state/memos/memos_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../../i18n/strings.g.dart';
@@ -160,7 +160,9 @@ class _UserGeneralSettingsScreenState extends ConsumerState<UserGeneralSettingsS
     final textMain = isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
     final divider = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
-    final hapticsEnabled = ref.watch(appPreferencesProvider.select((p) => p.hapticsEnabled));
+    final hapticsEnabled = ref.watch(
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
+    );
 
     void maybeHaptic() {
       if (hapticsEnabled) {

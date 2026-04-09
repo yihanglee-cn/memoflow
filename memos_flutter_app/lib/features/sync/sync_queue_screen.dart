@@ -10,12 +10,12 @@ import '../../core/memoflow_palette.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
 import '../../core/top_toast.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/settings/memoflow_bridge_settings_provider.dart';
 import '../../state/memos/sync_queue_controller.dart';
 import '../../state/memos/sync_queue_models.dart';
 import '../../state/memos/sync_queue_provider.dart';
 import '../../state/system/logging_provider.dart';
-import '../../state/settings/preferences_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../data/models/local_memo.dart';
 import '../../state/memos/memo_sync_constraints.dart';
@@ -112,7 +112,9 @@ class SyncQueueScreen extends ConsumerWidget {
     if (result is SyncRunQueued) return;
     final syncStatus = ref.read(syncCoordinatorProvider).memos;
     if (syncStatus.running) return;
-    final language = ref.read(appPreferencesProvider.select((p) => p.language));
+    final language = ref.read(
+      devicePreferencesProvider.select((p) => p.language),
+    );
     showSyncFeedback(
       overlayContext: context,
       messengerContext: context,
@@ -133,10 +135,7 @@ class SyncQueueScreen extends ConsumerWidget {
     if (row == null) {
       showTopToast(
         context,
-        context.tr(
-          zh: '本地笔记不存在，无法打开',
-          en: 'The local memo no longer exists.',
-        ),
+        context.tr(zh: '本地笔记不存在，无法打开', en: 'The local memo no longer exists.'),
       );
       return;
     }
@@ -290,12 +289,11 @@ class SyncQueueScreen extends ConsumerWidget {
         (activeQueueAsync.isLoading && activeQueueAsync.valueOrNull == null) ||
         (attentionQueueAsync.isLoading &&
             attentionQueueAsync.valueOrNull == null);
-    final queueError =
-        activeQueueAsync.hasError
-            ? activeQueueAsync.error
-            : attentionQueueAsync.hasError
-            ? attentionQueueAsync.error
-            : null;
+    final queueError = activeQueueAsync.hasError
+        ? activeQueueAsync.error
+        : attentionQueueAsync.hasError
+        ? attentionQueueAsync.error
+        : null;
 
     return PopScope(
       canPop: false,
@@ -415,10 +413,9 @@ class SyncQueueScreen extends ConsumerWidget {
                           activeProgress: null,
                           actionLabel: context.tr(zh: '重试', en: 'Retry'),
                           onDelete: () => _confirmDelete(context, ref, item),
-                          onOpenMemo:
-                              item.memoUid?.trim().isNotEmpty == true
-                                  ? () => _openMemo(context, ref, item)
-                                  : null,
+                          onOpenMemo: item.memoUid?.trim().isNotEmpty == true
+                              ? () => _openMemo(context, ref, item)
+                              : null,
                           onSync: (syncing || bridgeBulkPushing)
                               ? null
                               : () => _retryItem(context, ref, item),
@@ -464,7 +461,8 @@ class SyncQueueScreen extends ConsumerWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: (activeItems.isEmpty || syncing || bridgeBulkPushing)
+                  onPressed:
+                      (activeItems.isEmpty || syncing || bridgeBulkPushing)
                       ? null
                       : () => _syncAll(context, ref),
                   icon: syncing
@@ -521,17 +519,13 @@ String _contentTooLongFailureText(BuildContext context, SyncQueueItem item) {
   final maxChars = tryParseRemoteMemoLengthLimit(item.lastError ?? '');
   if (maxChars != null) {
     return context.tr(
-      zh:
-          '\u5f53\u524d\u670d\u52a1\u5668\u9650\u5236\u4e3a $maxChars \u4e2a\u5b57\u7b26\uff0c\u8bf7\u5148\u8c03\u6574\u670d\u52a1\u7aef\u957f\u5ea6\u4e0a\u9650\u540e\u518d\u91cd\u8bd5\uff1b\u5982\u679c\u4f60\u65e0\u6cd5\u4fee\u6539\u670d\u52a1\u7aef\uff0c\u518d\u8003\u8651\u7f29\u77ed\u5185\u5bb9\u3002',
-      en:
-          'The current server limit is $maxChars characters. Increase the server memo length limit and retry. If you cannot change the server, shorten this memo and retry.',
+      zh: '\u5f53\u524d\u670d\u52a1\u5668\u9650\u5236\u4e3a $maxChars \u4e2a\u5b57\u7b26\uff0c\u8bf7\u5148\u8c03\u6574\u670d\u52a1\u7aef\u957f\u5ea6\u4e0a\u9650\u540e\u518d\u91cd\u8bd5\uff1b\u5982\u679c\u4f60\u65e0\u6cd5\u4fee\u6539\u670d\u52a1\u7aef\uff0c\u518d\u8003\u8651\u7f29\u77ed\u5185\u5bb9\u3002',
+      en: 'The current server limit is $maxChars characters. Increase the server memo length limit and retry. If you cannot change the server, shorten this memo and retry.',
     );
   }
   return context.tr(
-    zh:
-        '\u5f53\u524d\u670d\u52a1\u5668\u9650\u5236\u4e86\u5355\u6761\u7b14\u8bb0\u957f\u5ea6\uff0c\u8bf7\u5148\u8c03\u6574\u670d\u52a1\u7aef\u957f\u5ea6\u4e0a\u9650\u540e\u518d\u91cd\u8bd5\uff1b\u5982\u679c\u4f60\u65e0\u6cd5\u4fee\u6539\u670d\u52a1\u7aef\uff0c\u518d\u8003\u8651\u7f29\u77ed\u5185\u5bb9\u3002',
-    en:
-        'This server limits memo length. Increase the server memo length limit and retry. If you cannot change the server, shorten this memo and retry.',
+    zh: '\u5f53\u524d\u670d\u52a1\u5668\u9650\u5236\u4e86\u5355\u6761\u7b14\u8bb0\u957f\u5ea6\uff0c\u8bf7\u5148\u8c03\u6574\u670d\u52a1\u7aef\u957f\u5ea6\u4e0a\u9650\u540e\u518d\u91cd\u8bd5\uff1b\u5982\u679c\u4f60\u65e0\u6cd5\u4fee\u6539\u670d\u52a1\u7aef\uff0c\u518d\u8003\u8651\u7f29\u77ed\u5185\u5bb9\u3002',
+    en: 'This server limits memo length. Increase the server memo length limit and retry. If you cannot change the server, shorten this memo and retry.',
   );
 }
 
@@ -585,9 +579,9 @@ String _actionLabel(BuildContext context, String type) {
     'delete_memo' => context.t.strings.legacy.msg_delete_memo_2,
     'upload_attachment' => context.t.strings.legacy.msg_upload_attachment,
     'delete_attachment' => context.tr(
-        zh: '\u5220\u9664\u9644\u4ef6',
-        en: 'Delete attachment',
-      ),
+      zh: '\u5220\u9664\u9644\u4ef6',
+      en: 'Delete attachment',
+    ),
     _ => context.t.strings.legacy.msg_sync_task,
   };
 }
@@ -979,10 +973,7 @@ class _StatusChip extends StatelessWidget {
     final retrying = state == SyncQueueOutboxState.retry;
     if (failed || quarantined) {
       final failedLabel = attempts > 0
-          ? context.tr(
-              zh: '需处理($attempts)',
-              en: 'Review ($attempts)',
-            )
+          ? context.tr(zh: '需处理($attempts)', en: 'Review ($attempts)')
           : context.tr(zh: '需处理', en: 'Review');
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

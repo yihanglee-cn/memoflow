@@ -18,7 +18,7 @@ import '../../state/memos/memo_sync_constraints.dart';
 import '../../state/system/home_loading_overlay_provider.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/memos/memos_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/memos/stats_providers.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../memos/memos_list_screen.dart';
@@ -54,14 +54,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final forceOverlay = ref.read(homeLoadingOverlayForceProvider);
     _overlayVisible =
         forceOverlay ||
-        !ref.read(appPreferencesProvider).homeInitialLoadingOverlayShown;
+        !ref.read(devicePreferencesProvider).homeInitialLoadingOverlayShown;
     _logOverlayLifecycle(
       'overlay_init',
       context: <String, Object?>{
         'forceOverlay': forceOverlay,
         'overlayVisible': _overlayVisible,
         'persistedShown': ref
-            .read(appPreferencesProvider)
+            .read(devicePreferencesProvider)
             .homeInitialLoadingOverlayShown,
       },
     );
@@ -110,7 +110,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (_overlayShownPersisted) return;
     _overlayShownPersisted = true;
     ref
-        .read(appPreferencesProvider.notifier)
+        .read(devicePreferencesProvider.notifier)
         .setHomeInitialLoadingOverlayShown(true);
   }
 

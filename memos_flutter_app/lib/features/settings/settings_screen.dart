@@ -13,7 +13,7 @@ import '../../core/memoflow_palette.dart';
 import '../../core/url.dart';
 import '../../private_hooks/private_extension_bundle_provider.dart';
 import '../../state/system/local_library_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../memos/memos_list_screen.dart';
 import '../stats/stats_screen.dart';
@@ -105,7 +105,7 @@ class SettingsScreen extends ConsumerWidget
         : Colors.black.withValues(alpha: 0.06);
     final versionStyle = TextStyle(fontSize: 11, color: textMuted);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
     final extensionEntries = [
       ...ref

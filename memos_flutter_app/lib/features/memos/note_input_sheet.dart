@@ -36,7 +36,8 @@ import '../../state/settings/image_bed_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
 import '../../state/memos/compose_draft_provider.dart';
 import '../../state/memos/note_draft_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import '../../state/settings/user_settings_provider.dart';
 import '../../state/memos/note_input_providers.dart';
@@ -1182,7 +1183,7 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
 
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
     final bindings = normalizeDesktopShortcutBindings(
-      ref.read(appPreferencesProvider).desktopShortcutBindings,
+      ref.read(devicePreferencesProvider).desktopShortcutBindings,
     );
     bool matches(DesktopShortcutAction action) {
       return matchesDesktopShortcut(
@@ -2876,7 +2877,9 @@ class _NoteInputSheetState extends ConsumerState<NoteInputSheet> {
     );
     final templateSettings = ref.watch(memoTemplateSettingsProvider);
     final toolbarPreferences = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+      currentWorkspacePreferencesProvider.select(
+        (p) => p.memoToolbarPreferences,
+      ),
     );
     final pendingDraftCount = ref.watch(composeDraftCountProvider);
     final availableTemplates = templateSettings.enabled

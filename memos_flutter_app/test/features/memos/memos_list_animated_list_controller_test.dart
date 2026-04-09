@@ -89,6 +89,7 @@ void main() {
     final controller = MemosListAnimatedListController();
     addTearDown(controller.dispose);
     final memo = _buildMemo(uid: 'memo-1');
+    final originalMemoCardKey = controller.keyFor('memo-1');
 
     controller.syncAnimatedMemos(
       <LocalMemo>[memo],
@@ -128,6 +129,7 @@ void main() {
     );
 
     expect(identical(controller.listKey, originalKey), isFalse);
+    expect(identical(controller.keyFor('memo-1'), originalMemoCardKey), isFalse);
   });
 
   test('syncAnimatedMemos updates memo data when uid list stays stable', () {

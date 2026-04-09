@@ -24,7 +24,7 @@ import 'core/startup_timing.dart';
 import 'application/desktop/desktop_settings_window.dart';
 import 'core/font_loader.dart' as app_font;
 import 'core/memoflow_palette.dart';
-import 'data/models/app_preferences.dart';
+import 'data/models/device_preferences.dart';
 import 'data/models/local_library.dart';
 import 'features/home/main_home_page.dart';
 import 'features/image_editor/i18n.dart';
@@ -39,6 +39,8 @@ import 'presentation/reminders/reminder_tap_handler.dart';
 import 'state/system/local_library_provider.dart';
 import 'state/memos/app_bootstrap_adapter_provider.dart';
 import 'state/memos/app_bootstrap_controller.dart';
+import 'state/settings/device_preferences_provider.dart';
+import 'state/settings/resolved_preferences_provider.dart';
 import 'state/system/session_provider.dart';
 
 class App extends ConsumerStatefulWidget {
@@ -73,7 +75,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
   bool _deferredWidgetRefresh = false;
   bool _deferredResumeSync = false;
 
-  Future<void> _ensureFontLoaded(AppPreferences prefs) async {
+  Future<void> _ensureFontLoaded(DevicePreferences prefs) async {
     await _fontLoader.ensureLoaded(
       prefs,
       onLoaded: () {
@@ -247,8 +249,11 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       reminderTapHandler: ReminderTapHandlerImpl(_navigatorKey).handle,
       scheduleDesktopSubWindowPrewarm: _desktopWindowManager.schedulePrewarm,
     );
-    _prefsLoadedSub = _bootstrapAdapter.listenPreferencesLoaded(ref, (previous, nextValue) {
-      if (!mounted) return;
+    _prefsLoadedSub = ref.listenManual<bool>(devicePreferencesLoadedProvider, (
+      previous,
+      nextValue,
+    ) {
+      if (!mounted || !nextValue) return;
       _startupCoordinator.onPrefsLoaded(source: 'prefs_loaded');
     });
     _sessionSub = _bootstrapAdapter.listenSession(ref, (previous, nextValue) {
@@ -296,16 +301,17 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       _loggedAppBuildStart = true;
       StartupTiming.markStep('app_build_start');
     }
-    final prefs = _bootstrapAdapter.watchPreferences(ref);
-    final prefsLoaded = _bootstrapAdapter.watchPreferencesLoaded(ref);
+    ref.watch(preferencesMigrationBootstrapProvider);
+    final devicePrefs = _bootstrapAdapter.watchDevicePreferences(ref);
+    final resolvedSettings = _bootstrapAdapter.watchResolvedAppSettings(ref);
+    final prefsLoaded = _bootstrapAdapter.watchDevicePreferencesLoaded(ref);
     final session = _bootstrapAdapter.watchSession(ref).valueOrNull;
-    final accountKey = session?.currentKey;
-    final themeColor = prefs.resolveThemeColor(accountKey);
-    final customTheme = prefs.resolveCustomTheme(accountKey);
+    final themeColor = resolvedSettings.resolvedThemeColor;
+    final customTheme = resolvedSettings.resolvedCustomTheme;
     MemoFlowPalette.applyThemeColor(themeColor, customTheme: customTheme);
-    final themeMode = themeModeFor(prefs.themeMode);
+    final themeMode = themeModeFor(devicePrefs.themeMode);
     final loggerService = _bootstrapAdapter.watchLoggerService(ref);
-    final appLocale = appLocaleForLanguage(prefs.language);
+    final appLocale = appLocaleForLanguage(devicePrefs.language);
     if (_activeLocale != appLocale) {
       LocaleSettings.setLocale(appLocale);
       _activeLocale = appLocale;
@@ -313,12 +319,13 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
     final screenshotModeEnabled = kDebugMode
         ? _bootstrapAdapter.watchDebugScreenshotMode(ref)
         : false;
-    final scale = textScaleFor(prefs.fontSize);
+    final scale = textScaleFor(devicePrefs.fontSize);
     final blurDesktopMainWindow = _desktopWindowManager.shouldBlurMainWindow;
     if (blurDesktopMainWindow) {
       _desktopWindowManager.scheduleVisibilitySync();
     }
-    ImageEditorI18n.apply(prefs.language);
+    ImageEditorI18n.apply(devicePrefs.language);
+    final deviceLegacyPrefs = devicePrefs.toLegacyAppPreferences();
 
     if (prefsLoaded) {
       _updateAnnouncementRunner.scheduleIfNeeded(ref);
@@ -330,7 +337,7 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       prefsLoaded: prefsLoaded,
       hasWorkspace: hasWorkspace,
       hasAccount: hasAccount,
-      prefs: prefs,
+      settings: resolvedSettings,
       source: 'build',
     );
 
@@ -338,10 +345,13 @@ class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
       child: MaterialApp(
         title: 'MemoFlow',
         debugShowCheckedModeBanner: !screenshotModeEnabled,
-        theme: applyPreferencesToTheme(buildAppTheme(Brightness.light), prefs),
+        theme: applyPreferencesToTheme(
+          buildAppTheme(Brightness.light),
+          deviceLegacyPrefs,
+        ),
         darkTheme: applyPreferencesToTheme(
           buildAppTheme(Brightness.dark),
-          prefs,
+          deviceLegacyPrefs,
         ),
         scrollBehavior: const MaterialScrollBehavior().copyWith(
           dragDevices: {

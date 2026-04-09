@@ -14,7 +14,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/image_formats.dart';
 import '../../core/image_error_logger.dart';
 import '../../core/log_sanitizer.dart';
+import '../../core/memo_content_diagnostics.dart';
 import '../../core/tags.dart';
+import '../../data/logs/log_manager.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import 'memo_image_src_normalizer.dart';
@@ -56,6 +58,7 @@ const Set<String> _htmlBlockTags = {
 
 const double _defaultLineHeight = 1.4;
 final MemoRenderPipeline _memoRenderPipeline = MemoRenderPipeline();
+final Set<String> _memoMarkdownDiagnosticLogKeys = <String>{};
 
 const int _markdownImageMaxDecodePx = 2048;
 
@@ -149,6 +152,14 @@ class MemoMarkdown extends StatelessWidget {
     );
     final contentText = artifact.content;
     if (contentText.trim().isEmpty) return const SizedBox.shrink();
+    _logMemoMarkdownDiagnostics(
+      contentText,
+      cacheKey: cacheKey,
+      renderImages: renderImages,
+      selectable: selectable,
+      maxLines: this.maxLines,
+      normalizeHeadings: normalizeHeadings,
+    );
 
     final theme = Theme.of(context);
     final baseStyle =
@@ -421,6 +432,13 @@ class MemoMarkdown extends StatelessWidget {
         if (rawSrc == null) return null;
         final src = normalizeMarkdownImageSrc(rawSrc);
         if (src.isEmpty) return null;
+        if (!renderImages) {
+          _logMemoMarkdownHtmlImageWhileDisabled(
+            contentText,
+            cacheKey: cacheKey,
+            src: src,
+          );
+        }
 
         final uri = Uri.tryParse(src);
         final scheme = uri?.scheme.toLowerCase() ?? '';
@@ -699,11 +717,11 @@ class MemoMarkdown extends StatelessWidget {
       },
     );
 
-    final maxLines = this.maxLines;
-    if (maxLines != null && maxLines > 0) {
+    final effectiveMaxLines = this.maxLines;
+    if (effectiveMaxLines != null && effectiveMaxLines > 0) {
       final fontSize = baseStyle.fontSize ?? 14;
       final lineHeight = baseStyle.height ?? _defaultLineHeight;
-      final maxHeight = fontSize * lineHeight * maxLines;
+      final maxHeight = fontSize * lineHeight * effectiveMaxLines;
       content = ClipRect(
         child: SizedBox(
           height: maxHeight,
@@ -720,6 +738,68 @@ class MemoMarkdown extends StatelessWidget {
     if (!selectable) return content;
     return SelectionArea(child: content);
   }
+}
+
+void _logMemoMarkdownDiagnostics(
+  String content, {
+  required String? cacheKey,
+  required bool renderImages,
+  required bool selectable,
+  required int? maxLines,
+  required bool normalizeHeadings,
+}) {
+  if (!shouldLogMemoContentDiagnostics(content)) {
+    return;
+  }
+  final key = cacheKey?.trim().isNotEmpty == true
+      ? 'memo_md:${cacheKey!.trim()}'
+      : 'memo_md:${LogSanitizer.fingerprint(content)}';
+  if (!_memoMarkdownDiagnosticLogKeys.add(key)) {
+    return;
+  }
+  if (_memoMarkdownDiagnosticLogKeys.length > 240) {
+    _memoMarkdownDiagnosticLogKeys.remove(_memoMarkdownDiagnosticLogKeys.first);
+  }
+  LogManager.instance.info(
+    'MemoMarkdown diagnostics',
+    context: <String, Object?>{
+      ...buildMemoContentDiagnostics(content, cacheKey: cacheKey),
+      'renderImages': renderImages,
+      'selectable': selectable,
+      'maxLines': maxLines,
+      'normalizeHeadings': normalizeHeadings,
+    },
+  );
+}
+
+void _logMemoMarkdownHtmlImageWhileDisabled(
+  String content, {
+  required String? cacheKey,
+  required String src,
+}) {
+  final key = [
+    'memo_md_html_img_disabled',
+    cacheKey?.trim().isNotEmpty == true
+        ? cacheKey!.trim()
+        : LogSanitizer.fingerprint(content),
+    LogSanitizer.fingerprint(src),
+  ].join('|');
+  if (!_memoMarkdownDiagnosticLogKeys.add(key)) {
+    return;
+  }
+  if (_memoMarkdownDiagnosticLogKeys.length > 240) {
+    _memoMarkdownDiagnosticLogKeys.remove(_memoMarkdownDiagnosticLogKeys.first);
+  }
+  LogManager.instance.warn(
+    'MemoMarkdown html image rendered while images disabled',
+    context: <String, Object?>{
+      ...buildMemoContentDiagnostics(content, cacheKey: cacheKey),
+      'sourceFingerprint': LogSanitizer.redactWithFingerprint(
+        src,
+        kind: 'source',
+      ),
+    },
+  );
 }
 
 String _rewriteMemoTagLabels(String html, TagColorLookup lookup) {

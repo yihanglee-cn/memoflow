@@ -10,7 +10,7 @@ import '../../core/desktop_quick_input_channel.dart';
 import '../../core/desktop_runtime_role.dart';
 import '../../core/memoflow_palette.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../memos/compose_toolbar_shared.dart';
 import '../memos/memo_toolbar_custom_icon_catalog.dart' as toolbar_icons;
 
@@ -20,9 +20,11 @@ class MemoToolbarSettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+      currentWorkspacePreferencesProvider.select(
+        (p) => p.memoToolbarPreferences,
+      ),
     );
-    final notifier = ref.read(appPreferencesProvider.notifier);
+    final notifier = ref.read(currentWorkspacePreferencesProvider.notifier);
     final runtimeRole = ref.read(desktopRuntimeRoleProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final backgroundColor = isDark

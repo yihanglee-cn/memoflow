@@ -16,7 +16,8 @@ import '../../state/system/debug_log_provider.dart';
 import '../../state/system/debug_screenshot_mode_provider.dart';
 import '../../state/system/login_draft_provider.dart';
 import '../../state/memos/debug_tools_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/system/update_config_provider.dart';
 import '../auth/login_screen.dart';
@@ -666,7 +667,9 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
 
     setState(() => _loginBusy = true);
     final started = DateTime.now();
-    final useLegacyApi = ref.read(appPreferencesProvider).useLegacyApi;
+    final useLegacyApi = ref
+        .read(currentWorkspacePreferencesProvider)
+        .defaultUseLegacyApi;
     _DebugSignInResult? result;
     DioException? lastDio;
     Object? lastError;
@@ -977,7 +980,7 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final prefs = ref.watch(appPreferencesProvider);
+    final workspacePrefs = ref.watch(currentWorkspacePreferencesProvider);
     final session = ref.watch(appSessionProvider).valueOrNull;
     final account = session?.currentAccount;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1080,7 +1083,7 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
                   ),
                   _InfoRow(
                     label: context.t.strings.legacy.msg_legacy_mode,
-                    value: prefs.useLegacyApi ? 'ON' : 'OFF',
+                    value: workspacePrefs.defaultUseLegacyApi ? 'ON' : 'OFF',
                     textMain: textMain,
                     textMuted: textMuted,
                   ),
@@ -1190,7 +1193,7 @@ class _DebugToolsScreenState extends ConsumerState<DebugToolsScreen> {
                     textMuted: textMuted,
                     onTap: () {
                       ref
-                          .read(appPreferencesProvider.notifier)
+                          .read(devicePreferencesProvider.notifier)
                           .setHasSelectedLanguage(false);
                       _logAction('Reset language selection');
                       _showMessage(context.t.strings.legacy.msg_reset_complete);

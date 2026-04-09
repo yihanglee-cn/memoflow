@@ -18,10 +18,12 @@ import '../../core/app_localization.dart';
 import '../../core/desktop/shortcuts.dart';
 import '../../core/drawer_navigation.dart';
 import '../../core/log_sanitizer.dart';
+import '../../core/memo_content_diagnostics.dart';
 import '../../core/memo_template_renderer.dart';
 import '../../core/memoflow_palette.dart';
 import '../../core/sync_error_presenter.dart';
 import '../../core/top_toast.dart';
+import '../../data/models/app_preferences.dart';
 import '../../data/models/compose_draft.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/shortcut.dart';
@@ -34,9 +36,11 @@ import '../../state/memos/memos_providers.dart';
 import '../../state/memos/note_draft_provider.dart';
 import '../../state/memos/search_history_provider.dart';
 import '../../state/settings/app_lock_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/resolved_preferences_provider.dart';
 import '../../state/settings/user_settings_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/system/debug_screenshot_mode_provider.dart';
@@ -46,8 +50,11 @@ import '../../state/system/logging_provider.dart';
 import '../../state/system/scene_micro_guide_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
+import '../explore/explore_screen.dart';
 import '../home/app_drawer.dart';
+import '../notifications/notifications_screen.dart';
 import '../reminders/memo_reminder_editor_screen.dart';
+import '../resources/resources_screen.dart';
 import '../review/ai_summary_screen.dart';
 import '../review/daily_review_screen.dart';
 import '../stats/stats_screen.dart';
@@ -64,6 +71,7 @@ import 'memos_list_audio_playback_coordinator.dart';
 import 'memos_list_desktop_shortcut_delegate.dart';
 import 'memos_list_diagnostics.dart';
 import 'memos_list_header_controller.dart';
+import 'home_quick_actions.dart';
 import 'memos_list_inline_compose_coordinator.dart';
 import 'memos_list_inline_compose_ui_controller.dart';
 import 'memos_list_local_library_coordinator.dart';
@@ -376,7 +384,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
     _desktopShortcutDelegate = MemosListDesktopShortcutDelegate(
       bindingsResolver: () => normalizeDesktopShortcutBindings(
-        ref.read(appPreferencesProvider).desktopShortcutBindings,
+        ref.read(devicePreferencesProvider).desktopShortcutBindings,
       ),
       routeActive: _isDesktopShortcutRouteActive,
       inlineEditorActive: () => _inlineComposeFocusNode.hasFocus,
@@ -660,12 +668,43 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     );
   }
 
+  void _openHomeQuickAction(HomeQuickAction action) {
+    if (ref.read(devicePreferencesProvider).hapticsEnabled) {
+      HapticFeedback.selectionClick();
+    }
+    final hasAccount =
+        ref.read(appSessionProvider).valueOrNull?.currentAccount != null;
+    if (!hasAccount &&
+        (action == HomeQuickAction.explore ||
+            action == HomeQuickAction.notifications)) {
+      showTopToast(
+        context,
+        context.t.strings.legacy.msg_feature_not_available_local_library_mode,
+      );
+      return;
+    }
+
+    final route = switch (action) {
+      HomeQuickAction.monthlyStats => const StatsScreen(),
+      HomeQuickAction.aiSummary => const AiSummaryScreen(),
+      HomeQuickAction.dailyReview => const DailyReviewScreen(),
+      HomeQuickAction.explore => const ExploreScreen(),
+      HomeQuickAction.notifications => const NotificationsScreen(),
+      HomeQuickAction.resources => const ResourcesScreen(),
+      HomeQuickAction.archived => _buildArchivedScreen(),
+    };
+
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => route));
+  }
+
   void _markSceneGuideSeen(SceneMicroGuideId id) {
     unawaited(ref.read(sceneMicroGuideProvider.notifier).markSeen(id));
   }
 
   String _desktopGlobalShortcutsGuideMessage(BuildContext context) {
-    final bindings = ref.read(appPreferencesProvider).desktopShortcutBindings;
+    final bindings = ref
+        .read(devicePreferencesProvider)
+        .desktopShortcutBindings;
     final searchLabel = desktopShortcutGuideBindingLabel(
       bindings,
       DesktopShortcutAction.search,
@@ -1252,7 +1291,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _openTagFromDrawer(String tag) {
-    if (ref.read(appPreferencesProvider).hapticsEnabled) {
+    if (ref.read(devicePreferencesProvider).hapticsEnabled) {
       HapticFeedback.selectionClick();
     }
     closeDrawerThenPushReplacement(
@@ -1440,7 +1479,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _showRefreshSyncFeedback({required bool succeeded}) {
-    final language = ref.read(appPreferencesProvider.select((p) => p.language));
+    final language = ref.read(
+      devicePreferencesProvider.select((p) => p.language),
+    );
     showSyncFeedback(
       overlayContext: context,
       messengerContext: context,
@@ -1474,15 +1515,45 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   }
 
   void _removeMemoWithAnimation(LocalMemo memo) {
+    if (_audioPlaybackCoordinator.playingMemoUid == memo.uid) {
+      unawaited(
+        _audioPlaybackCoordinator.stopActivePlayback(memoUid: memo.uid),
+      );
+    }
     final outboxStatus =
         ref.read(memosListOutboxStatusProvider).valueOrNull ??
         const OutboxMemoStatus.empty();
-    final prefs = ref.read(appPreferencesProvider);
+    final prefs = ref
+        .read(resolvedAppSettingsProvider)
+        .toLegacyAppPreferences();
     final tagColors = ref.read(tagColorLookupProvider);
+    ref
+        .read(logManagerProvider)
+        .info(
+          'Memo delete animation start',
+          context: <String, Object?>{
+            ...buildMemoContentDiagnostics(memo.content, memoUid: memo.uid),
+            'attachmentCount': memo.attachments.length,
+            'attachmentImageCount': memo.attachments
+                .where((attachment) => attachment.type.startsWith('image/'))
+                .length,
+            'attachmentVideoCount': memo.attachments
+                .where((attachment) => attachment.type.startsWith('video/'))
+                .length,
+            'attachmentAudioCount': memo.attachments
+                .where((attachment) => attachment.type.startsWith('audio/'))
+                .length,
+            'isWindows': Platform.isWindows,
+            'searching': _searching,
+            'windowsHeaderSearchExpanded': _windowsHeaderSearchExpanded,
+          },
+        );
     _animatedListController.removeMemoWithAnimation(
       memo,
       builder: (context, animation) => MemosListAnimatedMemoItem(
-        memoCardKey: _animatedListController.keyFor(memo.uid),
+        memoCardKey: GlobalKey<MemoListCardState>(
+          debugLabel: 'removing-${memo.uid}',
+        ),
         memo: memo,
         animation: animation,
         prefs: prefs,
@@ -1629,7 +1700,9 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final tagColorLookup = ref.watch(tagColorLookupProvider);
     final templateSettings = ref.watch(memoTemplateSettingsProvider);
     final toolbarPreferences = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+      currentWorkspacePreferencesProvider.select(
+        (p) => p.memoToolbarPreferences,
+      ),
     );
     final inlineVisibility = _inlineComposeCoordinator.currentVisibility();
     final inlineVisibilityPresentation = _inlineComposeUiController
@@ -1748,12 +1821,16 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     _animatedListController.syncMemoCardKeys(visibleMemos);
     _requestFloatingCollapseRecompute();
 
-    final prefs = ref.watch(appPreferencesProvider);
-    final hapticsEnabled = prefs.hapticsEnabled;
+    final devicePrefs = ref.watch(devicePreferencesProvider);
+    final resolvedSettings = ref.watch(resolvedAppSettingsProvider);
+    final prefs = resolvedSettings.toLegacyAppPreferences();
+    final workspacePrefs = ref.watch(currentWorkspacePreferencesProvider);
+    final hapticsEnabled = devicePrefs.hapticsEnabled;
     final screenshotModeEnabled = kDebugMode
         ? ref.watch(debugScreenshotModeProvider)
         : false;
     final session = ref.watch(appSessionProvider).valueOrNull;
+    final hasAccount = session?.currentAccount != null;
     final sceneGuideState = ref.watch(sceneMicroGuideProvider);
     final guideState = buildMemosListScreenGuideState(
       isAllMemos: _isAllMemos,
@@ -1893,6 +1970,22 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       if (!hapticsEnabled) return;
       HapticFeedback.selectionClick();
     }
+
+    final resolvedQuickActions = resolveHomeQuickActions(
+      rawPrimary: workspacePrefs.homeQuickActionPrimary,
+      rawSecondary: workspacePrefs.homeQuickActionSecondary,
+      rawTertiary: workspacePrefs.homeQuickActionTertiary,
+      hasAccount: hasAccount,
+    );
+    final quickActions = [
+      for (final action in resolvedQuickActions)
+        buildHomeQuickActionChipData(
+          context: context,
+          action: action,
+          isDark: isDark,
+          onPressed: () => _openHomeQuickAction(action),
+        ),
+    ];
 
     final titleChild = MemosListHeaderTitle(
       title: widget.title,
@@ -2147,24 +2240,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         },
         onCollapseFloatingMemo: _collapseActiveMemoFromFloatingButton,
         onScrollToTop: () => unawaited(_handleScrollToTop()),
-        onWeeklyInsights: () {
-          maybeHaptic();
-          Navigator.of(
-            context,
-          ).push(MaterialPageRoute<void>(builder: (_) => const StatsScreen()));
-        },
-        onAiSummary: () {
-          maybeHaptic();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const AiSummaryScreen()),
-          );
-        },
-        onDailyReview: () {
-          maybeHaptic();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const DailyReviewScreen()),
-          );
-        },
+        quickActions: quickActions,
         onMinimize: () => unawaited(_routeDelegate.minimizeDesktopWindow()),
         onToggleMaximize: () =>
             unawaited(_routeDelegate.toggleDesktopWindowMaximize()),

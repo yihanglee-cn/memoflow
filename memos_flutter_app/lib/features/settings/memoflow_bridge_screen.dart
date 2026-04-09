@@ -14,7 +14,7 @@ import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../data/models/memoflow_bridge_settings.dart';
 import '../../state/settings/memoflow_bridge_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../i18n/strings.g.dart';
 
 bool supportsMemoFlowQrScannerOnCurrentPlatform() {
@@ -475,7 +475,7 @@ class _MemoFlowBridgeScreenState extends ConsumerState<MemoFlowBridgeScreen> {
         ? Colors.white.withValues(alpha: 0.08)
         : Colors.black.withValues(alpha: 0.08);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void haptic() {

@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,12 +11,17 @@ import 'package:memos_flutter_app/access_boundary/app_capability.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
+import 'package:memos_flutter_app/data/models/user.dart';
+import 'package:memos_flutter_app/data/models/workspace_preferences.dart';
+import 'package:memos_flutter_app/features/settings/customize_home_shortcuts_screen.dart';
 import 'package:memos_flutter_app/features/settings/settings_screen.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
 import 'package:memos_flutter_app/module_boundary/settings_entry_contribution.dart';
 import 'package:memos_flutter_app/private_hooks/private_extension_bundle.dart';
 import 'package:memos_flutter_app/private_hooks/private_extension_bundle_provider.dart';
+import 'package:memos_flutter_app/state/settings/preferences_migration_service.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/workspace_preferences_provider.dart';
 import 'package:memos_flutter_app/state/system/local_library_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -33,7 +40,11 @@ void main() {
     );
   });
 
-  Widget buildTestApp({PrivateExtensionBundle? bundle}) {
+  Widget buildTestApp({
+    PrivateExtensionBundle? bundle,
+    Widget home = const SettingsScreen(),
+    List<Override> overrides = const [],
+  }) {
     LocaleSettings.setLocale(AppLocale.en);
     return ProviderScope(
       overrides: [
@@ -41,16 +52,20 @@ void main() {
         appPreferencesProvider.overrideWith(
           (ref) => _TestAppPreferencesController(ref),
         ),
+        currentWorkspacePreferencesProvider.overrideWith(
+          (ref) => _TestWorkspacePreferencesController(ref),
+        ),
         currentLocalLibraryProvider.overrideWith((ref) => null),
         if (bundle != null)
           privateExtensionBundleProvider.overrideWithValue(bundle),
+        ...overrides,
       ],
       child: TranslationProvider(
         child: MaterialApp(
           locale: AppLocale.en.flutterLocale,
           supportedLocales: AppLocaleUtils.supportedLocales,
           localizationsDelegates: GlobalMaterialLocalizations.delegates,
-          home: const SettingsScreen(),
+          home: home,
         ),
       ),
     );
@@ -109,6 +124,114 @@ void main() {
       expect(tapped, isTrue);
     },
   );
+
+  testWidgets('customize quick entries screen shows three slots', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(home: const CustomizeHomeShortcutsScreen()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quick Entry 1'), findsOneWidget);
+    expect(find.text('Quick Entry 2'), findsOneWidget);
+    expect(find.text('Quick Entry 3'), findsOneWidget);
+  });
+
+  testWidgets(
+    'customize quick entries shows local-only candidates and disables used actions',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestApp(home: const CustomizeHomeShortcutsScreen()),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Quick Entry 1'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('Explore'), findsNothing);
+      expect(find.text('Notifications'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is RadioListTile<HomeQuickAction>,
+        ),
+        findsNWidgets(5),
+      );
+      final dialogFinder = find.byType(AlertDialog);
+      expect(
+        find.descendant(of: dialogFinder, matching: find.text('AI Summary')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: dialogFinder, matching: find.text('Random Review')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.descendant(of: dialogFinder, matching: find.text('AI Summary')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+
+      await tester.tap(find.text('Attachments'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Attachments'), findsOneWidget);
+    },
+  );
+
+  testWidgets('customize quick entries exposes Explore for signed-in users', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        home: const CustomizeHomeShortcutsScreen(),
+        overrides: [
+          appSessionProvider.overrideWith(
+            (ref) => _TestSessionController(hasAccount: true),
+          ),
+          appPreferencesProvider.overrideWith(
+            (ref) => _TestAppPreferencesController(
+              ref,
+              initial: AppPreferences.defaultsForLanguage(AppLanguage.en),
+            ),
+          ),
+          currentWorkspacePreferencesProvider.overrideWith(
+            (ref) => _TestWorkspacePreferencesController(
+              ref,
+              initial: WorkspacePreferences.defaults,
+            ),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Quick Entry 1'));
+    await tester.pumpAndSettle();
+
+    final dialogFinder = find.byType(AlertDialog);
+    expect(dialogFinder, findsOneWidget);
+    expect(
+      find.descendant(of: dialogFinder, matching: find.text('Explore')),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is RadioListTile<HomeQuickAction>,
+      ),
+      findsNWidgets(7),
+    );
+
+    await tester.tap(
+      find.descendant(of: dialogFinder, matching: find.text('Explore')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Explore'), findsOneWidget);
+  });
 }
 
 class _FakePrivateExtensionBundle implements PrivateExtensionBundle {
@@ -151,9 +274,14 @@ class _DisabledAccessBoundary implements AccessBoundary {
 }
 
 class _TestSessionController extends AppSessionController {
-  _TestSessionController()
+  _TestSessionController({bool hasAccount = false})
     : super(
-        const AsyncValue.data(AppSessionState(accounts: [], currentKey: null)),
+        AsyncValue.data(
+          AppSessionState(
+            accounts: hasAccount ? [_testAccount] : const [],
+            currentKey: hasAccount ? _testAccountKey : null,
+          ),
+        ),
       );
 
   @override
@@ -219,35 +347,90 @@ class _TestSessionController extends AppSessionController {
 }
 
 class _TestAppPreferencesRepository extends AppPreferencesRepository {
-  _TestAppPreferencesRepository()
+  _TestAppPreferencesRepository(this._stored)
     : super(const FlutterSecureStorage(), accountKey: null);
+
+  AppPreferences _stored;
 
   @override
   Future<StorageReadResult<AppPreferences>> readWithStatus() async {
-    return StorageReadResult.success(
-      AppPreferences.defaultsForLanguage(AppLanguage.en),
-    );
+    return StorageReadResult.success(_stored);
   }
 
   @override
   Future<AppPreferences> read() async {
-    return AppPreferences.defaultsForLanguage(AppLanguage.en);
+    return _stored;
   }
 
   @override
-  Future<void> write(AppPreferences prefs) async {}
+  Future<void> write(AppPreferences prefs) async {
+    _stored = prefs;
+  }
 
   @override
   Future<void> clear() async {}
 }
 
 class _TestAppPreferencesController extends AppPreferencesController {
-  _TestAppPreferencesController(Ref ref)
+  _TestAppPreferencesController(Ref ref, {AppPreferences? initial})
     : super(
         ref,
-        _TestAppPreferencesRepository(),
+        _TestAppPreferencesRepository(
+          initial ?? AppPreferences.defaultsForLanguage(AppLanguage.en),
+        ),
         onLoaded: () {
           ref.read(appPreferencesLoadedProvider.notifier).state = true;
         },
-      );
+      ) {
+    state = initial ?? AppPreferences.defaultsForLanguage(AppLanguage.en);
+  }
 }
+
+class _TestWorkspacePreferencesRepository extends WorkspacePreferencesRepository {
+  _TestWorkspacePreferencesRepository(this._stored)
+    : super(
+        PreferencesMigrationService(const FlutterSecureStorage()),
+        workspaceKey: 'test-workspace',
+      );
+
+  WorkspacePreferences _stored;
+
+  @override
+  Future<StorageReadResult<WorkspacePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_stored);
+  }
+
+  @override
+  Future<WorkspacePreferences> read() async {
+    return _stored;
+  }
+
+  @override
+  Future<void> write(WorkspacePreferences prefs) async {
+    _stored = prefs;
+  }
+}
+
+class _TestWorkspacePreferencesController extends WorkspacePreferencesController {
+  _TestWorkspacePreferencesController(Ref ref, {WorkspacePreferences? initial})
+    : super(
+        ref,
+        _TestWorkspacePreferencesRepository(
+          initial ?? WorkspacePreferences.defaults,
+        ),
+        onLoaded: () {
+          ref.read(workspacePreferencesLoadedProvider.notifier).state = true;
+        },
+      ) {
+    state = initial ?? WorkspacePreferences.defaults;
+  }
+}
+
+const _testAccountKey = 'account-1';
+final _testAccount = Account(
+  key: _testAccountKey,
+  baseUrl: Uri.parse('https://example.com'),
+  personalAccessToken: 'token',
+  user: User.empty(),
+  instanceProfile: InstanceProfile.empty(),
+);

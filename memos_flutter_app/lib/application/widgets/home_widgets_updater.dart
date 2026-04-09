@@ -5,10 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/app_localization.dart';
-import '../../core/url.dart';
 import '../../core/theme_colors.dart';
+import '../../core/url.dart';
 import '../../data/db/app_database.dart';
 import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
+import '../../data/models/resolved_app_settings.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 import '../../state/system/session_provider.dart';
 import 'home_widget_service.dart';
@@ -98,7 +100,10 @@ class HomeWidgetsUpdater {
 
   Future<void> _updateDailyReviewWidget(WidgetRef ref) async {
     if (!_isMounted()) return;
-    final prefs = _tryReadPreferences(ref, source: '_updateDailyReviewWidget');
+    final prefs = _tryReadDevicePreferences(
+      ref,
+      source: '_updateDailyReviewWidget',
+    );
     final database = _tryReadDatabase(ref, source: '_updateDailyReviewWidget');
     final session = _tryReadSession(ref, source: '_updateDailyReviewWidget');
     if (prefs == null || database == null) return;
@@ -131,7 +136,10 @@ class HomeWidgetsUpdater {
 
   Future<void> _updateQuickInputWidget(WidgetRef ref) async {
     if (!_isMounted()) return;
-    final prefs = _tryReadPreferences(ref, source: '_updateQuickInputWidget');
+    final prefs = _tryReadDevicePreferences(
+      ref,
+      source: '_updateQuickInputWidget',
+    );
     if (prefs == null) return;
     await HomeWidgetService.updateQuickInputWidget(
       hint: trByLanguageKey(language: prefs.language, key: 'legacy.msg_what_s'),
@@ -140,20 +148,27 @@ class HomeWidgetsUpdater {
 
   Future<void> _updateCalendarWidget(WidgetRef ref) async {
     if (!_isMounted()) return;
-    final prefs = _tryReadPreferences(ref, source: '_updateCalendarWidget');
+    final prefs = _tryReadDevicePreferences(
+      ref,
+      source: '_updateCalendarWidget',
+    );
+    final resolvedSettings = _tryReadResolvedSettings(
+      ref,
+      source: '_updateCalendarWidget',
+    );
     final database = _tryReadDatabase(ref, source: '_updateCalendarWidget');
-    if (prefs == null || database == null) return;
-    final session = _tryReadSession(ref, source: '_updateCalendarWidget');
+    if (prefs == null || resolvedSettings == null || database == null) return;
     final now = DateTime.now();
     final month = DateTime(now.year, now.month);
     final rows = await database.listMemos(state: 'NORMAL', limit: null);
     if (!_isMounted()) return;
-    final themeColor = prefs.resolveThemeColor(session?.currentKey);
     final snapshot = buildCalendarWidgetSnapshot(
       month: month,
       rows: rows,
       language: prefs.language,
-      themeColorArgb: themeColorSpec(themeColor).primary.toARGB32(),
+      themeColorArgb: themeColorSpec(
+        resolvedSettings.resolvedThemeColor,
+      ).primary.toARGB32(),
     );
     final filledDays = snapshot.days
         .where((day) => day.isCurrentMonth && day.intensity > 0)
@@ -199,11 +214,28 @@ class HomeWidgetsUpdater {
     await HomeWidgetService.clearHomeWidgets();
   }
 
-  AppPreferences? _tryReadPreferences(WidgetRef ref, {required String source}) {
+  DevicePreferences? _tryReadDevicePreferences(
+    WidgetRef ref, {
+    required String source,
+  }) {
     try {
-      return _bootstrapAdapter.readPreferences(ref);
+      return _bootstrapAdapter.readDevicePreferences(ref);
     } catch (error) {
-      debugPrint('[HomeWidgetsUpdater] skip $source preferences: $error');
+      debugPrint(
+        '[HomeWidgetsUpdater] skip $source device preferences: $error',
+      );
+      return null;
+    }
+  }
+
+  ResolvedAppSettings? _tryReadResolvedSettings(
+    WidgetRef ref, {
+    required String source,
+  }) {
+    try {
+      return _bootstrapAdapter.readResolvedAppSettings(ref);
+    } catch (error) {
+      debugPrint('[HomeWidgetsUpdater] skip $source resolved settings: $error');
       return null;
     }
   }

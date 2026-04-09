@@ -6,9 +6,12 @@ import 'package:memos_flutter_app/application/app/app_sync_orchestrator.dart';
 import 'package:memos_flutter_app/application/startup/startup_coordinator.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
 import 'package:memos_flutter_app/data/models/app_preferences.dart';
+import 'package:memos_flutter_app/data/models/device_preferences.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/data/models/local_library.dart';
+import 'package:memos_flutter_app/data/models/resolved_app_settings.dart';
 import 'package:memos_flutter_app/data/models/user.dart';
+import 'package:memos_flutter_app/data/models/workspace_preferences.dart';
 import 'package:memos_flutter_app/features/share/share_clip_models.dart';
 import 'package:memos_flutter_app/features/share/share_handler.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
@@ -92,11 +95,34 @@ class FakeBootstrapAdapter extends AppBootstrapAdapter {
   AppSessionState? session;
   LocalLibrary? localLibrary;
 
-  @override
-  AppPreferences readPreferences(WidgetRef ref) => preferences;
+  DevicePreferences get devicePreferences =>
+      DevicePreferences.fromLegacy(preferences);
+
+  WorkspacePreferences get workspacePreferences =>
+      WorkspacePreferences.fromLegacy(
+        preferences,
+        workspaceKey: session?.currentKey ?? localLibrary?.key,
+      );
+
+  ResolvedAppSettings get resolvedSettings => ResolvedAppSettings(
+    device: devicePreferences,
+    workspace: workspacePreferences,
+    workspaceKey: session?.currentKey ?? localLibrary?.key,
+    hasWorkspace: session?.currentAccount != null || localLibrary != null,
+  );
 
   @override
-  bool readPreferencesLoaded(WidgetRef ref) => preferencesLoaded;
+  DevicePreferences readDevicePreferences(WidgetRef ref) => devicePreferences;
+
+  @override
+  bool readDevicePreferencesLoaded(WidgetRef ref) => preferencesLoaded;
+
+  @override
+  WorkspacePreferences readWorkspacePreferences(WidgetRef ref) =>
+      workspacePreferences;
+
+  @override
+  ResolvedAppSettings readResolvedAppSettings(WidgetRef ref) => resolvedSettings;
 
   @override
   AppSessionState? readSession(WidgetRef ref) => session;
@@ -115,10 +141,10 @@ class FakeAppSyncOrchestrator extends AppSyncOrchestrator {
       );
 
   int maybeSyncOnLaunchCount = 0;
-  AppPreferences? lastLaunchPrefs;
+  WorkspacePreferences? lastLaunchPrefs;
 
   @override
-  Future<void> maybeSyncOnLaunch(AppPreferences prefs) async {
+  Future<void> maybeSyncOnLaunch(WorkspacePreferences prefs) async {
     maybeSyncOnLaunchCount += 1;
     lastLaunchPrefs = prefs;
   }

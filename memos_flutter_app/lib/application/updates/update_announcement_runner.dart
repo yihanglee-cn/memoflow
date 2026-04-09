@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
 import '../../data/updates/update_config.dart';
 import '../../features/updates/notice_dialog.dart';
 import '../../features/updates/update_announcement_dialog.dart';
@@ -106,7 +106,7 @@ class UpdateAnnouncementRunner {
     var version = await _resolveAppVersion();
     if (!_isMounted() || version == null || version.isEmpty) return;
 
-    final prefs = _bootstrapAdapter.readPreferences(ref);
+    final prefs = _bootstrapAdapter.readDevicePreferences(ref);
     if (!prefs.hasSelectedLanguage) return;
 
     final config = await _bootstrapAdapter.fetchLatestUpdateConfig(ref);
@@ -136,7 +136,7 @@ class UpdateAnnouncementRunner {
     required WidgetRef ref,
     required UpdateAnnouncementConfig config,
     required String currentVersion,
-    required AppPreferences prefs,
+    required DevicePreferences prefs,
   }) async {
     final nowUtc = DateTime.now().toUtc();
     final publishReady = config.versionInfo.isPublishedAt(nowUtc);
@@ -192,7 +192,7 @@ class UpdateAnnouncementRunner {
   Future<void> _maybeShowNoticeWithConfig({
     required WidgetRef ref,
     required UpdateAnnouncementConfig config,
-    required AppPreferences prefs,
+    required DevicePreferences prefs,
   }) async {
     if (!config.noticeEnabled) return;
     final notice = config.notice;

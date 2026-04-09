@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../../core/memoflow_palette.dart';
+import '../home_quick_actions.dart';
 import 'memos_list_search_widgets.dart';
 import 'memos_list_title_menu.dart';
 
@@ -21,9 +22,7 @@ class MemosListWindowsDesktopTitleBar extends StatelessWidget {
     required this.searchFieldChild,
     this.sortButton,
     required this.onToggleSearch,
-    required this.onWeeklyInsights,
-    required this.onAiSummary,
-    required this.onDailyReview,
+    required this.quickActions,
     required this.onMinimize,
     required this.onToggleMaximize,
     required this.onClose,
@@ -47,9 +46,7 @@ class MemosListWindowsDesktopTitleBar extends StatelessWidget {
   final Widget searchFieldChild;
   final Widget? sortButton;
   final VoidCallback onToggleSearch;
-  final VoidCallback onWeeklyInsights;
-  final VoidCallback onAiSummary;
-  final VoidCallback onDailyReview;
+  final List<HomeQuickActionChipData> quickActions;
   final VoidCallback onMinimize;
   final VoidCallback onToggleMaximize;
   final VoidCallback onClose;
@@ -129,11 +126,7 @@ class MemosListWindowsDesktopTitleBar extends StatelessWidget {
                       child: windowsHeaderSearchExpanded
                           ? searchFieldChild
                           : (showPillActions
-                                ? MemosListPillRow(
-                                    onWeeklyInsights: onWeeklyInsights,
-                                    onAiSummary: onAiSummary,
-                                    onDailyReview: onDailyReview,
-                                  )
+                                ? MemosListPillRow(quickActions: quickActions)
                                 : const SizedBox.shrink()),
                     ),
                   ),

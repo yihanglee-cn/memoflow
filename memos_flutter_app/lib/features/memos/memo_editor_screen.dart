@@ -38,7 +38,7 @@ import '../../state/memos/memo_editor_draft_provider.dart';
 import '../../state/memos/memo_composer_state.dart';
 import '../../state/settings/image_compression_settings_provider.dart';
 import '../../state/settings/memo_template_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/memos/memo_editor_providers.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/system/session_provider.dart';
@@ -2241,7 +2241,9 @@ class _MemoEditorScreenState extends ConsumerState<MemoEditorScreen> {
     final (visibilityLabel, visibilityIcon, visibilityColor) =
         _resolveVisibilityStyle(context, _visibility);
     final toolbarPreferences = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+      currentWorkspacePreferencesProvider.select(
+        (p) => p.memoToolbarPreferences,
+      ),
     );
     final account = ref.watch(appSessionProvider).valueOrNull?.currentAccount;
     final baseUrl = account?.baseUrl;

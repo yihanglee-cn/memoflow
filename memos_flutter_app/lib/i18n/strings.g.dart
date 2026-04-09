@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 7920 (1584 per locale)
+/// Strings: 7940 (1588 per locale)
 ///
-/// Built on 2026-03-31 at 11:11 UTC
+/// Built on 2026-04-07 at 15:20 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -466,6 +466,10 @@ class _StringsStringsLegacyEn {
 	String get msg_comment => 'Comment';
 	String get msg_added_voice_attachment => 'Added voice attachment.';
 	String get msg_customize_sidebar => 'Customize Sidebar';
+	String get msg_customize_quick_entries => 'Customize Quick Entries';
+	String get msg_quick_entry_slot_1 => 'Quick Entry 1';
+	String get msg_quick_entry_slot_2 => 'Quick Entry 2';
+	String get msg_quick_entry_slot_3 => 'Quick Entry 3';
 	String get msg_coffee_add_drumstick => '☕ Coffee it is / add a drumstick';
 	String get msg_pin => 'Pin';
 	String get msg_enter_password_continue => 'Enter password to continue';
@@ -2619,6 +2623,10 @@ class _StringsStringsLegacyDe extends _StringsStringsLegacyEn {
 	@override String get msg_comment => 'Kommentar';
 	@override String get msg_added_voice_attachment => 'Sprachanhang hinzugefügt.';
 	@override String get msg_customize_sidebar => 'Seitenleiste anpassen';
+	@override String get msg_customize_quick_entries => 'Schnellzugriffe anpassen';
+	@override String get msg_quick_entry_slot_1 => 'Schnellzugriff 1';
+	@override String get msg_quick_entry_slot_2 => 'Schnellzugriff 2';
+	@override String get msg_quick_entry_slot_3 => 'Schnellzugriff 3';
 	@override String get msg_coffee_add_drumstick => '☕ Dann eben Kaffee / füge einen Drumstick hinzu';
 	@override String get msg_pin => 'Anheften';
 	@override String get msg_enter_password_continue => 'Passwort eingeben, um fortzufahren';
@@ -4673,6 +4681,10 @@ class _StringsStringsLegacyJa extends _StringsStringsLegacyEn {
 	@override String get msg_comment => 'コメント';
 	@override String get msg_added_voice_attachment => '音声添付を追加しました。';
 	@override String get msg_customize_sidebar => 'サイドバーをカスタマイズ';
+	@override String get msg_customize_quick_entries => 'クイックエントリをカスタマイズ';
+	@override String get msg_quick_entry_slot_1 => 'クイックエントリ 1';
+	@override String get msg_quick_entry_slot_2 => 'クイックエントリ 2';
+	@override String get msg_quick_entry_slot_3 => 'クイックエントリ 3';
 	@override String get msg_coffee_add_drumstick => '☕ コーヒーで / ドラムスティックを追加';
 	@override String get msg_pin => 'ピン留め';
 	@override String get msg_enter_password_continue => '続行するにはパスワードを入力してください';
@@ -6728,6 +6740,10 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override String get msg_comment => '评论';
 	@override String get msg_added_voice_attachment => '已添加录音附件';
 	@override String get msg_customize_sidebar => '自定义侧边栏';
+	@override String get msg_customize_quick_entries => '自定义快捷入口';
+	@override String get msg_quick_entry_slot_1 => '快捷入口 1';
+	@override String get msg_quick_entry_slot_2 => '快捷入口 2';
+	@override String get msg_quick_entry_slot_3 => '快捷入口 3';
 	@override String get msg_coffee_add_drumstick => '☕ 这就是我要的咖啡/加个鸡腿';
 	@override String get msg_pin => '置顶';
 	@override String get msg_enter_password_continue => '请输入密码以继续';
@@ -8881,6 +8897,10 @@ class _StringsStringsLegacyZhHantTw extends _StringsStringsLegacyEn {
 	@override String get msg_comment => '评论';
 	@override String get msg_added_voice_attachment => '已添加录音附件';
 	@override String get msg_customize_sidebar => '自定义侧边栏';
+	@override String get msg_customize_quick_entries => '自定義快捷入口';
+	@override String get msg_quick_entry_slot_1 => '快捷入口 1';
+	@override String get msg_quick_entry_slot_2 => '快捷入口 2';
+	@override String get msg_quick_entry_slot_3 => '快捷入口 3';
 	@override String get msg_coffee_add_drumstick => '☕ 这就是我要的咖啡/加个鸡腿';
 	@override String get msg_pin => '置顶';
 	@override String get msg_enter_password_continue => '请输入密码以继续';
@@ -11011,6 +11031,10 @@ extension on Translations {
 			case 'strings.legacy.msg_comment': return 'Comment';
 			case 'strings.legacy.msg_added_voice_attachment': return 'Added voice attachment.';
 			case 'strings.legacy.msg_customize_sidebar': return 'Customize Sidebar';
+			case 'strings.legacy.msg_customize_quick_entries': return 'Customize Quick Entries';
+			case 'strings.legacy.msg_quick_entry_slot_1': return 'Quick Entry 1';
+			case 'strings.legacy.msg_quick_entry_slot_2': return 'Quick Entry 2';
+			case 'strings.legacy.msg_quick_entry_slot_3': return 'Quick Entry 3';
 			case 'strings.legacy.msg_coffee_add_drumstick': return '☕ Coffee it is / add a drumstick';
 			case 'strings.legacy.msg_pin': return 'Pin';
 			case 'strings.legacy.msg_enter_password_continue': return 'Enter password to continue';
@@ -12645,6 +12669,10 @@ extension on _StringsDe {
 			case 'strings.legacy.msg_comment': return 'Kommentar';
 			case 'strings.legacy.msg_added_voice_attachment': return 'Sprachanhang hinzugefügt.';
 			case 'strings.legacy.msg_customize_sidebar': return 'Seitenleiste anpassen';
+			case 'strings.legacy.msg_customize_quick_entries': return 'Schnellzugriffe anpassen';
+			case 'strings.legacy.msg_quick_entry_slot_1': return 'Schnellzugriff 1';
+			case 'strings.legacy.msg_quick_entry_slot_2': return 'Schnellzugriff 2';
+			case 'strings.legacy.msg_quick_entry_slot_3': return 'Schnellzugriff 3';
 			case 'strings.legacy.msg_coffee_add_drumstick': return '☕ Dann eben Kaffee / füge einen Drumstick hinzu';
 			case 'strings.legacy.msg_pin': return 'Anheften';
 			case 'strings.legacy.msg_enter_password_continue': return 'Passwort eingeben, um fortzufahren';
@@ -14189,6 +14217,10 @@ extension on _StringsJa {
 			case 'strings.legacy.msg_comment': return 'コメント';
 			case 'strings.legacy.msg_added_voice_attachment': return '音声添付を追加しました。';
 			case 'strings.legacy.msg_customize_sidebar': return 'サイドバーをカスタマイズ';
+			case 'strings.legacy.msg_customize_quick_entries': return 'クイックエントリをカスタマイズ';
+			case 'strings.legacy.msg_quick_entry_slot_1': return 'クイックエントリ 1';
+			case 'strings.legacy.msg_quick_entry_slot_2': return 'クイックエントリ 2';
+			case 'strings.legacy.msg_quick_entry_slot_3': return 'クイックエントリ 3';
 			case 'strings.legacy.msg_coffee_add_drumstick': return '☕ コーヒーで / ドラムスティックを追加';
 			case 'strings.legacy.msg_pin': return 'ピン留め';
 			case 'strings.legacy.msg_enter_password_continue': return '続行するにはパスワードを入力してください';
@@ -15733,6 +15765,10 @@ extension on _StringsZhHans {
 			case 'strings.legacy.msg_comment': return '评论';
 			case 'strings.legacy.msg_added_voice_attachment': return '已添加录音附件';
 			case 'strings.legacy.msg_customize_sidebar': return '自定义侧边栏';
+			case 'strings.legacy.msg_customize_quick_entries': return '自定义快捷入口';
+			case 'strings.legacy.msg_quick_entry_slot_1': return '快捷入口 1';
+			case 'strings.legacy.msg_quick_entry_slot_2': return '快捷入口 2';
+			case 'strings.legacy.msg_quick_entry_slot_3': return '快捷入口 3';
 			case 'strings.legacy.msg_coffee_add_drumstick': return '☕ 这就是我要的咖啡/加个鸡腿';
 			case 'strings.legacy.msg_pin': return '置顶';
 			case 'strings.legacy.msg_enter_password_continue': return '请输入密码以继续';
@@ -17367,6 +17403,10 @@ extension on _StringsZhHantTw {
 			case 'strings.legacy.msg_comment': return '评论';
 			case 'strings.legacy.msg_added_voice_attachment': return '已添加录音附件';
 			case 'strings.legacy.msg_customize_sidebar': return '自定义侧边栏';
+			case 'strings.legacy.msg_customize_quick_entries': return '自定義快捷入口';
+			case 'strings.legacy.msg_quick_entry_slot_1': return '快捷入口 1';
+			case 'strings.legacy.msg_quick_entry_slot_2': return '快捷入口 2';
+			case 'strings.legacy.msg_quick_entry_slot_3': return '快捷入口 3';
 			case 'strings.legacy.msg_coffee_add_drumstick': return '☕ 这就是我要的咖啡/加个鸡腿';
 			case 'strings.legacy.msg_pin': return '置顶';
 			case 'strings.legacy.msg_enter_password_continue': return '请输入密码以继续';

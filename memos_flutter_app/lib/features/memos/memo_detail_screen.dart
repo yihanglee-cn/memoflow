@@ -27,7 +27,8 @@ import '../../data/models/reaction.dart';
 import '../../data/models/user.dart';
 import '../../state/memos/memo_detail_providers.dart';
 import '../../state/memos/memos_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/settings/location_settings_provider.dart';
@@ -593,10 +594,26 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
     final attachAuthForSameOriginAbsolute = isServerVersion021(serverVersion);
     final token = account?.personalAccessToken ?? '';
     final authHeader = token.trim().isEmpty ? null : 'Bearer $token';
-    final prefs = ref.watch(appPreferencesProvider);
-    final hapticsEnabled = prefs.hapticsEnabled;
+    final hapticsEnabled = ref.watch(
+      devicePreferencesProvider.select((prefs) => prefs.hapticsEnabled),
+    );
+    final collapseLongContent = ref.watch(
+      currentWorkspacePreferencesProvider.select(
+        (prefs) => prefs.collapseLongContent,
+      ),
+    );
+    final collapseReferences = ref.watch(
+      currentWorkspacePreferencesProvider.select(
+        (prefs) => prefs.collapseReferences,
+      ),
+    );
+    final showEngagementInAllMemoDetails = ref.watch(
+      currentWorkspacePreferencesProvider.select(
+        (prefs) => prefs.showEngagementInAllMemoDetails,
+      ),
+    );
     final shouldShowEngagement =
-        widget.showEngagement || prefs.showEngagementInAllMemoDetails;
+        widget.showEngagement || showEngagementInAllMemoDetails;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final cardColor = isDark
         ? MemoFlowPalette.cardDark
@@ -671,7 +688,7 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
 
     final contentWidget = _CollapsibleText(
       text: memo.content,
-      collapseEnabled: prefs.collapseLongContent,
+      collapseEnabled: collapseLongContent,
       initiallyExpanded: true,
       style: contentStyle,
       hapticsEnabled: hapticsEnabled,
@@ -688,7 +705,7 @@ class _MemoDetailScreenState extends ConsumerState<MemoDetailScreen> {
               unawaited(
                 _toggleTask(
                   request,
-                  skipReferenceLines: prefs.collapseReferences,
+                  skipReferenceLines: collapseReferences,
                 ),
               );
             }

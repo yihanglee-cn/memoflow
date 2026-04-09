@@ -13,7 +13,7 @@ import '../../state/system/database_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/system/notifications_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/memos/stats_providers.dart';
 import '../../state/tags/tag_color_lookup.dart';
@@ -169,7 +169,7 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
     final tagsAsync = ref.watch(tagStatsProvider);
     final tagColors = ref.watch(tagColorLookupProvider);
     final drawerPrefs = ref.watch(
-      appPreferencesProvider.select(
+      currentWorkspacePreferencesProvider.select(
         (prefs) => (
           showDrawerExplore: prefs.showDrawerExplore,
           showDrawerDailyReview: prefs.showDrawerDailyReview,

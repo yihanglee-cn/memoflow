@@ -304,6 +304,18 @@ class MemosListAudioPlaybackCoordinator extends ChangeNotifier {
     }
   }
 
+  Future<void> stopActivePlayback({String? memoUid}) async {
+    if (_disposed || _playingMemoUid == null) return;
+    if (memoUid != null && _playingMemoUid != memoUid) return;
+    try {
+      await _player.stop();
+    } finally {
+      _resetAudioLogState();
+      _resetActivePlaybackState();
+      _notifyChanged();
+    }
+  }
+
   void _handlePlayerState(PlayerState state) {
     if (_disposed) return;
     if (state.playing) {

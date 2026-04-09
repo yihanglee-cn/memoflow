@@ -251,6 +251,35 @@ void main() {
     expect(coordinator.durationListenable.value, isNull);
   });
 
+  test('stopActivePlayback clears active memo when target matches', () async {
+    final container = ProviderContainer();
+    final player = _FakeAudioPlayerAdapter(
+      nextSetFilePathResult: const Duration(seconds: 10),
+    );
+    final coordinator = MemosListAudioPlaybackCoordinator(
+      read: container.read,
+      playerOverride: player,
+      resolveSourceOverride: (_) => const MemosListResolvedAudioSource(
+        url: 'file:///tmp/audio.mp3',
+        localPath: 'C:/tmp/audio.mp3',
+      ),
+    );
+    addTearDown(() async {
+      coordinator.dispose();
+      container.dispose();
+    });
+
+    await coordinator.togglePlayback(_buildMemo());
+    expect(coordinator.playingMemoUid, 'memo-1');
+
+    await coordinator.stopActivePlayback(memoUid: 'memo-1');
+
+    expect(player.stopCallCount, 2);
+    expect(coordinator.playingMemoUid, isNull);
+    expect(coordinator.positionListenable.value, Duration.zero);
+    expect(coordinator.durationListenable.value, isNull);
+  });
+
   test('playback failure resets active state and returns failure result', () async {
     final container = ProviderContainer();
     final error = StateError('play failed');

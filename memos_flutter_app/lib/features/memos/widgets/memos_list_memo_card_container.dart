@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/memo_content_diagnostics.dart';
 import '../../../core/url.dart';
 import '../../../data/models/app_preferences.dart';
 import '../../../data/models/local_memo.dart';
@@ -10,6 +11,7 @@ import '../../../state/memos/memos_list_providers.dart';
 import '../../../state/memos/memos_providers.dart';
 import '../../../state/settings/location_settings_provider.dart';
 import '../../../state/settings/reminder_settings_provider.dart';
+import '../../../state/system/logging_provider.dart';
 import '../../../state/system/reminder_providers.dart';
 import '../../../state/system/reminder_utils.dart';
 import '../../../state/system/session_provider.dart';
@@ -115,6 +117,28 @@ class MemosListMemoCardContainer extends ConsumerWidget {
       images: imageEntries,
       videos: videoEntries,
     );
+    final suppressRemovingMediaOnWindows =
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        removing &&
+        mediaEntries.isNotEmpty;
+    if (suppressRemovingMediaOnWindows) {
+      ref
+          .read(logManagerProvider)
+          .info(
+            'Memo delete animation suppressing media grid on Windows',
+            context: <String, Object?>{
+              ...buildMemoContentDiagnostics(memo.content, memoUid: memo.uid),
+              'attachmentCount': memo.attachments.length,
+              'imageEntryCount': imageEntries.length,
+              'videoEntryCount': videoEntries.length,
+              'mediaEntryCount': mediaEntries.length,
+            },
+          );
+    }
+    final effectiveMediaEntries = suppressRemovingMediaOnWindows
+        ? const <MemoMediaEntry>[]
+        : mediaEntries;
     final locationProvider = ref.watch(
       locationSettingsProvider.select((value) => value.provider),
     );
@@ -142,6 +166,7 @@ class MemosListMemoCardContainer extends ConsumerWidget {
     return MemoListCard(
       key: memoCardKey,
       memo: memo,
+      debugRemoving: removing,
       dateText: _memoDateFormatter.format(displayTime),
       reminderText: reminderText,
       tagColors: tagColors,
@@ -158,7 +183,7 @@ class MemosListMemoCardContainer extends ConsumerWidget {
           ? null
           : audioDurationListenable,
       imageEntries: imageEntries,
-      mediaEntries: mediaEntries,
+      mediaEntries: effectiveMediaEntries,
       locationProvider: locationProvider,
       onAudioSeek: removing || !isAudioActive ? null : onAudioSeek,
       onAudioTap: removing ? null : onAudioTap,

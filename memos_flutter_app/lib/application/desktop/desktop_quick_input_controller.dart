@@ -13,7 +13,7 @@ import '../../core/desktop/shortcuts.dart';
 import '../../core/tags.dart';
 import 'desktop_tray_controller.dart';
 import '../../core/top_toast.dart';
-import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
 import '../../features/memos/link_memo_sheet.dart';
 import '../../i18n/strings.g.dart';
@@ -58,7 +58,7 @@ class DesktopQuickInputController {
   bool _desktopQuickInputWindowOpening = false;
   Future<void>? _desktopQuickInputWindowPrepareTask;
 
-  Future<void> registerHotKey(AppPreferences prefs) async {
+  Future<void> registerHotKey(DevicePreferences prefs) async {
     if (!isDesktopShortcutEnabled()) return;
     final bindings = normalizeDesktopShortcutBindings(
       prefs.desktopShortcutBindings,

@@ -8,7 +8,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
         prefsLoaded: snapshot.prefsLoaded,
         hasWorkspace: snapshot.hasWorkspace,
         hasAccount: snapshot.hasAccount,
-        prefs: snapshot.prefs,
+        settings: snapshot.settings,
         source: source,
       );
     } catch (e, st) {
@@ -32,28 +32,28 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
     }
   }
 
-  _StartupSelection _resolveStartupSelection(AppPreferences prefs) {
+  _StartupSelection _resolveStartupSelection(ResolvedAppSettings settings) {
     return _StartupSelection(
-      action: _selectStartupAction(prefs),
-      reason: _selectStartupReason(prefs),
+      action: _selectStartupAction(settings),
+      reason: _selectStartupReason(settings),
     );
   }
 
-  _StartupAction _selectStartupAction(AppPreferences prefs) {
+  _StartupAction _selectStartupAction(ResolvedAppSettings settings) {
     return StartupCoordinator._startupActionFromName(
       StartupCoordinator.debugSelectStartupActionName(
         hasPendingShare: _pendingSharePayload != null,
         hasPendingWidget: _pendingWidgetLaunch != null,
-        launchAction: prefs.launchAction,
+        launchAction: settings.device.launchAction,
       ),
     );
   }
 
-  String _selectStartupReason(AppPreferences prefs) {
+  String _selectStartupReason(ResolvedAppSettings settings) {
     return StartupCoordinator.debugSelectStartupReason(
       hasPendingShare: _pendingSharePayload != null,
       hasPendingWidget: _pendingWidgetLaunch != null,
-      launchAction: prefs.launchAction,
+      launchAction: settings.device.launchAction,
     );
   }
 
@@ -171,14 +171,14 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
     required bool prefsLoaded,
     required bool hasWorkspace,
     required bool hasAccount,
-    required AppPreferences prefs,
+    required ResolvedAppSettings settings,
     String? source,
     bool force = false,
   }) {
     if (_startupHandled) return;
-    final selection = _resolveStartupSelection(prefs);
+    final selection = _resolveStartupSelection(settings);
     final key =
-        '$prefsLoaded|$hasWorkspace|$hasAccount|${_pendingSharePayload != null}|${_pendingWidgetLaunch != null}|${prefs.launchAction}|${selection.action}';
+        '$prefsLoaded|$hasWorkspace|$hasAccount|${_pendingSharePayload != null}|${_pendingWidgetLaunch != null}|${settings.device.launchAction}|${selection.action}';
     if (!force) {
       if (_startupScheduleKey == key) return;
       _startupScheduleKey = key;
@@ -189,7 +189,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
       prefsLoaded: prefsLoaded,
       hasWorkspace: hasWorkspace,
       hasAccount: hasAccount,
-      prefs: prefs,
+      settings: settings,
       action: selection.action,
       reason: selection.reason,
       retryCount: _startupRetryCount,
@@ -205,7 +205,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: prefsLoaded,
           hasWorkspace: hasWorkspace,
           hasAccount: hasAccount,
-          prefs: prefs,
+          settings: settings,
           action: selection.action,
           reason: 'prefs_not_loaded',
         ),
@@ -221,7 +221,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: prefsLoaded,
           hasWorkspace: hasWorkspace,
           hasAccount: hasAccount,
-          prefs: prefs,
+          settings: settings,
           action: selection.action,
           reason: 'no_workspace',
         ),
@@ -245,7 +245,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
   }
 
   void _handlePrefsLaunchAction(_StartupSnapshot snapshot) {
-    switch (snapshot.prefs.launchAction) {
+    switch (snapshot.settings.device.launchAction) {
       case LaunchAction.dailyReview:
         _appNavigator.openDailyReview();
         break;
@@ -256,7 +256,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
       case LaunchAction.quickInput:
         unawaited(
           openQuickInput(
-            autoFocus: AppPreferences.defaults.quickInputAutoFocus,
+            autoFocus: snapshot.settings.device.quickInputAutoFocus,
           ),
         );
         break;
@@ -345,14 +345,14 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: snapshot.prefsLoaded,
           hasWorkspace: snapshot.hasWorkspace,
           hasAccount: snapshot.hasAccount,
-          prefs: snapshot.prefs,
+          settings: snapshot.settings,
           reason: readinessReason,
         ),
       );
       return;
     }
 
-    final selection = _resolveStartupSelection(snapshot.prefs);
+    final selection = _resolveStartupSelection(snapshot.settings);
     if (_lastStartupAction != null && _lastStartupAction != selection.action) {
       _logStartupDebug(
         'Startup: action_changed',
@@ -361,7 +361,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: snapshot.prefsLoaded,
           hasWorkspace: snapshot.hasWorkspace,
           hasAccount: snapshot.hasAccount,
-          prefs: snapshot.prefs,
+          settings: snapshot.settings,
           action: selection.action,
           reason: selection.reason,
           extra: {'previousAction': _lastStartupAction!.name},
@@ -376,7 +376,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
         prefsLoaded: snapshot.prefsLoaded,
         hasWorkspace: snapshot.hasWorkspace,
         hasAccount: snapshot.hasAccount,
-        prefs: snapshot.prefs,
+        settings: snapshot.settings,
         action: selection.action,
         reason: selection.reason,
       ),
@@ -388,7 +388,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
         prefsLoaded: snapshot.prefsLoaded,
         hasWorkspace: snapshot.hasWorkspace,
         hasAccount: snapshot.hasAccount,
-        prefs: snapshot.prefs,
+        settings: snapshot.settings,
         action: selection.action,
         reason: selection.reason,
         retryCount: _startupRetryCount,
@@ -411,7 +411,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: snapshot.prefsLoaded,
           hasWorkspace: snapshot.hasWorkspace,
           hasAccount: snapshot.hasAccount,
-          prefs: snapshot.prefs,
+          settings: snapshot.settings,
           action: selection.action,
           reason: execution.blockReason ?? block.reason,
         ),
@@ -423,7 +423,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: snapshot.prefsLoaded,
           hasWorkspace: snapshot.hasWorkspace,
           hasAccount: snapshot.hasAccount,
-          prefs: snapshot.prefs,
+          settings: snapshot.settings,
           action: selection.action,
           reason: execution.blockReason ?? block.reason,
           retryCount: _startupRetryCount,
@@ -448,7 +448,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
         prefsLoaded: snapshot.prefsLoaded,
         hasWorkspace: snapshot.hasWorkspace,
         hasAccount: snapshot.hasAccount,
-        prefs: snapshot.prefs,
+        settings: snapshot.settings,
         action: selection.action,
       ),
     );
@@ -459,7 +459,7 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
         prefsLoaded: snapshot.prefsLoaded,
         hasWorkspace: snapshot.hasWorkspace,
         hasAccount: snapshot.hasAccount,
-        prefs: snapshot.prefs,
+        settings: snapshot.settings,
         action: selection.action,
       ),
     );
@@ -471,13 +471,13 @@ extension _StartupCoordinatorDecision on StartupCoordinator {
           prefsLoaded: snapshot.prefsLoaded,
           hasWorkspace: snapshot.hasWorkspace,
           hasAccount: snapshot.hasAccount,
-          prefs: snapshot.prefs,
+          settings: snapshot.settings,
           action: selection.action,
         ),
       );
-      _deferLaunchSync(snapshot.prefs);
+      _deferLaunchSync(snapshot.settings.workspace);
       return;
     }
-    await _syncOrchestrator.maybeSyncOnLaunch(snapshot.prefs);
+    await _syncOrchestrator.maybeSyncOnLaunch(snapshot.settings.workspace);
   }
 }

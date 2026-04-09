@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/memoflow_palette.dart';
+import 'customize_home_shortcuts_screen.dart';
 import 'customize_drawer_screen.dart';
 import 'shortcuts_settings_screen.dart';
 import 'webhooks_settings_screen.dart';
@@ -74,6 +75,23 @@ class LaboratoryScreen extends StatelessWidget {
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => const CustomizeDrawerScreen(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _CardRow(
+                        card: card,
+                        label: context
+                            .t
+                            .strings
+                            .legacy
+                            .msg_customize_quick_entries,
+                        textMain: textMain,
+                        textMuted: textMuted,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                const CustomizeHomeShortcutsScreen(),
                           ),
                         ),
                       ),

@@ -4,16 +4,37 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/memo_content_diagnostics.dart';
 import '../../../core/platform_layout.dart';
 import '../../../core/top_toast.dart';
 import '../../../data/models/app_preferences.dart';
 import '../../../data/models/local_memo.dart';
+import '../../../data/logs/log_manager.dart';
 import '../../../state/memos/memos_list_providers.dart';
 import '../../../state/memos/memos_providers.dart';
 import '../../../state/tags/tag_color_lookup.dart';
 import '../../../i18n/strings.g.dart';
 import 'memos_list_memo_card.dart';
 import 'memos_list_memo_card_container.dart';
+
+final Set<String> _memoDeleteAnimatedItemLogKeys = <String>{};
+
+void _logMemoDeleteAnimatedItemOnce(
+  String message,
+  LocalMemo memo, {
+  Map<String, Object?> context = const <String, Object?>{},
+}) {
+  final key = '$message|${memo.uid}';
+  if (!_memoDeleteAnimatedItemLogKeys.add(key)) return;
+  LogManager.instance.info(
+    message,
+    context: <String, Object?>{
+      ...buildMemoContentDiagnostics(memo.content, memoUid: memo.uid),
+      'attachmentCount': memo.attachments.length,
+      ...context,
+    },
+  );
+}
 
 class MemosListAnimatedMemoItem extends StatelessWidget {
   const MemosListAnimatedMemoItem({
@@ -74,6 +95,19 @@ class MemosListAnimatedMemoItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final curved = CurvedAnimation(parent: animation, curve: Curves.easeInOut);
+    if (!kIsWeb && Platform.isWindows && removing) {
+      _logMemoDeleteAnimatedItemOnce(
+        'Memo delete animated item build',
+        memo,
+        context: <String, Object?>{
+          'animationValue': animation.value.toStringAsFixed(3),
+          'animationStatus': animation.status.name,
+          'curvedValue': curved.value.toStringAsFixed(3),
+          'curvedStatus': curved.status.name,
+          'willConstrainDesktopWidth': true,
+        },
+      );
+    }
     Widget memoCard = MemosListMemoCardContainer(
       memoCardKey: memoCardKey,
       memo: memo,
@@ -126,6 +160,23 @@ class MemosListAnimatedMemoItem extends StatelessWidget {
           ),
           child: memoCard,
         ),
+      );
+    }
+    if (removing) {
+      if (!kIsWeb && Platform.isWindows) {
+        _logMemoDeleteAnimatedItemOnce(
+          'Memo delete animated item wrapped with semantics suppression',
+          memo,
+          context: <String, Object?>{
+            'animationValue': animation.value.toStringAsFixed(3),
+            'animationStatus': animation.status.name,
+            'usingExcludeSemantics': true,
+            'usingIgnorePointer': true,
+          },
+        );
+      }
+      memoCard = ExcludeSemantics(
+        child: IgnorePointer(ignoring: true, child: memoCard),
       );
     }
     return SizeTransition(

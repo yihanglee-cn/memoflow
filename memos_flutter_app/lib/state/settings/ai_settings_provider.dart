@@ -8,7 +8,7 @@ import '../../data/logs/log_manager.dart';
 import '../sync/sync_coordinator_provider.dart';
 import '../../application/sync/sync_request.dart';
 import '../../data/repositories/ai_settings_repository.dart';
-import 'preferences_provider.dart';
+import 'device_preferences_provider.dart';
 import '../system/session_provider.dart';
 
 final aiSettingsRepositoryProvider = Provider<AiSettingsRepository>((ref) {
@@ -34,7 +34,9 @@ class AiSettingsController extends StateNotifier<AiSettings> {
   AiSettingsController(Ref ref, AiSettingsRepository repo)
     : _ref = ref,
       _repo = repo,
-      super(AiSettings.defaultsFor(ref.read(appPreferencesProvider).language)) {
+      super(
+        AiSettings.defaultsFor(ref.read(devicePreferencesProvider).language),
+      ) {
     unawaited(_load());
   }
 
@@ -53,7 +55,7 @@ class AiSettingsController extends StateNotifier<AiSettings> {
     final revisionAtStart = _localRevision;
     try {
       final loaded = await _repo.read(
-        language: _ref.read(appPreferencesProvider).language,
+        language: _ref.read(devicePreferencesProvider).language,
       );
       if (!mounted) return;
       if (_localRevision != revisionAtStart) {

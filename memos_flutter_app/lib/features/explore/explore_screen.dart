@@ -20,13 +20,15 @@ import '../../core/memoflow_palette.dart';
 import '../../core/platform_layout.dart';
 import '../../core/url.dart';
 import '../../data/models/attachment.dart';
+import '../../data/models/app_preferences.dart';
 import '../../data/models/content_fingerprint.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/memo.dart';
 import '../../data/models/reaction.dart';
 import '../../data/models/user.dart';
 import '../../state/memos/memos_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../about/about_screen.dart';
 import '../home/app_drawer.dart';
@@ -1258,7 +1260,6 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final prefs = ref.watch(appPreferencesProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark
         ? MemoFlowPalette.backgroundDark
@@ -1274,9 +1275,19 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final border = isDark
         ? MemoFlowPalette.borderDark.withValues(alpha: 0.7)
         : MemoFlowPalette.borderLight;
-    final hapticsEnabled = prefs.hapticsEnabled;
-    final collapseLongContent = prefs.collapseLongContent;
-    final collapseReferences = prefs.collapseReferences;
+    final hapticsEnabled = ref.watch(
+      devicePreferencesProvider.select((prefs) => prefs.hapticsEnabled),
+    );
+    final collapseLongContent = ref.watch(
+      currentWorkspacePreferencesProvider.select(
+        (prefs) => prefs.collapseLongContent,
+      ),
+    );
+    final collapseReferences = ref.watch(
+      currentWorkspacePreferencesProvider.select(
+        (prefs) => prefs.collapseReferences,
+      ),
+    );
     final account = ref.watch(appSessionProvider).valueOrNull?.currentAccount;
     final commentMemo = _commentingMemoUid == null
         ? null

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:memos_flutter_app/data/models/app_preferences.dart';
+import 'package:memos_flutter_app/features/memos/home_quick_actions.dart';
 import 'package:memos_flutter_app/features/memos/widgets/memos_list_search_widgets.dart';
 import 'package:memos_flutter_app/features/memos/widgets/memos_list_windows_desktop_title_bar.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
@@ -155,9 +157,7 @@ Widget _buildTitleBar({
     searchFieldChild: const SizedBox(key: Key('search-field')),
     sortButton: const SizedBox(key: Key('sort-button')),
     onToggleSearch: onToggleSearch ?? () {},
-    onWeeklyInsights: () {},
-    onAiSummary: () {},
-    onDailyReview: () {},
+    quickActions: _buildQuickActions(),
     onMinimize: onMinimize ?? () {},
     onToggleMaximize: onToggleMaximize ?? () {},
     onClose: onClose ?? () {},
@@ -168,4 +168,30 @@ Widget _buildTitleBar({
     restoreTooltip: 'Restore',
     closeTooltip: 'Close',
   );
+}
+
+List<HomeQuickActionChipData> _buildQuickActions() {
+  return [
+    HomeQuickActionChipData(
+      action: HomeQuickAction.monthlyStats,
+      icon: Icons.insights,
+      label: 'Monthly stats',
+      iconColor: Colors.blue,
+      onPressed: () {},
+    ),
+    HomeQuickActionChipData(
+      action: HomeQuickAction.aiSummary,
+      icon: Icons.auto_awesome,
+      label: 'AI Summary',
+      iconColor: Colors.purple,
+      onPressed: () {},
+    ),
+    HomeQuickActionChipData(
+      action: HomeQuickAction.dailyReview,
+      icon: Icons.explore,
+      label: 'Random Review',
+      iconColor: Colors.orange,
+      onPressed: () {},
+    ),
+  ];
 }

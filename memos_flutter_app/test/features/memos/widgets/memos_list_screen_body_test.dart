@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:memos_flutter_app/data/models/app_preferences.dart';
 import 'package:memos_flutter_app/data/models/memo_template_settings.dart';
+import 'package:memos_flutter_app/features/memos/home_quick_actions.dart';
 import 'package:memos_flutter_app/features/memos/memos_list_screen_view_state.dart';
 import 'package:memos_flutter_app/features/memos/widgets/memos_list_screen_body.dart';
 import 'package:memos_flutter_app/i18n/strings.g.dart';
@@ -160,13 +162,37 @@ Widget _buildBodyScreen({Widget? drawerPanel}) {
     onDismissGuide: () {},
     onCollapseFloatingMemo: () {},
     onScrollToTop: () {},
-    onWeeklyInsights: () {},
-    onAiSummary: () {},
-    onDailyReview: () {},
+    quickActions: _buildQuickActions(),
     onMinimize: () {},
     onToggleMaximize: () {},
     onClose: () {},
     onEditTag: () async {},
     animatedItemBuilder: (_, _, _) => const SizedBox.shrink(),
   );
+}
+
+List<HomeQuickActionChipData> _buildQuickActions() {
+  return [
+    HomeQuickActionChipData(
+      action: HomeQuickAction.monthlyStats,
+      icon: Icons.insights,
+      label: 'Monthly stats',
+      iconColor: Colors.blue,
+      onPressed: () {},
+    ),
+    HomeQuickActionChipData(
+      action: HomeQuickAction.aiSummary,
+      icon: Icons.auto_awesome,
+      label: 'AI Summary',
+      iconColor: Colors.purple,
+      onPressed: () {},
+    ),
+    HomeQuickActionChipData(
+      action: HomeQuickAction.dailyReview,
+      icon: Icons.explore,
+      label: 'Random Review',
+      iconColor: Colors.orange,
+      onPressed: () {},
+    ),
+  ];
 }

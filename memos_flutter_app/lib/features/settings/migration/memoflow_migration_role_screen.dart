@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/memoflow_palette.dart';
 import '../../../i18n/strings.g.dart';
-import '../../../state/settings/preferences_provider.dart';
+import '../../../state/settings/device_preferences_provider.dart';
 import '../../../state/system/local_library_provider.dart';
 import 'memoflow_migration_receiver_screen.dart';
 import 'memoflow_migration_sender_screen.dart';
@@ -28,7 +28,7 @@ class MemoFlowMigrationRoleScreen extends ConsumerWidget {
         : Colors.black.withValues(alpha: 0.06);
     final localLibrary = ref.watch(currentLocalLibraryProvider);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
     final tr = context.t.strings.legacy;
 

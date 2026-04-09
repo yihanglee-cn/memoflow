@@ -29,7 +29,9 @@ import '../../../state/system/logging_provider.dart';
 import '../../../state/system/database_provider.dart';
 import '../../../state/system/session_provider.dart';
 import '../../../state/settings/memo_template_settings_provider.dart';
-import '../../../state/settings/preferences_provider.dart';
+import '../../../state/settings/device_preferences_provider.dart';
+import '../../../state/settings/resolved_preferences_provider.dart';
+import '../../../state/settings/workspace_preferences_provider.dart';
 import '../../memos/attachment_gallery_screen.dart';
 import '../../memos/compose_toolbar_shared.dart';
 import '../../memos/link_memo_sheet.dart';
@@ -44,20 +46,25 @@ class DesktopQuickInputWindowApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(appPreferencesProvider);
-    final appLocale = appLocaleForLanguage(prefs.language);
+    final devicePrefs = ref.watch(devicePreferencesProvider);
+    final resolvedSettings = ref.watch(resolvedAppSettingsProvider);
+    final appLocale = appLocaleForLanguage(devicePrefs.language);
     LocaleSettings.setLocale(appLocale);
+    final legacyThemePrefs = resolvedSettings.toLegacyAppPreferences();
 
     return TranslationProvider(
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'MemoFlow',
-        theme: applyPreferencesToTheme(buildAppTheme(Brightness.light), prefs),
+        theme: applyPreferencesToTheme(
+          buildAppTheme(Brightness.light),
+          legacyThemePrefs,
+        ),
         darkTheme: applyPreferencesToTheme(
           buildAppTheme(Brightness.dark),
-          prefs,
+          legacyThemePrefs,
         ),
-        themeMode: themeModeFor(prefs.themeMode),
+        themeMode: themeModeFor(devicePrefs.themeMode),
         locale: appLocale.flutterLocale,
         supportedLocales: AppLocaleUtils.supportedLocales,
         localizationsDelegates: const [
@@ -69,7 +76,7 @@ class DesktopQuickInputWindowApp extends ConsumerWidget {
           final media = MediaQuery.of(context);
           return MediaQuery(
             data: media.copyWith(
-              textScaler: TextScaler.linear(textScaleFor(prefs.fontSize)),
+              textScaler: TextScaler.linear(textScaleFor(devicePrefs.fontSize)),
             ),
             child: child ?? const SizedBox.shrink(),
           );
@@ -236,7 +243,10 @@ class _DesktopQuickInputWindowScreenState
       }
     }
     if (call.method == desktopMainReloadPreferencesMethod) {
-      await ref.read(appPreferencesProvider.notifier).reloadFromStorage();
+      await ref.read(devicePreferencesProvider.notifier).reloadFromStorage();
+      await ref
+          .read(currentWorkspacePreferencesProvider.notifier)
+          .reloadFromStorage();
       return true;
     }
     return null;
@@ -913,7 +923,7 @@ class _DesktopQuickInputWindowScreenState
 
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
     final bindings = normalizeDesktopShortcutBindings(
-      ref.read(appPreferencesProvider).desktopShortcutBindings,
+      ref.read(devicePreferencesProvider).desktopShortcutBindings,
     );
     final primaryPressed = isPrimaryShortcutModifierPressed(pressed);
     final shiftPressed = isShiftModifierPressed(pressed);
@@ -1668,7 +1678,9 @@ class _DesktopQuickInputWindowScreenState
     final (visibilityLabel, visibilityIcon, visibilityColor) =
         _visibilityStyle();
     final toolbarPreferences = ref.watch(
-      appPreferencesProvider.select((p) => p.memoToolbarPreferences),
+      currentWorkspacePreferencesProvider.select(
+        (p) => p.memoToolbarPreferences,
+      ),
     );
     final templateSettings = ref.watch(memoTemplateSettingsProvider);
     final availableTemplates = templateSettings.enabled

@@ -30,7 +30,7 @@ class SyncFeedbackPresenter {
     if (succeeded) {
       return;
     }
-    final language = _bootstrapAdapter.readPreferences(_ref).language;
+    final language = _bootstrapAdapter.readDevicePreferences(_ref).language;
     final message = buildAutoSyncFeedbackMessage(
       language: language,
       succeeded: succeeded,

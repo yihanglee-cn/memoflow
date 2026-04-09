@@ -9,11 +9,14 @@ import 'package:memos_flutter_app/data/ai/ai_analysis_models.dart';
 import 'package:memos_flutter_app/data/ai/ai_analysis_repository.dart';
 import 'package:memos_flutter_app/data/api/memos_api.dart';
 import 'package:memos_flutter_app/data/db/app_database.dart';
+import 'package:memos_flutter_app/data/models/app_preferences.dart';
+import 'package:memos_flutter_app/data/models/device_preferences.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
 import 'package:memos_flutter_app/features/review/random_walk_models.dart';
 import 'package:memos_flutter_app/features/review/random_walk_providers.dart';
 import 'package:memos_flutter_app/state/review/ai_analysis_provider.dart';
-import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/device_preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/preferences_migration_service.dart';
 import 'package:memos_flutter_app/state/tags/tag_color_lookup.dart';
 
 void main() {
@@ -133,8 +136,8 @@ void main() {
         followUpSuggestions: const ['Fallback close'],
         isStale: false,
       );
-      final prefsRepo = _MemoryAppPreferencesRepository(
-        AppPreferences.defaultsForLanguage(AppLanguage.en),
+      final devicePrefsRepo = _MemoryDevicePreferencesRepository(
+        DevicePreferences.defaultsForLanguage(AppLanguage.en),
       );
       final container = ProviderContainer(
         overrides: [
@@ -144,8 +147,8 @@ void main() {
               reportsByTaskId: {42: report},
             ),
           ),
-          appPreferencesProvider.overrideWith(
-            (ref) => _TestAppPreferencesController(ref, prefsRepo),
+          devicePreferencesProvider.overrideWith(
+            (ref) => _TestDevicePreferencesController(ref, devicePrefsRepo),
           ),
         ],
       );
@@ -199,44 +202,39 @@ class _FakeAiAnalysisRepository extends AiAnalysisRepository {
   }
 }
 
-class _MemoryAppPreferencesRepository extends AppPreferencesRepository {
-  _MemoryAppPreferencesRepository(this._prefs)
-    : super(const FlutterSecureStorage(), accountKey: null);
+class _MemoryDevicePreferencesRepository extends DevicePreferencesRepository {
+  _MemoryDevicePreferencesRepository(this._prefs)
+    : super(PreferencesMigrationService(const FlutterSecureStorage()));
 
-  AppPreferences _prefs;
+  DevicePreferences _prefs;
 
   @override
-  Future<StorageReadResult<AppPreferences>> readWithStatus() async {
+  Future<StorageReadResult<DevicePreferences>> readWithStatus() async {
     return StorageReadResult.success(_prefs);
   }
 
   @override
-  Future<AppPreferences> read() async => _prefs;
+  Future<DevicePreferences> read() async => _prefs;
 
   @override
-  Future<void> write(AppPreferences prefs) async {
+  Future<void> write(DevicePreferences prefs) async {
     _prefs = prefs;
-  }
-
-  @override
-  Future<void> clear() async {
-    _prefs = AppPreferences.defaultsForLanguage(AppLanguage.en);
   }
 }
 
-class _TestAppPreferencesController extends AppPreferencesController {
-  _TestAppPreferencesController(Ref ref, this._repository)
+class _TestDevicePreferencesController extends DevicePreferencesController {
+  _TestDevicePreferencesController(Ref ref, this._repository)
     : super(
         ref,
         _repository,
         onLoaded: () {
-          ref.read(appPreferencesLoadedProvider.notifier).state = true;
+          ref.read(devicePreferencesLoadedProvider.notifier).state = true;
         },
       ) {
     state = _repository._prefs;
   }
 
-  final _MemoryAppPreferencesRepository _repository;
+  final _MemoryDevicePreferencesRepository _repository;
 
   @override
   Future<void> reloadFromStorage() async {

@@ -12,9 +12,15 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:memos_flutter_app/app.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
 import 'package:memos_flutter_app/data/models/account.dart';
+import 'package:memos_flutter_app/data/models/app_preferences.dart';
+import 'package:memos_flutter_app/data/models/device_preferences.dart';
 import 'package:memos_flutter_app/data/models/instance_profile.dart';
+import 'package:memos_flutter_app/data/models/workspace_preferences.dart';
 import 'package:memos_flutter_app/features/onboarding/language_selection_screen.dart';
-import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/device_preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/preferences_migration_service.dart';
+import 'package:memos_flutter_app/state/settings/workspace_preferences_provider.dart';
+import 'package:memos_flutter_app/state/system/local_library_provider.dart';
 import 'package:memos_flutter_app/state/system/session_provider.dart';
 
 void main() {
@@ -25,9 +31,21 @@ void main() {
       ProviderScope(
         overrides: [
           appSessionProvider.overrideWith((ref) => _TestSessionController()),
-          appPreferencesProvider.overrideWith(
-            (ref) => _TestAppPreferencesController(ref),
+          devicePreferencesProvider.overrideWith(
+            (ref) => _TestDevicePreferencesController(
+              ref,
+              DevicePreferences.defaultsForLanguage(
+                AppLanguage.en,
+              ).copyWith(onboardingMode: null),
+            ),
           ),
+          currentWorkspacePreferencesProvider.overrideWith(
+            (ref) => _TestWorkspacePreferencesController(
+              ref,
+              WorkspacePreferences.defaults,
+            ),
+          ),
+          currentLocalLibraryProvider.overrideWith((ref) => null),
         ],
         child: const App(),
       ),
@@ -112,36 +130,77 @@ class _TestSessionController extends AppSessionController {
   }
 }
 
-class _TestAppPreferencesRepository extends AppPreferencesRepository {
-  _TestAppPreferencesRepository()
-    : super(const FlutterSecureStorage(), accountKey: null);
+class _TestDevicePreferencesRepository extends DevicePreferencesRepository {
+  _TestDevicePreferencesRepository(this._stored)
+    : super(PreferencesMigrationService(const FlutterSecureStorage()));
+
+  DevicePreferences _stored;
 
   @override
-  Future<StorageReadResult<AppPreferences>> readWithStatus() async {
-    return StorageReadResult.success(
-      AppPreferences.defaultsForLanguage(AppLanguage.en),
-    );
+  Future<StorageReadResult<DevicePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_stored);
   }
 
   @override
-  Future<AppPreferences> read() async {
-    return AppPreferences.defaultsForLanguage(AppLanguage.en);
+  Future<DevicePreferences> read() async {
+    return _stored;
   }
 
   @override
-  Future<void> write(AppPreferences prefs) async {}
-
-  @override
-  Future<void> clear() async {}
+  Future<void> write(DevicePreferences prefs) async {
+    _stored = prefs;
+  }
 }
 
-class _TestAppPreferencesController extends AppPreferencesController {
-  _TestAppPreferencesController(Ref ref)
+class _TestDevicePreferencesController extends DevicePreferencesController {
+  _TestDevicePreferencesController(Ref ref, DevicePreferences initial)
     : super(
         ref,
-        _TestAppPreferencesRepository(),
+        _TestDevicePreferencesRepository(initial),
         onLoaded: () {
-          ref.read(appPreferencesLoadedProvider.notifier).state = true;
+          ref.read(devicePreferencesLoadedProvider.notifier).state = true;
         },
+      ) {
+    state = initial;
+  }
+}
+
+class _TestWorkspacePreferencesRepository
+    extends WorkspacePreferencesRepository {
+  _TestWorkspacePreferencesRepository(this._stored)
+    : super(
+        PreferencesMigrationService(const FlutterSecureStorage()),
+        workspaceKey: 'test-workspace',
       );
+
+  WorkspacePreferences _stored;
+
+  @override
+  Future<StorageReadResult<WorkspacePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_stored);
+  }
+
+  @override
+  Future<WorkspacePreferences> read() async {
+    return _stored;
+  }
+
+  @override
+  Future<void> write(WorkspacePreferences prefs) async {
+    _stored = prefs;
+  }
+}
+
+class _TestWorkspacePreferencesController
+    extends WorkspacePreferencesController {
+  _TestWorkspacePreferencesController(Ref ref, WorkspacePreferences initial)
+    : super(
+        ref,
+        _TestWorkspacePreferencesRepository(initial),
+        onLoaded: () {
+          ref.read(workspacePreferencesLoadedProvider.notifier).state = true;
+        },
+      ) {
+    state = initial;
+  }
 }

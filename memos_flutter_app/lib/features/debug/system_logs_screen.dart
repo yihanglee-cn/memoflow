@@ -10,9 +10,9 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
-import '../../state/system/logging_provider.dart';
-import '../../state/settings/preferences_provider.dart';
 import '../../i18n/strings.g.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/system/logging_provider.dart';
 
 class SystemLogsScreen extends ConsumerStatefulWidget {
   const SystemLogsScreen({super.key});
@@ -108,7 +108,7 @@ class _SystemLogsScreenState extends ConsumerState<SystemLogsScreen> {
       }
 
       final networkEnabled = ref
-          .read(appPreferencesProvider)
+          .read(devicePreferencesProvider)
           .networkLoggingEnabled;
 
       final bundleFile = await ref

@@ -19,9 +19,10 @@ import '../../core/top_toast.dart';
 import '../../data/local_library/local_library_markdown.dart';
 import '../../data/local_library/local_library_memo_sidecar.dart';
 import '../../data/models/attachment.dart';
+import '../../data/models/app_preferences.dart';
 import '../../data/models/local_memo.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/system/session_provider.dart';
 import 'import_export_shared_widgets.dart';
@@ -199,7 +200,7 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
       context.t.strings.legacy.msg_exporting,
       duration: const Duration(seconds: 30),
     );
-    final language = ref.read(appPreferencesProvider).language;
+    final language = ref.read(devicePreferencesProvider).language;
     final account = ref.read(appSessionProvider).valueOrNull?.currentAccount;
     final baseUrl = account?.baseUrl;
     final authHeader = (account?.personalAccessToken ?? '').isEmpty
@@ -405,7 +406,7 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void haptic() {
@@ -455,7 +456,7 @@ class _ExportMemosScreenState extends ConsumerState<ExportMemosScreen> {
                     label: context.t.strings.legacy.msg_date_range,
                     value: _formatRange(
                       _range,
-                      ref.read(appPreferencesProvider).language,
+                      ref.read(devicePreferencesProvider).language,
                     ),
                     textMain: textMain,
                     textMuted: textMuted,

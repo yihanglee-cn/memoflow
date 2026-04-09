@@ -9,10 +9,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/app_localization.dart';
 import '../../../core/attachment_toast.dart';
 import '../../../core/location_launcher.dart';
+import '../../../core/memo_content_diagnostics.dart';
 import '../../../core/memoflow_palette.dart';
 import '../../../data/models/app_preferences.dart';
 import '../../../data/models/location_settings.dart';
 import '../../../data/models/local_memo.dart';
+import '../../../data/logs/log_manager.dart';
 import '../../../state/memos/memos_providers.dart';
 import '../../../state/memos/memos_list_providers.dart';
 import '../../../state/tags/tag_color_lookup.dart';
@@ -74,6 +76,24 @@ class _MemoRenderCacheEntry {
 final _memoRenderCache = _LruCache<String, _MemoRenderCacheEntry>(
   capacity: 120,
 );
+final Set<String> _memoDeleteCardLogKeys = <String>{};
+
+void _logMemoDeleteCardOnce(
+  String message,
+  LocalMemo memo, {
+  Map<String, Object?> context = const <String, Object?>{},
+}) {
+  final key = '$message|${memo.uid}';
+  if (!_memoDeleteCardLogKeys.add(key)) return;
+  LogManager.instance.info(
+    message,
+    context: <String, Object?>{
+      ...buildMemoContentDiagnostics(memo.content, memoUid: memo.uid),
+      'attachmentCount': memo.attachments.length,
+      ...context,
+    },
+  );
+}
 
 String _memoRenderCacheKey(
   LocalMemo memo, {
@@ -126,6 +146,7 @@ class MemoListCard extends StatefulWidget {
   const MemoListCard({
     super.key,
     required this.memo,
+    this.debugRemoving = false,
     required this.dateText,
     required this.reminderText,
     required this.tagColors,
@@ -153,6 +174,7 @@ class MemoListCard extends StatefulWidget {
   });
 
   final LocalMemo memo;
+  final bool debugRemoving;
   final String dateText;
   final String? reminderText;
   final TagColorLookup tagColors;
@@ -192,6 +214,17 @@ class MemoListCardState extends State<MemoListCard> {
   void initState() {
     super.initState();
     _expanded = widget.initiallyExpanded;
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        widget.debugRemoving) {
+      _logMemoDeleteCardOnce(
+        'Memo delete card state init',
+        widget.memo,
+        context: <String, Object?>{
+          'initiallyExpanded': widget.initiallyExpanded,
+        },
+      );
+    }
   }
 
   void _notifyFloatingStateChanged() {
@@ -232,6 +265,21 @@ class MemoListCardState extends State<MemoListCard> {
   @override
   void didUpdateWidget(covariant MemoListCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        (oldWidget.debugRemoving || widget.debugRemoving)) {
+      _logMemoDeleteCardOnce(
+        'Memo delete card state didUpdateWidget',
+        widget.memo,
+        context: <String, Object?>{
+          'oldMemoUidChanged': oldWidget.memo.uid != widget.memo.uid,
+          'oldInitiallyExpanded': oldWidget.initiallyExpanded,
+          'newInitiallyExpanded': widget.initiallyExpanded,
+          'oldDebugRemoving': oldWidget.debugRemoving,
+          'newDebugRemoving': widget.debugRemoving,
+        },
+      );
+    }
     if (oldWidget.memo.uid != widget.memo.uid) {
       _expanded = widget.initiallyExpanded;
       _notifyFloatingStateChanged();
@@ -241,6 +289,23 @@ class MemoListCardState extends State<MemoListCard> {
       _expanded = widget.initiallyExpanded;
       _notifyFloatingStateChanged();
     }
+  }
+
+  @override
+  void dispose() {
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        widget.debugRemoving) {
+      _logMemoDeleteCardOnce(
+        'Memo delete card state dispose',
+        widget.memo,
+        context: <String, Object?>{
+          'expandedAtDispose': _expanded,
+          'showToggleAtDispose': _showToggle,
+        },
+      );
+    }
+    super.dispose();
   }
 
   @override
@@ -383,6 +448,79 @@ class MemoListCardState extends State<MemoListCard> {
     final progress = showProgress ? taskStats.checked / taskStats.total : 0.0;
     final audioDurationText = _parseVoiceDuration(memo.content) ?? '00:00';
     final audioDurationFallback = _parseVoiceDurationValue(memo.content);
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.windows &&
+        widget.debugRemoving) {
+      _logMemoDeleteCardOnce(
+        'Memo delete card build snapshot',
+        memo,
+        context: <String, Object?>{
+          'mediaEntryCount': mediaEntries.length,
+          'audioAttachmentCount': audio.length,
+          'nonMediaAttachmentCount': attachmentCount,
+          'attachmentBadgeVisible': attachmentCount > 0,
+          'hasAudioRow': hasAudio,
+          'hasMediaGrid': mediaEntries.isNotEmpty,
+          'showToggle': showToggle,
+          'expanded': _expanded,
+          'showCollapsed': showCollapsed,
+          'showSyncStatus': showSyncStatus,
+          'hasReminder': reminderText != null,
+          'hasLocation': memo.location != null,
+          'relationCount': memo.relationCount,
+          'heroEnabled': true,
+          'hasDoubleTapHandler': onDoubleTap != null,
+          'hasLongPressHandler': onLongPress != null,
+          'hasOnTapHandler': true,
+          'markdownCacheKeyFingerprint': markdownCacheKey.hashCode.toString(),
+        },
+      );
+      final removingPreview = preview.text.trim();
+      return Container(
+        key: _cardKey,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: cardSurface,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: cardBorderColor),
+          boxShadow: [
+            BoxShadow(
+              blurRadius: isDark ? 20 : 12,
+              offset: const Offset(0, 4),
+              color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.03),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              dateText,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+                color: textMain.withValues(alpha: isDark ? 0.4 : 0.5),
+              ),
+            ),
+            if (removingPreview.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                removingPreview,
+                maxLines: kMemoCardPreviewMaxLines + 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.45,
+                  color: textMain.withValues(alpha: 0.92),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
 
     Widget buildMediaGrid() {
       if (mediaEntries.isEmpty) return const SizedBox.shrink();

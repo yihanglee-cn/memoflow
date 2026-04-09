@@ -14,13 +14,22 @@ import '../../core/desktop/shortcuts.dart';
 import '../../core/hash.dart';
 import '../../core/theme_colors.dart';
 import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
 import '../../data/models/memo_toolbar_preferences.dart';
+import '../../data/models/resolved_app_settings.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../../data/logs/log_manager.dart';
 import '../system/session_provider.dart';
 import '../system/storage_error_provider.dart';
+import 'device_preferences_provider.dart';
+import 'resolved_preferences_provider.dart';
+import 'workspace_preferences_provider.dart';
 
 export '../../data/models/app_preferences.dart';
 
+/// Legacy repository kept for backward-compatible storage reads and writes.
+///
+/// New runtime code should use the split device/workspace repositories instead.
 final appPreferencesRepositoryProvider = Provider<AppPreferencesRepository>((
   ref,
 ) {
@@ -35,40 +44,106 @@ final appPreferencesRepositoryProvider = Provider<AppPreferencesRepository>((
 
 final appPreferencesLoadedProvider = StateProvider<bool>((ref) => false);
 
+@Deprecated(
+  'Legacy compatibility bridge only. Use devicePreferencesProvider, '
+  'currentWorkspacePreferencesProvider, or resolvedAppSettingsProvider.',
+)
 final appPreferencesProvider =
     StateNotifierProvider<AppPreferencesController, AppPreferences>((ref) {
       final loadedState = ref.read(appPreferencesLoadedProvider.notifier);
       Future.microtask(() => loadedState.state = false);
-      return AppPreferencesController(
+      final controller = AppPreferencesController.bridge(
         ref,
-        ref.watch(appPreferencesRepositoryProvider),
-        onLoaded: () => loadedState.state = true,
+        onLoaded: (loaded) => loadedState.state = loaded,
       );
+      ref.listen<ResolvedAppSettings>(resolvedAppSettingsProvider, (prev, next) {
+        controller.syncFromProviders();
+      });
+      ref.listen<bool>(devicePreferencesLoadedProvider, (prev, next) {
+        controller.syncLoadedState();
+      });
+      ref.listen<bool>(workspacePreferencesLoadedProvider, (prev, next) {
+        controller.syncLoadedState();
+      });
+      return controller;
     });
 
 class AppPreferencesController extends StateNotifier<AppPreferences> {
   AppPreferencesController(this._ref, this._repo, {void Function()? onLoaded})
-    : _onLoaded = onLoaded,
+    : _legacyOnLoaded = onLoaded,
+      _bridgeOnLoaded = null,
+      _bridgeMode = false,
       super(AppPreferences.defaults) {
     unawaited(_loadFromStorage());
   }
 
+  AppPreferencesController.bridge(
+    this._ref, {
+    void Function(bool loaded)? onLoaded,
+  }) : _repo = null,
+       _legacyOnLoaded = null,
+       _bridgeOnLoaded = onLoaded,
+       _bridgeMode = true,
+       super(_composeLegacyPreferences(_ref)) {
+    Future.microtask(() {
+      if (!mounted) return;
+      syncFromProviders();
+      syncLoadedState();
+    });
+  }
+
   final Ref _ref;
-  final AppPreferencesRepository _repo;
-  final void Function()? _onLoaded;
+  final AppPreferencesRepository? _repo;
+  final void Function()? _legacyOnLoaded;
+  final void Function(bool loaded)? _bridgeOnLoaded;
+  final bool _bridgeMode;
   Future<void> _writeChain = Future<void>.value();
 
+  static AppPreferences _composeLegacyPreferences(Ref ref) {
+    return ref.read(resolvedAppSettingsProvider).toLegacyAppPreferences();
+  }
+
+  bool get _combinedLoaded =>
+      _ref.read(devicePreferencesLoadedProvider) &&
+      _ref.read(workspacePreferencesLoadedProvider);
+
+  void syncFromProviders() {
+    if (!_bridgeMode || !mounted) return;
+    state = _composeLegacyPreferences(_ref);
+    _bridgeOnLoaded?.call(_combinedLoaded);
+  }
+
+  void syncLoadedState() {
+    if (!_bridgeMode) return;
+    _bridgeOnLoaded?.call(_combinedLoaded);
+  }
+
   Future<void> reloadFromStorage() async {
+    if (_bridgeMode) {
+      await _ref.read(devicePreferencesProvider.notifier).reloadFromStorage();
+      await _ref
+          .read(currentWorkspacePreferencesProvider.notifier)
+          .reloadFromStorage();
+      if (mounted) {
+        syncFromProviders();
+      }
+      return;
+    }
     await _loadFromStorage();
   }
 
   Future<void> _loadFromStorage() async {
+    if (_bridgeMode) {
+      syncFromProviders();
+      syncLoadedState();
+      return;
+    }
     if (kDebugMode) {
       LogManager.instance.info('Prefs: load_start');
     }
     final stateBeforeLoad = state;
     try {
-      final result = await _repo.readWithStatus();
+      final result = await _repo!.readWithStatus();
       if (!mounted) return;
       if (!identical(state, stateBeforeLoad)) {
         return;
@@ -84,10 +159,11 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
           error: error.error,
           stackTrace: error.stackTrace,
         );
-        _ref.read(appPreferencesStorageErrorProvider.notifier).state = error;
+        _ref.read(legacyAppPreferencesStorageErrorProvider.notifier).state =
+            error;
         return;
       }
-      _ref.read(appPreferencesStorageErrorProvider.notifier).state = null;
+      _ref.read(legacyAppPreferencesStorageErrorProvider.notifier).state = null;
       final stored =
           result.data ??
           AppPreferences.defaults.copyWith(
@@ -118,7 +194,7 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
         return;
       }
       _ref
-          .read(appPreferencesStorageErrorProvider.notifier)
+          .read(legacyAppPreferencesStorageErrorProvider.notifier)
           .state = StorageLoadError(
         source: 'preferences',
         error: error,
@@ -127,7 +203,7 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
       return;
     } finally {
       if (mounted) {
-        _onLoaded?.call();
+        _legacyOnLoaded?.call();
       }
     }
   }
@@ -160,7 +236,25 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
     // Serialize writes to avoid out-of-order persistence overwriting newer prefs.
     _writeChain = _writeChain.then((_) async {
       try {
-        await _repo.write(next);
+        if (_bridgeMode) {
+          final workspaceKey = _ref.read(currentWorkspaceKeyProvider);
+          final deviceNext = DevicePreferences.fromLegacy(next);
+          final workspaceNext = WorkspacePreferences.fromLegacy(
+            next,
+            workspaceKey: workspaceKey,
+          );
+          await _ref
+              .read(devicePreferencesProvider.notifier)
+              .setAll(deviceNext, triggerSync: false);
+          await _ref
+              .read(currentWorkspacePreferencesProvider.notifier)
+              .setAll(workspaceNext, triggerSync: false);
+          if (mounted) {
+            syncFromProviders();
+          }
+        } else {
+          await _repo!.write(next);
+        }
       } catch (error, stackTrace) {
         LogManager.instance.warn(
           'Failed to persist app preferences.',
@@ -182,6 +276,8 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
       );
     }
   }
+
+  Future<void> waitForPendingWrites() => _writeChain;
 
   Future<void> setAll(AppPreferences next, {bool triggerSync = true}) async =>
       _setAndPersist(next, triggerSync: triggerSync);
@@ -253,6 +349,7 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
   }
 
   void ensureAccountThemeDefaults(String accountKey) {
+    if (_bridgeMode) return;
     final key = accountKey.trim();
     if (key.isEmpty) return;
     final hasThemeColor = state.accountThemeColors.containsKey(key);
@@ -288,6 +385,17 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
       _setAndPersist(state.copyWith(showDrawerResources: v));
   void setShowDrawerArchive(bool v) =>
       _setAndPersist(state.copyWith(showDrawerArchive: v));
+  void setHomeQuickActions({
+    required HomeQuickAction primary,
+    required HomeQuickAction secondary,
+    required HomeQuickAction tertiary,
+  }) => _setAndPersist(
+    state.copyWith(
+      homeQuickActionPrimary: primary,
+      homeQuickActionSecondary: secondary,
+      homeQuickActionTertiary: tertiary,
+    ),
+  );
   void setMemoToolbarPreferences(MemoToolbarPreferences v) =>
       _setAndPersist(state.copyWith(memoToolbarPreferences: v));
   void resetMemoToolbarPreferences() => _setAndPersist(

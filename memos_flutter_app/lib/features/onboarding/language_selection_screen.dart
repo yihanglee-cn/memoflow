@@ -6,13 +6,14 @@ import '../../core/memoflow_palette.dart';
 import '../../core/uid.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/local_library/local_library_paths.dart';
+import '../../data/models/app_preferences.dart';
 import '../../data/models/local_library.dart';
 import '../settings/local_mode_setup_screen.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/local_library_scanner.dart';
 import '../../state/memos/onboarding_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 
 enum OnboardingMode { local, server }
@@ -61,7 +62,7 @@ class _LanguageSelectionScreenState
   @override
   void initState() {
     super.initState();
-    _selected = ref.read(appPreferencesProvider).language;
+    _selected = ref.read(devicePreferencesProvider).language;
   }
 
   Future<void> _scanLocalLibrarySilently() async {
@@ -110,7 +111,7 @@ class _LanguageSelectionScreenState
   void _handleLanguageChanged(AppLanguage? language) {
     if (language == null || language == _selected) return;
     setState(() => _selected = language);
-    ref.read(appPreferencesProvider.notifier).setLanguage(language);
+    ref.read(devicePreferencesProvider.notifier).setLanguage(language);
   }
 
   Widget _languageLabel({
@@ -202,9 +203,9 @@ class _LanguageSelectionScreenState
   Future<void> _confirmSelection() async {
     if (_submitting) return;
     final sessionNotifier = ref.read(appSessionProvider.notifier);
-    final prefsNotifier = ref.read(appPreferencesProvider.notifier);
-    final currentPrefs = ref.read(appPreferencesProvider);
-    final prefsLoaded = ref.read(appPreferencesLoadedProvider);
+    final prefsNotifier = ref.read(devicePreferencesProvider.notifier);
+    final currentPrefs = ref.read(devicePreferencesProvider);
+    final prefsLoaded = ref.read(devicePreferencesLoadedProvider);
     var sessionKeyForLog = ref.read(appSessionProvider).valueOrNull?.currentKey;
     setState(() => _submitting = true);
     _logFlow(

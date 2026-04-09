@@ -1,11 +1,16 @@
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:memos_flutter_app/core/storage_read.dart';
+import 'package:memos_flutter_app/data/models/device_preferences.dart';
 import 'package:memos_flutter_app/data/repositories/ai_settings_repository.dart';
 import 'package:memos_flutter_app/state/settings/ai_settings_provider.dart';
+import 'package:memos_flutter_app/state/settings/device_preferences_provider.dart';
+import 'package:memos_flutter_app/state/settings/preferences_migration_service.dart';
 import 'package:memos_flutter_app/state/settings/preferences_provider.dart';
 
 class _MemoryAiSettingsRepository extends AiSettingsRepository {
@@ -98,6 +103,35 @@ class _TestAppPreferencesController extends AppPreferencesController {
   final _MemoryAppPreferencesRepository _repository;
 }
 
+class _MemoryDevicePreferencesRepository extends DevicePreferencesRepository {
+  _MemoryDevicePreferencesRepository(this._prefs)
+    : super(PreferencesMigrationService(const FlutterSecureStorage()));
+
+  DevicePreferences _prefs;
+
+  @override
+  Future<StorageReadResult<DevicePreferences>> readWithStatus() async {
+    return StorageReadResult.success(_prefs);
+  }
+
+  @override
+  Future<DevicePreferences> read() async => _prefs;
+
+  @override
+  Future<void> write(DevicePreferences prefs) async {
+    _prefs = prefs;
+  }
+}
+
+class _TestDevicePreferencesController extends DevicePreferencesController {
+  _TestDevicePreferencesController(Ref ref, this._repository)
+    : super(ref, _repository, onLoaded: () {}) {
+    state = _repository._prefs;
+  }
+
+  final _MemoryDevicePreferencesRepository _repository;
+}
+
 void main() {
   test(
     'AiSettingsController upserts services and clears impacted routes on model delete',
@@ -108,8 +142,15 @@ void main() {
       final prefsRepository = _MemoryAppPreferencesRepository(
         AppPreferences.defaultsForLanguage(AppLanguage.en),
       );
+      final devicePrefsRepository = _MemoryDevicePreferencesRepository(
+        DevicePreferences.defaultsForLanguage(AppLanguage.en),
+      );
       final container = ProviderContainer(
         overrides: [
+          devicePreferencesProvider.overrideWith(
+            (ref) =>
+                _TestDevicePreferencesController(ref, devicePrefsRepository),
+          ),
           appPreferencesProvider.overrideWith(
             (ref) => _TestAppPreferencesController(ref, prefsRepository),
           ),
@@ -242,8 +283,15 @@ void main() {
       final prefsRepository = _MemoryAppPreferencesRepository(
         AppPreferences.defaultsForLanguage(AppLanguage.en),
       );
+      final devicePrefsRepository = _MemoryDevicePreferencesRepository(
+        DevicePreferences.defaultsForLanguage(AppLanguage.en),
+      );
       final container = ProviderContainer(
         overrides: [
+          devicePreferencesProvider.overrideWith(
+            (ref) =>
+                _TestDevicePreferencesController(ref, devicePrefsRepository),
+          ),
           appPreferencesProvider.overrideWith(
             (ref) => _TestAppPreferencesController(ref, prefsRepository),
           ),
@@ -380,8 +428,15 @@ void main() {
       final prefsRepository = _MemoryAppPreferencesRepository(
         AppPreferences.defaultsForLanguage(AppLanguage.en),
       );
+      final devicePrefsRepository = _MemoryDevicePreferencesRepository(
+        DevicePreferences.defaultsForLanguage(AppLanguage.en),
+      );
       final container = ProviderContainer(
         overrides: [
+          devicePreferencesProvider.overrideWith(
+            (ref) =>
+                _TestDevicePreferencesController(ref, devicePrefsRepository),
+          ),
           appPreferencesProvider.overrideWith(
             (ref) => _TestAppPreferencesController(ref, prefsRepository),
           ),
@@ -414,8 +469,15 @@ void main() {
       final prefsRepository = _MemoryAppPreferencesRepository(
         AppPreferences.defaultsForLanguage(AppLanguage.en),
       );
+      final devicePrefsRepository = _MemoryDevicePreferencesRepository(
+        DevicePreferences.defaultsForLanguage(AppLanguage.en),
+      );
       final container = ProviderContainer(
         overrides: [
+          devicePreferencesProvider.overrideWith(
+            (ref) =>
+                _TestDevicePreferencesController(ref, devicePrefsRepository),
+          ),
           appPreferencesProvider.overrideWith(
             (ref) => _TestAppPreferencesController(ref, prefsRepository),
           ),

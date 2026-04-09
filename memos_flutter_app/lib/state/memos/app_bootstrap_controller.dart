@@ -8,8 +8,9 @@ import '../../application/app/app_sync_orchestrator.dart';
 import '../../core/desktop/shortcuts.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/models/account.dart';
-import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
 import '../../data/models/reminder_settings.dart';
+import '../../data/models/resolved_app_settings.dart';
 import '../system/reminder_scheduler.dart';
 import '../system/session_provider.dart';
 import 'app_bootstrap_adapter_provider.dart';
@@ -20,13 +21,12 @@ class AppBootstrapController {
   final AppBootstrapAdapter _adapter;
 
   ProviderSubscription<AsyncValue<AppSessionState>>? _sessionSubscription;
-  ProviderSubscription<AppPreferences>? _prefsSubscription;
+  ProviderSubscription<DevicePreferences>? _devicePreferencesSubscription;
+  ProviderSubscription<ResolvedAppSettings>? _resolvedSettingsSubscription;
   ProviderSubscription<ReminderSettings>? _reminderSettingsSubscription;
-  ProviderSubscription<bool>? _prefsLoadedSubscription;
   ProviderSubscription<bool>? _debugScreenshotModeSubscription;
   bool _bound = false;
 
-  String? _pendingThemeAccountKey;
   DateTime? _lastReminderRescheduleAt;
   bool _firstFrameRendered = false;
   bool _reminderRescheduleQueued = false;
@@ -37,8 +37,8 @@ class AppBootstrapController {
     required AppSyncOrchestrator syncOrchestrator,
     required VoidCallback scheduleStatsWidgetUpdate,
     required VoidCallback scheduleShareHandling,
-    required Future<void> Function(AppPreferences prefs) ensureFontLoaded,
-    required Future<void> Function(AppPreferences prefs)
+    required Future<void> Function(DevicePreferences prefs) ensureFontLoaded,
+    required Future<void> Function(DevicePreferences prefs)
     registerDesktopQuickInputHotKey,
     required Future<void> Function(bool enabled) applyDebugScreenshotMode,
     required ReminderTapHandler reminderTapHandler,
@@ -46,6 +46,7 @@ class AppBootstrapController {
   }) {
     if (_bound) return;
     _bound = true;
+
     _sessionSubscription = _adapter.listenSession(ref, (prev, next) {
       _handleSessionChanged(
         ref: ref,
@@ -57,34 +58,43 @@ class AppBootstrapController {
       );
     });
 
-    _prefsSubscription = _adapter.listenPreferences(ref, (prev, next) {
-      _handlePreferencesChanged(
-        prev: prev,
-        next: next,
-        scheduleStatsWidgetUpdate: scheduleStatsWidgetUpdate,
-        ensureFontLoaded: ensureFontLoaded,
-        registerDesktopQuickInputHotKey: registerDesktopQuickInputHotKey,
-      );
-    });
+    _devicePreferencesSubscription = _adapter.listenDevicePreferences(
+      ref,
+      (prev, next) {
+        _handleDevicePreferencesChanged(
+          prev: prev,
+          next: next,
+          scheduleStatsWidgetUpdate: scheduleStatsWidgetUpdate,
+          ensureFontLoaded: ensureFontLoaded,
+          registerDesktopQuickInputHotKey: registerDesktopQuickInputHotKey,
+        );
+      },
+    );
 
-    _prefsLoadedSubscription = _adapter.listenPreferencesLoaded(ref, (
-      prev,
-      next,
-    ) {
-      _handlePreferencesLoadedChanged(ref: ref, prev: prev, next: next);
-    });
+    _resolvedSettingsSubscription = _adapter.listenResolvedAppSettings(
+      ref,
+      (prev, next) {
+        _handleResolvedSettingsChanged(
+          prev: prev,
+          next: next,
+          scheduleStatsWidgetUpdate: scheduleStatsWidgetUpdate,
+        );
+      },
+    );
 
     final reminderScheduler = _adapter.readReminderScheduler(ref);
     final initialDebugScreenshotMode =
         kDebugMode ? _adapter.readDebugScreenshotMode(ref) : false;
-    final initialPreferences =
-        isDesktopShortcutEnabled() ? _adapter.readPreferences(ref) : null;
+    final initialDevicePreferences =
+        isDesktopShortcutEnabled() ? _adapter.readDevicePreferences(ref) : null;
+
     reminderScheduler.setTapHandler(reminderTapHandler);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _firstFrameRendered = true;
       _flushQueuedReminderReschedule(reminderScheduler);
       unawaited(reminderScheduler.initialize(caller: 'post_first_frame'));
     });
+
     _reminderSettingsSubscription = _adapter.listenReminderSettings(ref, (
       prev,
       next,
@@ -109,7 +119,7 @@ class AppBootstrapController {
 
     if (isDesktopShortcutEnabled()) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        final prefs = initialPreferences;
+        final prefs = initialDevicePreferences;
         if (prefs != null) {
           unawaited(registerDesktopQuickInputHotKey(prefs));
         }
@@ -120,8 +130,8 @@ class AppBootstrapController {
 
   void dispose() {
     _sessionSubscription?.close();
-    _prefsSubscription?.close();
-    _prefsLoadedSubscription?.close();
+    _devicePreferencesSubscription?.close();
+    _resolvedSettingsSubscription?.close();
     _reminderSettingsSubscription?.close();
     _debugScreenshotModeSubscription?.close();
     _bound = false;
@@ -195,24 +205,17 @@ class AppBootstrapController {
         reason: 'session_changed',
       );
     }
-    if (nextKey != null) {
-      if (_adapter.readPreferencesLoaded(ref)) {
-        _adapter.ensureAccountThemeDefaults(ref, nextKey);
-      } else {
-        _pendingThemeAccountKey = nextKey;
-      }
-    }
     if (nextAccount != null) {
       scheduleShareHandling();
     }
   }
 
-  void _handlePreferencesChanged({
-    required AppPreferences? prev,
-    required AppPreferences next,
+  void _handleDevicePreferencesChanged({
+    required DevicePreferences? prev,
+    required DevicePreferences next,
     required VoidCallback scheduleStatsWidgetUpdate,
-    required Future<void> Function(AppPreferences prefs) ensureFontLoaded,
-    required Future<void> Function(AppPreferences prefs)
+    required Future<void> Function(DevicePreferences prefs) ensureFontLoaded,
+    required Future<void> Function(DevicePreferences prefs)
     registerDesktopQuickInputHotKey,
   }) {
     if (kDebugMode) {
@@ -244,37 +247,25 @@ class AppBootstrapController {
         prev.language != next.language ||
         prev.themeColor != next.themeColor ||
         prev.themeMode != next.themeMode ||
-        prev.accountThemeColors != next.accountThemeColors;
+        prev.customTheme != next.customTheme;
     if (shouldRefreshWidgets) {
       scheduleStatsWidgetUpdate();
     }
   }
 
-  void _handlePreferencesLoadedChanged({
-    required WidgetRef ref,
-    required bool? prev,
-    required bool next,
+  void _handleResolvedSettingsChanged({
+    required ResolvedAppSettings? prev,
+    required ResolvedAppSettings next,
+    required VoidCallback scheduleStatsWidgetUpdate,
   }) {
-    if (kDebugMode) {
-      LogManager.instance.info(
-        'RouteGate: prefs_loaded_changed',
-        context: <String, Object?>{
-          'previous': prev,
-          'next': next,
-          'sessionKey': _adapter.readSession(ref)?.currentKey,
-          'hasSelectedLanguage': _adapter
-              .readPreferences(ref)
-              .hasSelectedLanguage,
-        },
-      );
+    final shouldRefreshWidgets =
+        prev == null ||
+        prev.workspaceKey != next.workspaceKey ||
+        prev.resolvedThemeColor != next.resolvedThemeColor ||
+        prev.resolvedCustomTheme != next.resolvedCustomTheme;
+    if (shouldRefreshWidgets) {
+      scheduleStatsWidgetUpdate();
     }
-    if (!next) return;
-    final key =
-        _pendingThemeAccountKey ?? _adapter.readSession(ref)?.currentKey;
-    if (key != null) {
-      _adapter.ensureAccountThemeDefaults(ref, key);
-    }
-    _pendingThemeAccountKey = null;
   }
 
   void _handleReminderSettingsChanged({

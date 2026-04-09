@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/memoflow_palette.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../i18n/strings.g.dart';
 
 class CustomizeDrawerScreen extends ConsumerWidget {
@@ -10,7 +10,7 @@ class CustomizeDrawerScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(appPreferencesProvider);
+    final prefs = ref.watch(currentWorkspacePreferencesProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? MemoFlowPalette.backgroundDark : MemoFlowPalette.backgroundLight;
     final card = isDark ? MemoFlowPalette.cardDark : MemoFlowPalette.cardLight;
@@ -61,31 +61,41 @@ class CustomizeDrawerScreen extends ConsumerWidget {
                     label: context.t.strings.legacy.msg_explore,
                     value: prefs.showDrawerExplore,
                     textMain: textMain,
-                    onChanged: (v) => ref.read(appPreferencesProvider.notifier).setShowDrawerExplore(v),
+                    onChanged: (v) => ref
+                        .read(currentWorkspacePreferencesProvider.notifier)
+                        .setShowDrawerExplore(v),
                   ),
                   _ToggleRow(
                     label: context.t.strings.legacy.msg_random_review,
                     value: prefs.showDrawerDailyReview,
                     textMain: textMain,
-                    onChanged: (v) => ref.read(appPreferencesProvider.notifier).setShowDrawerDailyReview(v),
+                    onChanged: (v) => ref
+                        .read(currentWorkspacePreferencesProvider.notifier)
+                        .setShowDrawerDailyReview(v),
                   ),
                   _ToggleRow(
                     label: context.t.strings.legacy.msg_ai_summary,
                     value: prefs.showDrawerAiSummary,
                     textMain: textMain,
-                    onChanged: (v) => ref.read(appPreferencesProvider.notifier).setShowDrawerAiSummary(v),
+                    onChanged: (v) => ref
+                        .read(currentWorkspacePreferencesProvider.notifier)
+                        .setShowDrawerAiSummary(v),
                   ),
                   _ToggleRow(
                     label: context.t.strings.legacy.msg_attachments,
                     value: prefs.showDrawerResources,
                     textMain: textMain,
-                    onChanged: (v) => ref.read(appPreferencesProvider.notifier).setShowDrawerResources(v),
+                    onChanged: (v) => ref
+                        .read(currentWorkspacePreferencesProvider.notifier)
+                        .setShowDrawerResources(v),
                   ),
                   _ToggleRow(
                     label: context.t.strings.legacy.msg_archive,
                     value: prefs.showDrawerArchive,
                     textMain: textMain,
-                    onChanged: (v) => ref.read(appPreferencesProvider.notifier).setShowDrawerArchive(v),
+                    onChanged: (v) => ref
+                        .read(currentWorkspacePreferencesProvider.notifier)
+                        .setShowDrawerArchive(v),
                   ),
                 ],
               ),

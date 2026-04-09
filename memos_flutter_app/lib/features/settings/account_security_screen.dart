@@ -16,8 +16,8 @@ import '../../data/repositories/image_bed_settings_repository.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/local_library_scanner.dart';
 import '../../state/memos/account_security_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/settings/personal_access_token_repository_provider.dart';
-import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../auth/login_screen.dart';
 import 'local_mode_setup_screen.dart';
@@ -44,7 +44,7 @@ class AccountSecurityScreen extends ConsumerWidget {
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void haptic() {
@@ -314,13 +314,9 @@ class AccountSecurityScreen extends ConsumerWidget {
           .deleteDatabaseForWorkspaceKey(library.key);
 
       if (shouldReopenOnboarding) {
-        final currentPreferences = ref.read(appPreferencesProvider);
-        await ref
-            .read(appPreferencesProvider.notifier)
-            .setAll(
-              currentPreferences.copyWith(hasSelectedLanguage: false),
-              triggerSync: false,
-            );
+        ref
+            .read(devicePreferencesProvider.notifier)
+            .setHasSelectedLanguage(false);
         await requestMainWindowReopenOnboardingIfSupported();
       }
 
@@ -334,7 +330,6 @@ class AccountSecurityScreen extends ConsumerWidget {
           accounts.length == 1 && accounts.first.key == accountKey;
       final shouldReopenOnboarding = isLastAccount && localLibraries.isEmpty;
       final sessionNotifier = ref.read(appSessionProvider.notifier);
-      final preferencesNotifier = ref.read(appPreferencesProvider.notifier);
       final tokenRepo = ref.read(personalAccessTokenRepositoryProvider);
       final imageBedRepo = ImageBedSettingsRepository(
         ref.read(secureStorageProvider),
@@ -373,11 +368,9 @@ class AccountSecurityScreen extends ConsumerWidget {
       if (!context.mounted) return;
 
       if (shouldReopenOnboarding) {
-        final currentPreferences = ref.read(appPreferencesProvider);
-        await preferencesNotifier.setAll(
-          currentPreferences.copyWith(hasSelectedLanguage: false),
-          triggerSync: false,
-        );
+        ref
+            .read(devicePreferencesProvider.notifier)
+            .setHasSelectedLanguage(false);
         await requestMainWindowReopenOnboardingIfSupported();
       }
       try {

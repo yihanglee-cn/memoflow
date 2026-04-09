@@ -22,7 +22,7 @@ import 'reminder_utils.dart';
 import 'database_provider.dart';
 import 'logging_provider.dart';
 import 'reminder_mutation_service.dart';
-import '../settings/preferences_provider.dart';
+import '../settings/device_preferences_provider.dart';
 import '../settings/reminder_settings_provider.dart';
 import 'session_provider.dart';
 
@@ -598,7 +598,7 @@ class ReminderScheduler {
     _WindowsPendingReminder reminder,
     ReminderSettings settings,
   ) async {
-    final language = _ref.read(appPreferencesProvider).language;
+    final language = _ref.read(devicePreferencesProvider).language;
     final titleRaw = settings.notificationTitle.trim();
     final bodyRaw = settings.notificationBody.trim();
     final title = titleRaw.isEmpty
@@ -679,7 +679,7 @@ class ReminderScheduler {
   }
 
   LocalNotification _buildWindowsTestNotification(ReminderSettings settings) {
-    final language = _ref.read(appPreferencesProvider).language;
+    final language = _ref.read(devicePreferencesProvider).language;
     final titleRaw = settings.notificationTitle.trim();
     final bodyRaw = settings.notificationBody.trim();
     final title = titleRaw.isEmpty
@@ -953,7 +953,7 @@ class ReminderScheduler {
   Future<AndroidNotificationChannel> _ensureChannel(
     ReminderSettings settings,
   ) async {
-    final language = _ref.read(appPreferencesProvider).language;
+    final language = _ref.read(devicePreferencesProvider).language;
     final name = trByLanguageKey(
       language: language,
       key: 'legacy.msg_memo_reminders',

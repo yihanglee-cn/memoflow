@@ -2,15 +2,15 @@ part of 'startup_coordinator.dart';
 
 extension _StartupCoordinatorState on StartupCoordinator {
   _StartupSnapshot _readStartupSnapshot() {
-    final prefsLoaded = _bootstrapAdapter.readPreferencesLoaded(_ref);
-    final prefs = _bootstrapAdapter.readPreferences(_ref);
+    final prefsLoaded = _bootstrapAdapter.readDevicePreferencesLoaded(_ref);
+    final settings = _bootstrapAdapter.readResolvedAppSettings(_ref);
     final session = _bootstrapAdapter.readSession(_ref);
     final hasAccount = session?.currentAccount != null;
     final hasWorkspace =
         hasAccount || _bootstrapAdapter.readCurrentLocalLibrary(_ref) != null;
     return _StartupSnapshot(
       prefsLoaded: prefsLoaded,
-      prefs: prefs,
+      settings: settings,
       hasAccount: hasAccount,
       hasWorkspace: hasWorkspace,
       navigatorReady: _navigatorKey.currentState != null,
@@ -40,7 +40,7 @@ extension _StartupCoordinatorState on StartupCoordinator {
     _notifyCoordinatorListeners();
   }
 
-  void _deferLaunchSync(AppPreferences prefs) {
+  void _deferLaunchSync(WorkspacePreferences prefs) {
     _deferredLaunchSyncPreferences = prefs;
   }
 
@@ -52,7 +52,7 @@ extension _StartupCoordinatorState on StartupCoordinator {
       'Startup: autosync_resume_after_share',
       context: _buildStartupContext(
         phase: 'runtime',
-        prefs: prefs,
+        settings: _bootstrapAdapter.readResolvedAppSettings(_ref),
         action: _StartupAction.share,
       ),
     );

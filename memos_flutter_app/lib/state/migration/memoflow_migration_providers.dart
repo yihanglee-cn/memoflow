@@ -15,16 +15,21 @@ import '../../application/sync/migration/memoflow_migration_preferences_filter.d
 import '../../application/sync/migration/memoflow_migration_server.dart';
 import '../../data/db/app_database.dart';
 import '../../data/local_library/local_attachment_store.dart';
+import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../attachments/queued_attachment_stager_provider.dart';
 import '../settings/ai_settings_provider.dart';
 import '../settings/app_lock_provider.dart';
+import '../settings/device_preferences_provider.dart';
 import '../settings/image_bed_settings_provider.dart';
 import '../settings/image_compression_settings_provider.dart';
 import '../settings/location_settings_provider.dart';
 import '../memos/compose_draft_provider.dart';
 import '../settings/memo_template_settings_provider.dart';
-import '../settings/preferences_provider.dart';
 import '../settings/reminder_settings_provider.dart';
+import '../settings/resolved_preferences_provider.dart';
+import '../settings/workspace_preferences_provider.dart';
 import '../system/database_provider.dart';
 import '../system/local_library_provider.dart';
 import '../system/session_provider.dart';
@@ -42,7 +47,8 @@ class RiverpodConfigTransferLocalAdapter implements ConfigTransferLocalAdapter {
   Future<ConfigTransferBundle> readBundle(
     Set<MemoFlowMigrationConfigType> configTypes,
   ) async {
-    final prefs = _ref.read(appPreferencesProvider);
+    final resolvedSettings = _ref.read(resolvedAppSettingsProvider);
+    final prefs = resolvedSettings.toLegacyAppPreferences();
     final bundle = ConfigTransferBundle(
       preferences: configTypes.contains(MemoFlowMigrationConfigType.preferences)
           ? _preferencesFilter.extractTransferable(prefs)
@@ -127,9 +133,18 @@ class RiverpodConfigTransferLocalAdapter implements ConfigTransferLocalAdapter {
 
   @override
   Future<void> applyPreferences(preferences) async {
+    final workspaceKey = _ref.read(currentWorkspaceKeyProvider);
+    final devicePrefs = DevicePreferences.fromLegacy(preferences);
+    final workspacePrefs = WorkspacePreferences.fromLegacy(
+      preferences,
+      workspaceKey: workspaceKey,
+    );
     await _ref
-        .read(appPreferencesProvider.notifier)
-        .setAll(preferences, triggerSync: false);
+        .read(devicePreferencesProvider.notifier)
+        .setAll(devicePrefs, triggerSync: false);
+    await _ref
+        .read(currentWorkspacePreferencesProvider.notifier)
+        .setAll(workspacePrefs, triggerSync: false);
   }
 
   @override
@@ -153,7 +168,7 @@ class RiverpodConfigTransferLocalAdapter implements ConfigTransferLocalAdapter {
 
   @override
   Future<AppPreferences> readPreferences() async {
-    return _ref.read(appPreferencesProvider);
+    return _ref.read(resolvedAppSettingsProvider).toLegacyAppPreferences();
   }
 }
 

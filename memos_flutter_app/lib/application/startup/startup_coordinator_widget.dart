@@ -47,9 +47,12 @@ extension _StartupCoordinatorWidget on StartupCoordinator {
         unawaited(_openWidgetMemoDetail(memoUid));
         break;
       case HomeWidgetType.quickInput:
+        final autoFocus = _bootstrapAdapter
+            .readDevicePreferences(_ref)
+            .quickInputAutoFocus;
         unawaited(
           openQuickInput(
-            autoFocus: AppPreferences.defaults.quickInputAutoFocus,
+            autoFocus: autoFocus,
           ),
         );
         break;

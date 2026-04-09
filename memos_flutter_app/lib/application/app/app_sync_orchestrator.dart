@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/logs/log_manager.dart';
-import '../../data/models/app_preferences.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../../state/memos/app_sync_adapter_provider.dart';
 import '../sync/sync_request.dart';
 
@@ -39,7 +39,7 @@ class AppSyncOrchestrator {
     _lastResumeAutoSyncAt = null;
   }
 
-  Future<void> maybeSyncOnLaunch(AppPreferences prefs) async {
+  Future<void> maybeSyncOnLaunch(WorkspacePreferences prefs) async {
     if (!prefs.autoSyncOnStartAndResume) {
       if (kDebugMode) {
         LogManager.instance.info(
@@ -95,7 +95,7 @@ class AppSyncOrchestrator {
       }
       return;
     }
-    final prefs = _adapter.readPreferences();
+    final prefs = _adapter.readWorkspacePreferences();
     if (!prefs.autoSyncOnStartAndResume) {
       if (kDebugMode) {
         LogManager.instance.info(

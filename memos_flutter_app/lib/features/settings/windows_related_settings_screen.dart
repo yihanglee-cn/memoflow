@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/memoflow_palette.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import 'desktop_shortcuts_settings_screen.dart';
 
 class WindowsRelatedSettingsScreen extends ConsumerWidget {
@@ -27,8 +27,8 @@ class WindowsRelatedSettingsScreen extends ConsumerWidget {
     final divider = isDark
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
-    final prefs = ref.watch(appPreferencesProvider);
-    final notifier = ref.read(appPreferencesProvider.notifier);
+    final prefs = ref.watch(devicePreferencesProvider);
+    final notifier = ref.read(devicePreferencesProvider.notifier);
 
     return Scaffold(
       backgroundColor: bg,
@@ -65,7 +65,11 @@ class WindowsRelatedSettingsScreen extends ConsumerWidget {
           if (!Platform.isWindows)
             Center(
               child: Text(
-                context.t.strings.legacy.msg_only_windows_desktop_supports_this_setting,
+                context
+                    .t
+                    .strings
+                    .legacy
+                    .msg_only_windows_desktop_supports_this_setting,
                 style: TextStyle(color: textMuted, fontWeight: FontWeight.w600),
               ),
             )
@@ -79,8 +83,11 @@ class WindowsRelatedSettingsScreen extends ConsumerWidget {
                   children: [
                     _ActionRow(
                       label: context.t.strings.legacy.msg_shortcut_settings,
-                      subtitle:
-                          context.t.strings.legacy.msg_configure_windows_desktop_shortcuts,
+                      subtitle: context
+                          .t
+                          .strings
+                          .legacy
+                          .msg_configure_windows_desktop_shortcuts,
                       textMain: textMain,
                       textMuted: textMuted,
                       onTap: () {
@@ -93,10 +100,16 @@ class WindowsRelatedSettingsScreen extends ConsumerWidget {
                       },
                     ),
                     _ToggleRow(
-                      label:
-                          context.t.strings.legacy.msg_close_window_minimize_to_tray,
-                      subtitle:
-                          context.t.strings.legacy.msg_close_window_minimize_to_tray_desc,
+                      label: context
+                          .t
+                          .strings
+                          .legacy
+                          .msg_close_window_minimize_to_tray,
+                      subtitle: context
+                          .t
+                          .strings
+                          .legacy
+                          .msg_close_window_minimize_to_tray_desc,
                       value: prefs.windowsCloseToTray,
                       textMain: textMain,
                       textMuted: textMuted,

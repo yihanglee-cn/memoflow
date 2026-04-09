@@ -50,7 +50,10 @@ void main() {
       expect(harness.coordinator.startupSharePreviewPayload, isNull);
       expect(harness.coordinator.shouldDeferHeavyStartupWork, isFalse);
       expect(harness.syncOrchestrator.maybeSyncOnLaunchCount, 1);
-      expect(harness.syncOrchestrator.lastLaunchPrefs, bootstrapAdapter.preferences);
+      expect(
+        harness.syncOrchestrator.lastLaunchPrefs,
+        bootstrapAdapter.workspacePreferences,
+      );
     });
   });
 }

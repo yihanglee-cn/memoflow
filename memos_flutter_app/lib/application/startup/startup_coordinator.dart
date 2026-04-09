@@ -7,6 +7,8 @@ import '../../core/top_toast.dart';
 import '../../data/logs/log_manager.dart';
 import '../../data/models/app_preferences.dart';
 import '../../data/models/local_memo.dart';
+import '../../data/models/resolved_app_settings.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../../features/memos/memo_detail_screen.dart';
 import '../../features/memos/note_input_sheet.dart';
 import '../../features/share/share_clip_models.dart';
@@ -72,7 +74,7 @@ class StartupCoordinator extends ChangeNotifier {
   Future<void>? _pendingShareLoad;
   SharePayload? _startupSharePreviewPayload;
   bool _shareFlowActive = false;
-  AppPreferences? _deferredLaunchSyncPreferences;
+  WorkspacePreferences? _deferredLaunchSyncPreferences;
 
   SharePayload? get startupSharePreviewPayload => _startupSharePreviewPayload;
 
@@ -88,7 +90,7 @@ class StartupCoordinator extends ChangeNotifier {
       'hasWorkspace': snapshot.hasWorkspace,
       'navigatorReady': snapshot.navigatorReady,
       'contextReady': snapshot.contextReady,
-      'launchAction': snapshot.prefs.launchAction.name,
+      'launchAction': snapshot.settings.device.launchAction.name,
     };
   }
 
@@ -214,7 +216,7 @@ class StartupCoordinator extends ChangeNotifier {
     required bool prefsLoaded,
     required bool hasWorkspace,
     required bool hasAccount,
-    required AppPreferences prefs,
+    required ResolvedAppSettings settings,
     String? source,
     bool force = false,
   }) {
@@ -222,7 +224,7 @@ class StartupCoordinator extends ChangeNotifier {
       prefsLoaded: prefsLoaded,
       hasWorkspace: hasWorkspace,
       hasAccount: hasAccount,
-      prefs: prefs,
+      settings: settings,
       source: source ?? 'build',
       force: force,
     );

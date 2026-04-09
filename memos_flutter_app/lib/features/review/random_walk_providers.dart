@@ -9,7 +9,7 @@ import '../../data/api/memos_api.dart';
 import '../../data/models/local_memo.dart';
 import '../../state/memos/memos_providers.dart';
 import '../../state/review/ai_analysis_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/database_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/tags/tag_color_lookup.dart';
@@ -152,7 +152,7 @@ Future<List<RandomWalkDeckEntry>> loadAiHistoryRandomWalkEntries(
     }),
   );
 
-  final language = ref.read(appPreferencesProvider).language;
+  final language = ref.read(devicePreferencesProvider).language;
   final isZh = isZhLanguage(language);
   return selected
       .map((entry) {

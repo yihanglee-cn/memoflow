@@ -17,8 +17,10 @@ import '../startup/storage_error_banner.dart';
 import '../auth/login_screen.dart';
 import 'home_screen.dart';
 import '../onboarding/language_selection_screen.dart';
+import '../../data/models/app_preferences.dart';
 import '../../state/memos/app_bootstrap_adapter_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/system/storage_error_provider.dart';
@@ -164,7 +166,10 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
   Future<void> _retryStorageLoad() async {
     final container = ProviderScope.containerOf(context, listen: false);
     await container.read(appSessionProvider.notifier).reloadFromStorage();
-    await container.read(appPreferencesProvider.notifier).reloadFromStorage();
+    await container.read(devicePreferencesProvider.notifier).reloadFromStorage();
+    await container
+        .read(currentWorkspacePreferencesProvider.notifier)
+        .reloadFromStorage();
     await container.read(localLibrariesProvider.notifier).reloadFromStorage();
   }
 
@@ -205,8 +210,8 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
     }
 
     final adapter = ref.read(appBootstrapAdapterProvider);
-    final prefsLoaded = adapter.watchPreferencesLoaded(ref);
-    final prefs = adapter.watchPreferences(ref);
+    final prefsLoaded = adapter.watchDevicePreferencesLoaded(ref);
+    final prefs = adapter.watchDevicePreferences(ref);
     final sessionAsync = adapter.watchSession(ref);
     final session = sessionAsync.valueOrNull;
     final localLibrary = adapter.watchCurrentLocalLibrary(ref);

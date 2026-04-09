@@ -8,9 +8,12 @@ import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../core/system_fonts.dart';
 import '../../core/theme_colors.dart';
+import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
 import '../../i18n/strings.g.dart';
-import '../../state/settings/preferences_provider.dart';
-import '../../state/system/session_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/resolved_preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../../state/system/system_fonts_provider.dart';
 import 'memo_toolbar_settings_screen.dart';
 
@@ -106,7 +109,7 @@ class PreferencesSettingsScreen extends ConsumerWidget {
   Future<void> _selectFont({
     required BuildContext context,
     required WidgetRef ref,
-    required AppPreferences prefs,
+    required DevicePreferences prefs,
     required List<SystemFontInfo> fonts,
   }) async {
     final systemDefault = SystemFontInfo(
@@ -140,14 +143,14 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                     context.safePop();
                     if (font.isSystemDefault) {
                       ref
-                          .read(appPreferencesProvider.notifier)
+                          .read(devicePreferencesProvider.notifier)
                           .setFontFamily(family: null, filePath: null);
                       return;
                     }
                     await SystemFonts.ensureLoaded(font);
                     if (!context.mounted) return;
                     ref
-                        .read(appPreferencesProvider.notifier)
+                        .read(devicePreferencesProvider.notifier)
                         .setFontFamily(
                           family: font.family,
                           filePath: font.filePath,
@@ -171,7 +174,7 @@ class PreferencesSettingsScreen extends ConsumerWidget {
 
   String _fontLabel(
     BuildContext context,
-    AppPreferences prefs,
+    DevicePreferences prefs,
     List<SystemFontInfo> fonts,
   ) {
     final family = prefs.fontFamily?.trim() ?? '';
@@ -186,18 +189,39 @@ class PreferencesSettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(appPreferencesProvider);
-    final session = ref.watch(appSessionProvider).valueOrNull;
-    final accountKey = session?.currentKey;
+    final devicePrefs = ref.watch(devicePreferencesProvider);
+    final workspacePrefs = ref.watch(currentWorkspacePreferencesProvider);
+    final deviceNotifier = ref.read(devicePreferencesProvider.notifier);
+    final workspaceNotifier = ref.read(
+      currentWorkspacePreferencesProvider.notifier,
+    );
+    final workspaceKey = ref.watch(currentWorkspaceKeyProvider);
+    final resolvedSettings = ref.watch(resolvedAppSettingsProvider);
 
-    final themeMode = prefs.themeMode;
-    final themeModeLabel = themeMode.labelFor(prefs.language);
-    final themeColor = prefs.resolveThemeColor(accountKey);
-    final customTheme = prefs.resolveCustomTheme(accountKey);
+    void setThemeColor(AppThemeColor color) {
+      if (workspaceKey == null) {
+        deviceNotifier.setThemeColor(color);
+        return;
+      }
+      workspaceNotifier.setThemeColorOverride(color);
+    }
+
+    void setCustomTheme(CustomThemeSettings settings) {
+      if (workspaceKey == null) {
+        deviceNotifier.setCustomTheme(settings);
+        return;
+      }
+      workspaceNotifier.setCustomThemeOverride(settings);
+    }
+
+    final themeMode = devicePrefs.themeMode;
+    final themeModeLabel = themeMode.labelFor(devicePrefs.language);
+    final themeColor = resolvedSettings.resolvedThemeColor;
+    final customTheme = resolvedSettings.resolvedCustomTheme;
     final fontsAsync = ref.watch(systemFontsProvider);
     final fontLabel = _fontLabel(
       context,
-      prefs,
+      devicePrefs,
       fontsAsync.valueOrNull ?? const [],
     );
 
@@ -218,7 +242,7 @@ class PreferencesSettingsScreen extends ConsumerWidget {
           (language) => DropdownMenuItem<AppLanguage>(
             value: language,
             child: Text(
-              language.labelFor(prefs.language),
+              language.labelFor(devicePrefs.language),
               style: TextStyle(fontWeight: FontWeight.w600, color: textMain),
             ),
           ),
@@ -266,18 +290,18 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                 children: [
                   _DropdownRow<AppLanguage>(
                     label: context.t.strings.settings.preferences.language,
-                    value: prefs.language,
+                    value: devicePrefs.language,
                     items: languageItems,
                     textMain: textMain,
                     textMuted: textMuted,
                     onChanged: (v) {
                       if (v == null) return;
-                      ref.read(appPreferencesProvider.notifier).setLanguage(v);
+                      deviceNotifier.setLanguage(v);
                     },
                   ),
                   _SelectRow(
                     label: context.t.strings.settings.preferences.fontSize,
-                    value: prefs.fontSize.labelFor(prefs.language),
+                    value: devicePrefs.fontSize.labelFor(devicePrefs.language),
                     icon: Icons.chevron_right,
                     textMain: textMain,
                     textMuted: textMuted,
@@ -285,16 +309,15 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                       context: context,
                       title: context.t.strings.settings.preferences.fontSize,
                       values: AppFontSize.values,
-                      label: (v) => v.labelFor(prefs.language),
-                      selected: prefs.fontSize,
-                      onSelect: (v) => ref
-                          .read(appPreferencesProvider.notifier)
-                          .setFontSize(v),
+                      label: (v) => v.labelFor(devicePrefs.language),
+                      selected: devicePrefs.fontSize,
+                      onSelect: deviceNotifier.setFontSize,
                     ),
                   ),
                   _SelectRow(
                     label: context.t.strings.settings.preferences.lineHeight,
-                    value: prefs.lineHeight.labelFor(prefs.language),
+                    value:
+                        devicePrefs.lineHeight.labelFor(devicePrefs.language),
                     icon: Icons.chevron_right,
                     textMain: textMain,
                     textMuted: textMuted,
@@ -302,11 +325,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                       context: context,
                       title: context.t.strings.settings.preferences.lineHeight,
                       values: AppLineHeight.values,
-                      label: (v) => v.labelFor(prefs.language),
-                      selected: prefs.lineHeight,
-                      onSelect: (v) => ref
-                          .read(appPreferencesProvider.notifier)
-                          .setLineHeight(v),
+                      label: (v) => v.labelFor(devicePrefs.language),
+                      selected: devicePrefs.lineHeight,
+                      onSelect: deviceNotifier.setLineHeight,
                     ),
                   ),
                   _SelectRow(
@@ -324,7 +345,7 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         await _selectFont(
                           context: context,
                           ref: ref,
-                          prefs: prefs,
+                          prefs: devicePrefs,
                           fonts: fonts,
                         );
                       } catch (e) {
@@ -347,11 +368,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         .settings
                         .preferences
                         .collapseLongContent,
-                    value: prefs.collapseLongContent,
+                    value: workspacePrefs.collapseLongContent,
                     textMain: textMain,
-                    onChanged: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setCollapseLongContent(v),
+                    onChanged: workspaceNotifier.setCollapseLongContent,
                   ),
                   _ToggleRow(
                     label: context
@@ -360,11 +379,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         .settings
                         .preferences
                         .collapseReferences,
-                    value: prefs.collapseReferences,
+                    value: workspacePrefs.collapseReferences,
                     textMain: textMain,
-                    onChanged: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setCollapseReferences(v),
+                    onChanged: workspaceNotifier.setCollapseReferences,
                   ),
                   _ToggleRow(
                     label: context
@@ -373,11 +390,10 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         .settings
                         .preferences
                         .showEngagementInAllMemoDetails,
-                    value: prefs.showEngagementInAllMemoDetails,
+                    value: workspacePrefs.showEngagementInAllMemoDetails,
                     textMain: textMain,
-                    onChanged: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setShowEngagementInAllMemoDetails(v),
+                    onChanged:
+                        workspaceNotifier.setShowEngagementInAllMemoDetails,
                   ),
                 ],
               ),
@@ -388,7 +404,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                 children: [
                   _SelectRow(
                     label: context.t.strings.settings.preferences.launchAction,
-                    value: prefs.launchAction.labelFor(prefs.language),
+                    value: devicePrefs.launchAction.labelFor(
+                      devicePrefs.language,
+                    ),
                     icon: Icons.expand_more,
                     textMain: textMain,
                     textMuted: textMuted,
@@ -399,11 +417,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                       values: LaunchAction.values
                           .where((v) => v != LaunchAction.sync)
                           .toList(growable: false),
-                      label: (v) => v.labelFor(prefs.language),
-                      selected: prefs.launchAction,
-                      onSelect: (v) => ref
-                          .read(appPreferencesProvider.notifier)
-                          .setLaunchAction(v),
+                      label: (v) => v.labelFor(devicePrefs.language),
+                      selected: devicePrefs.launchAction,
+                      onSelect: deviceNotifier.setLaunchAction,
                     ),
                   ),
                   _ToggleRow(
@@ -413,11 +429,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         .settings
                         .preferences
                         .confirmExitOnBack,
-                    value: prefs.confirmExitOnBack,
+                    value: devicePrefs.confirmExitOnBack,
                     textMain: textMain,
-                    onChanged: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setConfirmExitOnBack(v),
+                    onChanged: deviceNotifier.setConfirmExitOnBack,
                   ),
                   _SelectRow(
                     rowKey: const ValueKey('preferences-editor-toolbar-entry'),
@@ -465,11 +479,9 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                         AppThemeMode.light,
                         AppThemeMode.dark,
                       ],
-                      label: (v) => v.labelFor(prefs.language),
+                      label: (v) => v.labelFor(devicePrefs.language),
                       selected: themeMode,
-                      onSelect: (v) => ref
-                          .read(appPreferencesProvider.notifier)
-                          .setThemeMode(v),
+                      onSelect: deviceNotifier.setThemeMode,
                     ),
                   ),
                   _ThemeColorRow(
@@ -477,38 +489,22 @@ class PreferencesSettingsScreen extends ConsumerWidget {
                     selected: themeColor,
                     textMain: textMain,
                     isDark: isDark,
-                    onSelect: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setThemeColorForAccount(
-                          accountKey: accountKey,
-                          color: v,
-                        ),
+                    onSelect: setThemeColor,
                     onCustomTap: () async {
                       final next = await CustomThemeDialog.show(
                         context: context,
                         initial: customTheme,
                       );
                       if (next == null || !context.mounted) return;
-                      final notifier = ref.read(
-                        appPreferencesProvider.notifier,
-                      );
-                      notifier.setCustomThemeForAccount(
-                        accountKey: accountKey,
-                        settings: next,
-                      );
-                      notifier.setThemeColorForAccount(
-                        accountKey: accountKey,
-                        color: AppThemeColor.custom,
-                      );
+                      setCustomTheme(next);
+                      setThemeColor(AppThemeColor.custom);
                     },
                   ),
                   _ToggleRow(
                     label: context.t.strings.settings.preferences.haptics,
-                    value: prefs.hapticsEnabled,
+                    value: devicePrefs.hapticsEnabled,
                     textMain: textMain,
-                    onChanged: (v) => ref
-                        .read(appPreferencesProvider.notifier)
-                        .setHapticsEnabled(v),
+                    onChanged: deviceNotifier.setHapticsEnabled,
                   ),
                 ],
               ),

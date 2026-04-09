@@ -7,7 +7,7 @@ import '../../data/ai/ai_route_config.dart';
 import '../../data/ai/ai_settings_models.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/settings/ai_settings_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../settings/ai_settings_screen.dart';
 import 'ai_insight_models.dart';
 import 'ai_insight_prompt_editor_screen.dart';
@@ -61,7 +61,8 @@ class _AiInsightSettingsSheetState
   void initState() {
     super.initState();
     _range = AiInsightRange.last7Days;
-    _allowPrivate = ref.read(appPreferencesProvider).aiSummaryAllowPrivateMemos;
+    _allowPrivate =
+        ref.read(currentWorkspacePreferencesProvider).aiSummaryAllowPrivateMemos;
   }
 
   @override
@@ -172,7 +173,7 @@ class _AiInsightSettingsSheetState
   void _toggleAllowPrivate(bool value) {
     setState(() => _allowPrivate = value);
     ref
-        .read(appPreferencesProvider.notifier)
+        .read(currentWorkspacePreferencesProvider.notifier)
         .setAiSummaryAllowPrivateMemos(value);
   }
 

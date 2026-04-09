@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/memoflow_palette.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../i18n/strings.g.dart';
 
 class UserGuideScreen extends ConsumerWidget {
@@ -58,7 +58,9 @@ class UserGuideScreen extends ConsumerWidget {
     final textMain = isDark ? MemoFlowPalette.textDark : MemoFlowPalette.textLight;
     final textMuted = textMain.withValues(alpha: isDark ? 0.55 : 0.6);
     final divider = isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06);
-    final hapticsEnabled = ref.watch(appPreferencesProvider.select((p) => p.hapticsEnabled));
+    final hapticsEnabled = ref.watch(
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
+    );
 
     void haptic() {
       if (hapticsEnabled) {

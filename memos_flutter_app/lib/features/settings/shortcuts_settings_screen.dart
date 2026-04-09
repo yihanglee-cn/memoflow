@@ -8,7 +8,7 @@ import '../../core/memoflow_palette.dart';
 import '../../core/top_toast.dart';
 import '../../data/models/shortcut.dart';
 import '../../state/memos/memos_providers.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/settings/user_settings_provider.dart';
 import 'shortcut_editor_screen.dart';
@@ -187,7 +187,7 @@ class _ShortcutsSettingsScreenState
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
     final hapticsEnabled = ref.watch(
-      appPreferencesProvider.select((p) => p.hapticsEnabled),
+      devicePreferencesProvider.select((p) => p.hapticsEnabled),
     );
 
     void maybeHaptic() {

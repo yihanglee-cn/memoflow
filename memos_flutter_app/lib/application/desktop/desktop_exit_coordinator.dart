@@ -8,7 +8,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/desktop_quick_input_channel.dart';
 import '../../data/db/database_registry.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/logging_provider.dart';
 import 'desktop_quick_input_controller.dart';
 import 'desktop_tray_controller.dart';
@@ -136,7 +136,7 @@ class DesktopExitCoordinator with WindowListener {
     }
     if (_exiting) return;
     final closeToTray = _ref.read(
-      appPreferencesProvider.select((p) => p.windowsCloseToTray),
+      devicePreferencesProvider.select((p) => p.windowsCloseToTray),
     );
     if (closeToTray && DesktopTrayController.instance.supported) {
       try {

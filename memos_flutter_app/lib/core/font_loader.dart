@@ -1,11 +1,11 @@
 import 'package:flutter/widgets.dart';
 
-import '../data/models/app_preferences.dart';
+import '../data/models/device_preferences.dart';
 import 'system_fonts.dart';
 
 class FontLoader {
   Future<void> ensureLoaded(
-    AppPreferences prefs, {
+    DevicePreferences prefs, {
     VoidCallback? onLoaded,
   }) async {
     final family = prefs.fontFamily;

@@ -34,8 +34,8 @@ extension _StartupCoordinatorShare on StartupCoordinator {
   bool _handlePendingShare() {
     final payload = _pendingSharePayload;
     if (payload == null) return false;
-    if (!_bootstrapAdapter.readPreferencesLoaded(_ref)) return false;
-    final prefs = _bootstrapAdapter.readPreferences(_ref);
+    if (!_bootstrapAdapter.readDevicePreferencesLoaded(_ref)) return false;
+    final prefs = _bootstrapAdapter.readDevicePreferences(_ref);
     final session = _bootstrapAdapter.readSession(_ref);
     if (!prefs.thirdPartyShareEnabled) {
       _logStartupInfo(

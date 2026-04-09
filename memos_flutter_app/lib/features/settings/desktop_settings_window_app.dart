@@ -21,17 +21,22 @@ import '../../application/sync/sync_coordinator.dart';
 import '../../application/desktop/desktop_workspace_snapshot.dart';
 import '../../data/db/db_write_protocol.dart';
 import '../../data/logs/webdav_backup_progress_tracker.dart';
+import '../../data/models/app_preferences.dart';
+import '../../data/models/device_preferences.dart';
+import '../../data/models/workspace_preferences.dart';
 import '../../data/repositories/ai_settings_repository.dart';
 import '../../i18n/strings.g.dart';
 import '../../state/system/logging_provider.dart';
 import '../../state/settings/ai_settings_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
+import '../../state/settings/resolved_preferences_provider.dart';
 import '../../state/sync/sync_coordinator_provider.dart';
 import '../../state/system/local_library_provider.dart';
 import '../../state/system/database_provider.dart';
-import '../../state/settings/preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 import '../../state/webdav/webdav_backup_provider.dart';
 import '../../data/models/local_library.dart';
+import '../../state/settings/workspace_preferences_provider.dart';
 import '../stats/stats_screen.dart';
 import 'about_us_screen.dart';
 import 'account_security_screen.dart';
@@ -130,7 +135,7 @@ class DesktopSettingsWindowApp extends ConsumerWidget {
 
   static ThemeData _applyPreferencesToTheme(
     ThemeData theme,
-    AppPreferences prefs,
+    DevicePreferences prefs,
   ) {
     final lineHeight = _lineHeightFor(prefs.lineHeight);
     final textTheme = _applyLineHeight(
@@ -150,28 +155,27 @@ class DesktopSettingsWindowApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(appPreferencesProvider);
-    final accountKey = ref.watch(
-      desktopSettingsWorkspaceSnapshotProvider.select(
-        (snapshot) => snapshot?.currentKey,
-      ),
-    );
-    final themeColor = prefs.resolveThemeColor(accountKey);
-    final customTheme = prefs.resolveCustomTheme(accountKey);
+    final devicePrefs = ref.watch(devicePreferencesProvider);
+    final resolvedSettings = ref.watch(resolvedAppSettingsProvider);
+    final themeColor = resolvedSettings.resolvedThemeColor;
+    final customTheme = resolvedSettings.resolvedCustomTheme;
     MemoFlowPalette.applyThemeColor(themeColor, customTheme: customTheme);
-    final appLocale = _appLocaleFor(prefs.language);
+    final appLocale = _appLocaleFor(devicePrefs.language);
     LocaleSettings.setLocale(appLocale);
 
     return TranslationProvider(
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'MemoFlow Settings',
-        theme: _applyPreferencesToTheme(buildAppTheme(Brightness.light), prefs),
+        theme: _applyPreferencesToTheme(
+          buildAppTheme(Brightness.light),
+          devicePrefs,
+        ),
         darkTheme: _applyPreferencesToTheme(
           buildAppTheme(Brightness.dark),
-          prefs,
+          devicePrefs,
         ),
-        themeMode: _themeModeFor(prefs.themeMode),
+        themeMode: _themeModeFor(devicePrefs.themeMode),
         locale: appLocale.flutterLocale,
         supportedLocales: AppLocaleUtils.supportedLocales,
         localizationsDelegates: const [
@@ -183,7 +187,9 @@ class DesktopSettingsWindowApp extends ConsumerWidget {
           final media = MediaQuery.of(context);
           return MediaQuery(
             data: media.copyWith(
-              textScaler: TextScaler.linear(_textScaleFor(prefs.fontSize)),
+              textScaler: TextScaler.linear(
+                _textScaleFor(devicePrefs.fontSize),
+              ),
             ),
             child: _DesktopSettingsWindowFrame(
               child: child ?? const SizedBox.shrink(),
@@ -239,7 +245,10 @@ class _DesktopSettingsWindowScreenState
   ProviderSubscription<String?>? _sessionKeySub;
   ProviderSubscription<List<LocalLibrary>>? _localLibrariesSub;
   ProviderSubscription<AiSettings>? _aiSettingsSub;
+  ProviderSubscription<DevicePreferences>? _devicePreferencesSub;
+  ProviderSubscription<WorkspacePreferences>? _workspacePreferencesSub;
   Timer? _aiSettingsReloadDebounce;
+  Timer? _preferencesReloadDebounce;
   bool _workspaceListenersBound = false;
   bool _workspaceSnapshotLoading = true;
   String? _workspaceSnapshotError;
@@ -260,7 +269,10 @@ class _DesktopSettingsWindowScreenState
     _sessionKeySub?.close();
     _localLibrariesSub?.close();
     _aiSettingsSub?.close();
+    _devicePreferencesSub?.close();
+    _workspacePreferencesSub?.close();
     _aiSettingsReloadDebounce?.cancel();
+    _preferencesReloadDebounce?.cancel();
     super.dispose();
   }
 
@@ -347,6 +359,20 @@ class _DesktopSettingsWindowScreenState
       if (prev == next) return;
       _scheduleMainWindowAiSettingsReload();
     });
+    _devicePreferencesSub = container.listen<DevicePreferences>(
+      devicePreferencesProvider,
+      (prev, next) {
+        if (identical(prev, next)) return;
+        _scheduleMainWindowPreferencesReload();
+      },
+    );
+    _workspacePreferencesSub = container.listen<WorkspacePreferences>(
+      currentWorkspacePreferencesProvider,
+      (prev, next) {
+        if (identical(prev, next)) return;
+        _scheduleMainWindowPreferencesReload();
+      },
+    );
     _workspaceListenersBound = true;
   }
 
@@ -355,6 +381,14 @@ class _DesktopSettingsWindowScreenState
     _aiSettingsReloadDebounce = Timer(const Duration(milliseconds: 150), () {
       if (!mounted) return;
       unawaited(_notifyMainWindowAiSettingsChanged());
+    });
+  }
+
+  void _scheduleMainWindowPreferencesReload() {
+    _preferencesReloadDebounce?.cancel();
+    _preferencesReloadDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) return;
+      unawaited(_notifyMainWindowPreferencesChanged());
     });
   }
 
@@ -388,6 +422,19 @@ class _DesktopSettingsWindowScreenState
   Future<void> _notifyMainWindowAiSettingsChanged() async {
     try {
       await _invokeMainWindowMethod(desktopMainReloadAiSettingsMethod);
+    } catch (_) {}
+  }
+
+  Future<void> _notifyMainWindowPreferencesChanged() async {
+    try {
+      final container = ProviderScope.containerOf(context, listen: false);
+      await container
+          .read(devicePreferencesProvider.notifier)
+          .waitForPendingWrites();
+      await container
+          .read(currentWorkspacePreferencesProvider.notifier)
+          .waitForPendingWrites();
+      await _invokeMainWindowMethod(desktopMainReloadPreferencesMethod);
     } catch (_) {}
   }
 
@@ -857,7 +904,7 @@ class _DesktopSettingsWorkbenchState extends State<_DesktopSettingsWorkbench> {
     final altPressed = isAltModifierPressed(pressed);
     final container = ProviderScope.containerOf(context, listen: false);
     final bindings = normalizeDesktopShortcutBindings(
-      container.read(appPreferencesProvider).desktopShortcutBindings,
+      container.read(devicePreferencesProvider).desktopShortcutBindings,
     );
     final overviewBinding = bindings[DesktopShortcutAction.shortcutOverview];
     final shortcutMatched =

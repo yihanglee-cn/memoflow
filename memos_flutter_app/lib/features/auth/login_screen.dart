@@ -12,7 +12,7 @@ import '../../i18n/strings.g.dart';
 import '../../state/system/login_draft_provider.dart';
 import '../../state/system/home_loading_overlay_provider.dart';
 import '../../state/memos/login_provider.dart';
-import '../../state/settings/preferences_provider.dart';
+import '../../state/settings/device_preferences_provider.dart';
 import '../../state/system/session_provider.dart';
 
 enum _LoginMode { token, password }
@@ -652,7 +652,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       navigator.pop();
       return;
     }
-    ref.read(appPreferencesProvider.notifier).setHasSelectedLanguage(false);
+    ref.read(devicePreferencesProvider.notifier).setHasSelectedLanguage(false);
   }
 
   Future<void> _connectWithToken(int opId) async {
