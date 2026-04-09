@@ -27,6 +27,8 @@ import 'swashbuckler_diary_import_service.dart' as swashbuckler_diary;
 import '../../i18n/strings.g.dart';
 
 const _flomoImportIconAsset = 'assets/images/flomo_import_logo.svg';
+const _swashbucklerDiaryImportIconAsset =
+    'assets/images/swashbuckler_diary_import_logo.png';
 
 enum ImportSourceKind { flomoLike, swashbucklerDiary }
 
@@ -251,9 +253,22 @@ class ImportSourceScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
                           _ImportSourceTile(
-                            title: 'SwashbucklerDiary',
-                            subtitle: 'JSON / Markdown / TXT ZIP',
-                            icon: const Icon(Icons.menu_book_rounded, size: 24),
+                            title: context
+                                .t
+                                .strings
+                                .legacy
+                                .msg_import_swashbuckler_diary,
+                            subtitle: context
+                                .t
+                                .strings
+                                .legacy
+                                .msg_supported_json_markdown_txt_zip,
+                            icon: Image.asset(
+                              _swashbucklerDiaryImportIconAsset,
+                              width: 24,
+                              height: 24,
+                              fit: BoxFit.contain,
+                            ),
                             iconBg: MemoFlowPalette.primary.withValues(
                               alpha: isDark ? 0.18 : 0.1,
                             ),

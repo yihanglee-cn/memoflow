@@ -610,6 +610,8 @@ legacy:
   msg_default: "Default"
   msg_memo_reminders: "Memo Reminders"
   msg_import_flomo: "Import from Flomo"
+  msg_import_swashbuckler_diary: "Import from Swashbuckler Diary"
+  msg_supported_json_markdown_txt_zip: "JSON / Markdown / TXT ZIP"
   msg_format_fixed_markdown_zip: "Format is fixed to Markdown + ZIP"
   msg_enter_username_password: "Enter username and password"
   msg_loading: "Loading..."

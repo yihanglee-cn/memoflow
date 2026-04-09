@@ -611,6 +611,8 @@ legacy:
   msg_default: "デフォルト"
   msg_memo_reminders: "メモのリマインダー"
   msg_import_flomo: "Flomoからインポート"
+  msg_import_swashbuckler_diary: "Swashbuckler Diaryからインポート"
+  msg_supported_json_markdown_txt_zip: "JSON / Markdown / TXT ZIP"
   msg_format_fixed_markdown_zip: "形式はMarkdown + ZIPに固定されています"
   msg_enter_username_password: "ユーザー名とパスワードを入力"
   msg_loading: "読み込み中..."

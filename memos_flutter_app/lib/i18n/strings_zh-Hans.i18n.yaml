@@ -619,6 +619,8 @@ legacy:
   msg_default: "默认"
   msg_memo_reminders: "笔记提醒"
   msg_import_flomo: "从 Flomo 导入"
+  msg_import_swashbuckler_diary: "从侠客日记导入"
+  msg_supported_json_markdown_txt_zip: "JSON / Markdown / TXT ZIP"
   msg_format_fixed_markdown_zip: "格式固定为 Markdown + ZIP"
   msg_enter_username_password: "请输入账号和密码"
   msg_loading: "加载中..."

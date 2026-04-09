@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 7940 (1588 per locale)
+/// Strings: 7950 (1590 per locale)
 ///
-/// Built on 2026-04-07 at 15:20 UTC
+/// Built on 2026-04-09 at 11:17 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -689,6 +689,8 @@ class _StringsStringsLegacyEn {
 	String get msg_default => 'Default';
 	String get msg_memo_reminders => 'Memo Reminders';
 	String get msg_import_flomo => 'Import from Flomo';
+	String get msg_import_swashbuckler_diary => 'Import from Swashbuckler Diary';
+	String get msg_supported_json_markdown_txt_zip => 'JSON / Markdown / TXT ZIP';
 	String get msg_format_fixed_markdown_zip => 'Format is fixed to Markdown + ZIP';
 	String get msg_enter_username_password => 'Enter username and password';
 	String get msg_loading => 'Loading...';
@@ -2848,6 +2850,8 @@ class _StringsStringsLegacyDe extends _StringsStringsLegacyEn {
 	@override String get msg_default => 'Standard';
 	@override String get msg_memo_reminders => 'Memo-Erinnerungen';
 	@override String get msg_import_flomo => 'Aus Flomo importieren';
+	@override String get msg_import_swashbuckler_diary => 'Aus Swashbuckler Diary importieren';
+	@override String get msg_supported_json_markdown_txt_zip => 'JSON / Markdown / TXT ZIP';
 	@override String get msg_format_fixed_markdown_zip => 'Format ist auf Markdown + ZIP festgelegt';
 	@override String get msg_enter_username_password => 'Benutzername und Passwort eingeben';
 	@override String get msg_loading => 'Lädt...';
@@ -4906,6 +4910,8 @@ class _StringsStringsLegacyJa extends _StringsStringsLegacyEn {
 	@override String get msg_default => 'デフォルト';
 	@override String get msg_memo_reminders => 'メモのリマインダー';
 	@override String get msg_import_flomo => 'Flomoからインポート';
+	@override String get msg_import_swashbuckler_diary => 'Swashbuckler Diaryからインポート';
+	@override String get msg_supported_json_markdown_txt_zip => 'JSON / Markdown / TXT ZIP';
 	@override String get msg_format_fixed_markdown_zip => '形式はMarkdown + ZIPに固定されています';
 	@override String get msg_enter_username_password => 'ユーザー名とパスワードを入力';
 	@override String get msg_loading => '読み込み中...';
@@ -6973,6 +6979,8 @@ class _StringsStringsLegacyZhHans extends _StringsStringsLegacyEn {
 	@override String get msg_default => '默认';
 	@override String get msg_memo_reminders => '笔记提醒';
 	@override String get msg_import_flomo => '从 Flomo 导入';
+	@override String get msg_import_swashbuckler_diary => '从侠客日记导入';
+	@override String get msg_supported_json_markdown_txt_zip => 'JSON / Markdown / TXT ZIP';
 	@override String get msg_format_fixed_markdown_zip => '格式固定为 Markdown + ZIP';
 	@override String get msg_enter_username_password => '请输入账号和密码';
 	@override String get msg_loading => '加载中...';
@@ -9130,6 +9138,8 @@ class _StringsStringsLegacyZhHantTw extends _StringsStringsLegacyEn {
 	@override String get msg_default => '默认';
 	@override String get msg_memo_reminders => '笔记提醒';
 	@override String get msg_import_flomo => '从 Flomo 导入';
+	@override String get msg_import_swashbuckler_diary => '從俠客日記導入';
+	@override String get msg_supported_json_markdown_txt_zip => 'JSON / Markdown / TXT ZIP';
 	@override String get msg_format_fixed_markdown_zip => '格式固定为 Markdown + ZIP';
 	@override String get msg_enter_username_password => '请输入账号和密码';
 	@override String get msg_loading => '加载中...';
@@ -11254,6 +11264,8 @@ extension on Translations {
 			case 'strings.legacy.msg_default': return 'Default';
 			case 'strings.legacy.msg_memo_reminders': return 'Memo Reminders';
 			case 'strings.legacy.msg_import_flomo': return 'Import from Flomo';
+			case 'strings.legacy.msg_import_swashbuckler_diary': return 'Import from Swashbuckler Diary';
+			case 'strings.legacy.msg_supported_json_markdown_txt_zip': return 'JSON / Markdown / TXT ZIP';
 			case 'strings.legacy.msg_format_fixed_markdown_zip': return 'Format is fixed to Markdown + ZIP';
 			case 'strings.legacy.msg_enter_username_password': return 'Enter username and password';
 			case 'strings.legacy.msg_loading': return 'Loading...';
@@ -12894,6 +12906,8 @@ extension on _StringsDe {
 			case 'strings.legacy.msg_default': return 'Standard';
 			case 'strings.legacy.msg_memo_reminders': return 'Memo-Erinnerungen';
 			case 'strings.legacy.msg_import_flomo': return 'Aus Flomo importieren';
+			case 'strings.legacy.msg_import_swashbuckler_diary': return 'Aus Swashbuckler Diary importieren';
+			case 'strings.legacy.msg_supported_json_markdown_txt_zip': return 'JSON / Markdown / TXT ZIP';
 			case 'strings.legacy.msg_format_fixed_markdown_zip': return 'Format ist auf Markdown + ZIP festgelegt';
 			case 'strings.legacy.msg_enter_username_password': return 'Benutzername und Passwort eingeben';
 			case 'strings.legacy.msg_loading': return 'Lädt...';
@@ -14442,6 +14456,8 @@ extension on _StringsJa {
 			case 'strings.legacy.msg_default': return 'デフォルト';
 			case 'strings.legacy.msg_memo_reminders': return 'メモのリマインダー';
 			case 'strings.legacy.msg_import_flomo': return 'Flomoからインポート';
+			case 'strings.legacy.msg_import_swashbuckler_diary': return 'Swashbuckler Diaryからインポート';
+			case 'strings.legacy.msg_supported_json_markdown_txt_zip': return 'JSON / Markdown / TXT ZIP';
 			case 'strings.legacy.msg_format_fixed_markdown_zip': return '形式はMarkdown + ZIPに固定されています';
 			case 'strings.legacy.msg_enter_username_password': return 'ユーザー名とパスワードを入力';
 			case 'strings.legacy.msg_loading': return '読み込み中...';
@@ -15998,6 +16014,8 @@ extension on _StringsZhHans {
 			case 'strings.legacy.msg_default': return '默认';
 			case 'strings.legacy.msg_memo_reminders': return '笔记提醒';
 			case 'strings.legacy.msg_import_flomo': return '从 Flomo 导入';
+			case 'strings.legacy.msg_import_swashbuckler_diary': return '从侠客日记导入';
+			case 'strings.legacy.msg_supported_json_markdown_txt_zip': return 'JSON / Markdown / TXT ZIP';
 			case 'strings.legacy.msg_format_fixed_markdown_zip': return '格式固定为 Markdown + ZIP';
 			case 'strings.legacy.msg_enter_username_password': return '请输入账号和密码';
 			case 'strings.legacy.msg_loading': return '加载中...';
@@ -17636,6 +17654,8 @@ extension on _StringsZhHantTw {
 			case 'strings.legacy.msg_default': return '默认';
 			case 'strings.legacy.msg_memo_reminders': return '笔记提醒';
 			case 'strings.legacy.msg_import_flomo': return '从 Flomo 导入';
+			case 'strings.legacy.msg_import_swashbuckler_diary': return '從俠客日記導入';
+			case 'strings.legacy.msg_supported_json_markdown_txt_zip': return 'JSON / Markdown / TXT ZIP';
 			case 'strings.legacy.msg_format_fixed_markdown_zip': return '格式固定为 Markdown + ZIP';
 			case 'strings.legacy.msg_enter_username_password': return '请输入账号和密码';
 			case 'strings.legacy.msg_loading': return '加载中...';
