@@ -41,6 +41,13 @@ onboarding:
   localLibraryNameHint: "請輸入名稱"
   localLibraryDefaultName: "本機庫"
   getStarted: "開始使用"
+legalConsent:
+  title: "請先閱讀並同意協議"
+  description: "使用 MemoFlow 前，請先閱讀並同意《用戶協議》和《隱私協議》。"
+  linksHint: "你可以先打開以下文件查看完整內容。"
+  acknowledge: "我已閱讀並同意《用戶協議》和《隱私協議》"
+  continueAction: "同意並繼續"
+  exitAction: "退出應用"
 login:
   title: "連線 Memos"
   mode:

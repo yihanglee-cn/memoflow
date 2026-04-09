@@ -41,6 +41,13 @@ onboarding:
   localLibraryNameHint: "Enter a name"
   localLibraryDefaultName: "Local library"
   getStarted: "Get started"
+legalConsent:
+  title: "Review agreements"
+  description: "Before using MemoFlow, please read and agree to the User Agreement and Privacy Policy."
+  linksHint: "Open the documents below to review the full text."
+  acknowledge: "I have read and agree to the User Agreement and Privacy Policy"
+  continueAction: "Agree and continue"
+  exitAction: "Exit app"
 login:
   title: "Connect to Memos"
   mode:

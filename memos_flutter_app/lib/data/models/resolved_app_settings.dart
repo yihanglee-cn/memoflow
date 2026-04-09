@@ -36,8 +36,7 @@ class ResolvedAppSettings {
       fontFile: device.fontFile,
       collapseLongContent: workspace.collapseLongContent,
       collapseReferences: workspace.collapseReferences,
-      showEngagementInAllMemoDetails:
-          workspace.showEngagementInAllMemoDetails,
+      showEngagementInAllMemoDetails: workspace.showEngagementInAllMemoDetails,
       launchAction: device.launchAction,
       autoSyncOnStartAndResume: workspace.autoSyncOnStartAndResume,
       quickInputAutoFocus: device.quickInputAutoFocus,
@@ -48,14 +47,12 @@ class ResolvedAppSettings {
       themeMode: device.themeMode,
       themeColor: device.themeColor,
       customTheme: device.customTheme,
-      accountThemeColors:
-          hasKey && workspace.themeColorOverride != null
-              ? {normalizedKey: workspace.themeColorOverride!}
-              : const {},
-      accountCustomThemes:
-          hasKey && workspace.customThemeOverride != null
-              ? {normalizedKey: workspace.customThemeOverride!}
-              : const {},
+      accountThemeColors: hasKey && workspace.themeColorOverride != null
+          ? {normalizedKey: workspace.themeColorOverride!}
+          : const {},
+      accountCustomThemes: hasKey && workspace.customThemeOverride != null
+          ? {normalizedKey: workspace.customThemeOverride!}
+          : const {},
       showDrawerExplore: workspace.showDrawerExplore,
       showDrawerDailyReview: workspace.showDrawerDailyReview,
       showDrawerAiSummary: workspace.showDrawerAiSummary,
@@ -70,6 +67,8 @@ class ResolvedAppSettings {
       memoToolbarPreferences: workspace.memoToolbarPreferences,
       desktopShortcutBindings: device.desktopShortcutBindings,
       lastSeenAppVersion: device.lastSeenAppVersion,
+      acceptedLegalDocumentsHash: device.acceptedLegalDocumentsHash,
+      acceptedLegalDocumentsAt: device.acceptedLegalDocumentsAt,
       skippedUpdateVersion: device.skippedUpdateVersion,
       lastSeenAnnouncementVersion: device.lastSeenAnnouncementVersion,
       lastSeenAnnouncementId: device.lastSeenAnnouncementId,
@@ -87,5 +86,6 @@ class ResolvedAppSettings {
   }
 
   @override
-  int get hashCode => Object.hash(device, workspace, workspaceKey, hasWorkspace);
+  int get hashCode =>
+      Object.hash(device, workspace, workspaceKey, hasWorkspace);
 }

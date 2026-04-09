@@ -41,6 +41,13 @@ onboarding:
   localLibraryNameHint: "Name eingeben"
   localLibraryDefaultName: "Lokale Bibliothek"
   getStarted: "Loslegen"
+legalConsent:
+  title: "Bitte zuerst zustimmen"
+  description: "Bevor du MemoFlow nutzt, lies bitte die Nutzungsbedingungen und die Datenschutzerklaerung und stimme ihnen zu."
+  linksHint: "Ueber die folgenden Links kannst du den vollstaendigen Text lesen."
+  acknowledge: "Ich habe die Nutzungsbedingungen und die Datenschutzerklaerung gelesen und stimme ihnen zu"
+  continueAction: "Zustimmen und fortfahren"
+  exitAction: "App beenden"
 login:
   title: "Mit Memos verbinden"
   mode:

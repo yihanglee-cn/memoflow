@@ -28,6 +28,8 @@ class DevicePreferences {
     windowsCloseToTray: true,
     desktopShortcutBindings: desktopShortcutDefaultBindings,
     lastSeenAppVersion: '',
+    acceptedLegalDocumentsHash: '',
+    acceptedLegalDocumentsAt: '',
     skippedUpdateVersion: '',
     lastSeenAnnouncementVersion: '',
     lastSeenAnnouncementId: 0,
@@ -63,6 +65,8 @@ class DevicePreferences {
     required this.windowsCloseToTray,
     required this.desktopShortcutBindings,
     required this.lastSeenAppVersion,
+    required this.acceptedLegalDocumentsHash,
+    required this.acceptedLegalDocumentsAt,
     required this.skippedUpdateVersion,
     required this.lastSeenAnnouncementVersion,
     required this.lastSeenAnnouncementId,
@@ -90,6 +94,8 @@ class DevicePreferences {
   final Map<DesktopShortcutAction, DesktopShortcutBinding>
   desktopShortcutBindings;
   final String lastSeenAppVersion;
+  final String acceptedLegalDocumentsHash;
+  final String acceptedLegalDocumentsAt;
   final String skippedUpdateVersion;
   final String lastSeenAnnouncementVersion;
   final int lastSeenAnnouncementId;
@@ -119,6 +125,8 @@ class DevicePreferences {
         entry.key.name: entry.value.toJson(),
     },
     'lastSeenAppVersion': lastSeenAppVersion,
+    'acceptedLegalDocumentsHash': acceptedLegalDocumentsHash,
+    'acceptedLegalDocumentsAt': acceptedLegalDocumentsAt,
     'skippedUpdateVersion': skippedUpdateVersion,
     'lastSeenAnnouncementVersion': lastSeenAnnouncementVersion,
     'lastSeenAnnouncementId': lastSeenAnnouncementId,
@@ -147,6 +155,8 @@ class DevicePreferences {
       'windowsCloseToTray': json['windowsCloseToTray'],
       'desktopShortcutBindings': json['desktopShortcutBindings'],
       'lastSeenAppVersion': json['lastSeenAppVersion'],
+      'acceptedLegalDocumentsHash': json['acceptedLegalDocumentsHash'],
+      'acceptedLegalDocumentsAt': json['acceptedLegalDocumentsAt'],
       'skippedUpdateVersion': json['skippedUpdateVersion'],
       'lastSeenAnnouncementVersion': json['lastSeenAnnouncementVersion'],
       'lastSeenAnnouncementId': json['lastSeenAnnouncementId'],
@@ -177,6 +187,8 @@ class DevicePreferences {
       windowsCloseToTray: legacy.windowsCloseToTray,
       desktopShortcutBindings: legacy.desktopShortcutBindings,
       lastSeenAppVersion: legacy.lastSeenAppVersion,
+      acceptedLegalDocumentsHash: legacy.acceptedLegalDocumentsHash,
+      acceptedLegalDocumentsAt: legacy.acceptedLegalDocumentsAt,
       skippedUpdateVersion: legacy.skippedUpdateVersion,
       lastSeenAnnouncementVersion: legacy.lastSeenAnnouncementVersion,
       lastSeenAnnouncementId: legacy.lastSeenAnnouncementId,
@@ -206,6 +218,8 @@ class DevicePreferences {
       windowsCloseToTray: windowsCloseToTray,
       desktopShortcutBindings: desktopShortcutBindings,
       lastSeenAppVersion: lastSeenAppVersion,
+      acceptedLegalDocumentsHash: acceptedLegalDocumentsHash,
+      acceptedLegalDocumentsAt: acceptedLegalDocumentsAt,
       skippedUpdateVersion: skippedUpdateVersion,
       lastSeenAnnouncementVersion: lastSeenAnnouncementVersion,
       lastSeenAnnouncementId: lastSeenAnnouncementId,
@@ -234,6 +248,8 @@ class DevicePreferences {
     bool? windowsCloseToTray,
     Map<DesktopShortcutAction, DesktopShortcutBinding>? desktopShortcutBindings,
     String? lastSeenAppVersion,
+    String? acceptedLegalDocumentsHash,
+    String? acceptedLegalDocumentsAt,
     String? skippedUpdateVersion,
     String? lastSeenAnnouncementVersion,
     int? lastSeenAnnouncementId,
@@ -270,6 +286,10 @@ class DevicePreferences {
       desktopShortcutBindings:
           desktopShortcutBindings ?? this.desktopShortcutBindings,
       lastSeenAppVersion: lastSeenAppVersion ?? this.lastSeenAppVersion,
+      acceptedLegalDocumentsHash:
+          acceptedLegalDocumentsHash ?? this.acceptedLegalDocumentsHash,
+      acceptedLegalDocumentsAt:
+          acceptedLegalDocumentsAt ?? this.acceptedLegalDocumentsAt,
       skippedUpdateVersion: skippedUpdateVersion ?? this.skippedUpdateVersion,
       lastSeenAnnouncementVersion:
           lastSeenAnnouncementVersion ?? this.lastSeenAnnouncementVersion,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../application/legal/legal_consent_policy.dart';
 import '../../core/memoflow_palette.dart';
 import '../debug/debug_tools_screen.dart';
 import '../updates/donors_wall_screen.dart';
@@ -128,8 +129,6 @@ class _AboutUsContentState extends State<AboutUsContent> {
         ? Colors.white.withValues(alpha: 0.06)
         : Colors.black.withValues(alpha: 0.06);
     const websiteUrl = 'https://memoflow.hzc073.com/';
-    const privacyUrl = 'https://memoflow.hzc073.com/help/privacy-policy';
-    const termsUrl = 'https://memoflow.hzc073.com/help/terms-of-service';
     const helpUrl = 'https://memoflow.hzc073.com/help/';
     const feedbackUrl = 'https://github.com/hzc073/memoflow/issues';
     final entries = <_AboutEntry>[
@@ -143,13 +142,19 @@ class _AboutUsContentState extends State<AboutUsContent> {
         icon: Icons.privacy_tip_outlined,
         title: context.t.strings.legacy.msg_about_privacy_policy,
         subtitle: context.t.strings.legacy.msg_about_privacy_policy_subtitle,
-        onTap: () => _openExternalLink(context, privacyUrl),
+        onTap: () => _openExternalLink(
+          context,
+          MemoFlowLegalConsentPolicy.privacyPolicyUrl,
+        ),
       ),
       _AboutEntry(
         icon: Icons.description_outlined,
         title: context.t.strings.legacy.msg_about_user_agreement,
         subtitle: context.t.strings.legacy.msg_about_user_agreement_subtitle,
-        onTap: () => _openExternalLink(context, termsUrl),
+        onTap: () => _openExternalLink(
+          context,
+          MemoFlowLegalConsentPolicy.termsOfServiceUrl,
+        ),
       ),
       _AboutEntry(
         icon: Icons.help_outline,

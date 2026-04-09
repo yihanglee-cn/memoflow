@@ -41,6 +41,13 @@ onboarding:
   localLibraryNameHint: "名前を入力"
   localLibraryDefaultName: "ローカルライブラリ"
   getStarted: "はじめる"
+legalConsent:
+  title: "利用前に同意が必要です"
+  description: "MemoFlow を利用する前に、利用規約とプライバシーポリシーを読み、同意してください。"
+  linksHint: "全文は以下のリンクから確認できます。"
+  acknowledge: "利用規約とプライバシーポリシーを読み、同意しました"
+  continueAction: "同意して続行"
+  exitAction: "アプリを終了"
 login:
   title: "Memos に接続"
   mode:

@@ -56,7 +56,10 @@ final appPreferencesProvider =
         ref,
         onLoaded: (loaded) => loadedState.state = loaded,
       );
-      ref.listen<ResolvedAppSettings>(resolvedAppSettingsProvider, (prev, next) {
+      ref.listen<ResolvedAppSettings>(resolvedAppSettingsProvider, (
+        prev,
+        next,
+      ) {
         controller.syncFromProviders();
       });
       ref.listen<bool>(devicePreferencesLoadedProvider, (prev, next) {
@@ -426,6 +429,20 @@ class AppPreferencesController extends StateNotifier<AppPreferences> {
 
   void setLastSeenAppVersion(String v) =>
       _setAndPersist(state.copyWith(lastSeenAppVersion: v), triggerSync: false);
+  void acceptLegalDocuments({
+    required String hash,
+    required String appVersion,
+  }) {
+    _setAndPersist(
+      state.copyWith(
+        acceptedLegalDocumentsHash: hash,
+        acceptedLegalDocumentsAt: DateTime.now().toUtc().toIso8601String(),
+        lastSeenAppVersion: appVersion,
+      ),
+      triggerSync: false,
+    );
+  }
+
   void setSkippedUpdateVersion(String version) {
     _setAndPersist(
       state.copyWith(skippedUpdateVersion: version),

@@ -4,9 +4,9 @@
 /// To regenerate, run: `dart run slang`
 ///
 /// Locales: 5
-/// Strings: 7950 (1590 per locale)
+/// Strings: 7980 (1596 per locale)
 ///
-/// Built on 2026-04-09 at 11:17 UTC
+/// Built on 2026-04-09 at 12:51 UTC
 
 // coverage:ignore-file
 // ignore_for_file: type=lint
@@ -165,6 +165,7 @@ class _StringsStringsEn {
 	late final _StringsStringsLanguagesEn languages = _StringsStringsLanguagesEn._(_root);
 	late final _StringsStringsLanguagesNativeEn languagesNative = _StringsStringsLanguagesNativeEn._(_root);
 	late final _StringsStringsOnboardingEn onboarding = _StringsStringsOnboardingEn._(_root);
+	late final _StringsStringsLegalConsentEn legalConsent = _StringsStringsLegalConsentEn._(_root);
 	late final _StringsStringsLoginEn login = _StringsStringsLoginEn._(_root);
 	late final _StringsStringsSettingsEn settings = _StringsStringsSettingsEn._(_root);
 	late final _StringsStringsLocationPickerEn locationPicker = _StringsStringsLocationPickerEn._(_root);
@@ -247,6 +248,21 @@ class _StringsStringsOnboardingEn {
 	String get localLibraryNameHint => 'Enter a name';
 	String get localLibraryDefaultName => 'Local library';
 	String get getStarted => 'Get started';
+}
+
+// Path: strings.legalConsent
+class _StringsStringsLegalConsentEn {
+	_StringsStringsLegalConsentEn._(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+	String get title => 'Review agreements';
+	String get description => 'Before using MemoFlow, please read and agree to the User Agreement and Privacy Policy.';
+	String get linksHint => 'Open the documents below to review the full text.';
+	String get acknowledge => 'I have read and agree to the User Agreement and Privacy Policy';
+	String get continueAction => 'Agree and continue';
+	String get exitAction => 'Exit app';
 }
 
 // Path: strings.login
@@ -2325,6 +2341,7 @@ class _StringsStringsDe extends _StringsStringsEn {
 	@override late final _StringsStringsLanguagesDe languages = _StringsStringsLanguagesDe._(_root);
 	@override late final _StringsStringsLanguagesNativeDe languagesNative = _StringsStringsLanguagesNativeDe._(_root);
 	@override late final _StringsStringsOnboardingDe onboarding = _StringsStringsOnboardingDe._(_root);
+	@override late final _StringsStringsLegalConsentDe legalConsent = _StringsStringsLegalConsentDe._(_root);
 	@override late final _StringsStringsLoginDe login = _StringsStringsLoginDe._(_root);
 	@override late final _StringsStringsSettingsDe settings = _StringsStringsSettingsDe._(_root);
 	@override late final _StringsStringsLocationPickerDe locationPicker = _StringsStringsLocationPickerDe._(_root);
@@ -2406,6 +2423,21 @@ class _StringsStringsOnboardingDe extends _StringsStringsOnboardingEn {
 	@override String get localLibraryNameHint => 'Name eingeben';
 	@override String get localLibraryDefaultName => 'Lokale Bibliothek';
 	@override String get getStarted => 'Loslegen';
+}
+
+// Path: strings.legalConsent
+class _StringsStringsLegalConsentDe extends _StringsStringsLegalConsentEn {
+	_StringsStringsLegalConsentDe._(_StringsDe root) : this._root = root, super._(root);
+
+	@override final _StringsDe _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'Bitte zuerst zustimmen';
+	@override String get description => 'Bevor du MemoFlow nutzt, lies bitte die Nutzungsbedingungen und die Datenschutzerklaerung und stimme ihnen zu.';
+	@override String get linksHint => 'Ueber die folgenden Links kannst du den vollstaendigen Text lesen.';
+	@override String get acknowledge => 'Ich habe die Nutzungsbedingungen und die Datenschutzerklaerung gelesen und stimme ihnen zu';
+	@override String get continueAction => 'Zustimmen und fortfahren';
+	@override String get exitAction => 'App beenden';
 }
 
 // Path: strings.login
@@ -4385,6 +4417,7 @@ class _StringsStringsJa extends _StringsStringsEn {
 	@override late final _StringsStringsLanguagesJa languages = _StringsStringsLanguagesJa._(_root);
 	@override late final _StringsStringsLanguagesNativeJa languagesNative = _StringsStringsLanguagesNativeJa._(_root);
 	@override late final _StringsStringsOnboardingJa onboarding = _StringsStringsOnboardingJa._(_root);
+	@override late final _StringsStringsLegalConsentJa legalConsent = _StringsStringsLegalConsentJa._(_root);
 	@override late final _StringsStringsLoginJa login = _StringsStringsLoginJa._(_root);
 	@override late final _StringsStringsSettingsJa settings = _StringsStringsSettingsJa._(_root);
 	@override late final _StringsStringsLocationPickerJa locationPicker = _StringsStringsLocationPickerJa._(_root);
@@ -4466,6 +4499,21 @@ class _StringsStringsOnboardingJa extends _StringsStringsOnboardingEn {
 	@override String get localLibraryNameHint => '名前を入力';
 	@override String get localLibraryDefaultName => 'ローカルライブラリ';
 	@override String get getStarted => 'はじめる';
+}
+
+// Path: strings.legalConsent
+class _StringsStringsLegalConsentJa extends _StringsStringsLegalConsentEn {
+	_StringsStringsLegalConsentJa._(_StringsJa root) : this._root = root, super._(root);
+
+	@override final _StringsJa _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '利用前に同意が必要です';
+	@override String get description => 'MemoFlow を利用する前に、利用規約とプライバシーポリシーを読み、同意してください。';
+	@override String get linksHint => '全文は以下のリンクから確認できます。';
+	@override String get acknowledge => '利用規約とプライバシーポリシーを読み、同意しました';
+	@override String get continueAction => '同意して続行';
+	@override String get exitAction => 'アプリを終了';
 }
 
 // Path: strings.login
@@ -6445,6 +6493,7 @@ class _StringsStringsZhHans extends _StringsStringsEn {
 	@override late final _StringsStringsLanguagesZhHans languages = _StringsStringsLanguagesZhHans._(_root);
 	@override late final _StringsStringsLanguagesNativeZhHans languagesNative = _StringsStringsLanguagesNativeZhHans._(_root);
 	@override late final _StringsStringsOnboardingZhHans onboarding = _StringsStringsOnboardingZhHans._(_root);
+	@override late final _StringsStringsLegalConsentZhHans legalConsent = _StringsStringsLegalConsentZhHans._(_root);
 	@override late final _StringsStringsLoginZhHans login = _StringsStringsLoginZhHans._(_root);
 	@override late final _StringsStringsSettingsZhHans settings = _StringsStringsSettingsZhHans._(_root);
 	@override late final _StringsStringsLocationPickerZhHans locationPicker = _StringsStringsLocationPickerZhHans._(_root);
@@ -6527,6 +6576,21 @@ class _StringsStringsOnboardingZhHans extends _StringsStringsOnboardingEn {
 	@override String get localLibraryNameHint => '请输入名称';
 	@override String get localLibraryDefaultName => '本地库';
 	@override String get getStarted => '开始使用';
+}
+
+// Path: strings.legalConsent
+class _StringsStringsLegalConsentZhHans extends _StringsStringsLegalConsentEn {
+	_StringsStringsLegalConsentZhHans._(_StringsZhHans root) : this._root = root, super._(root);
+
+	@override final _StringsZhHans _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '请先阅读并同意协议';
+	@override String get description => '使用 MemoFlow 前，请先阅读并同意《用户协议》和《隐私协议》。';
+	@override String get linksHint => '你可以先打开以下文档查看完整内容。';
+	@override String get acknowledge => '我已阅读并同意《用户协议》和《隐私协议》';
+	@override String get continueAction => '同意并继续';
+	@override String get exitAction => '退出应用';
 }
 
 // Path: strings.login
@@ -8605,6 +8669,7 @@ class _StringsStringsZhHantTw extends _StringsStringsEn {
 	@override late final _StringsStringsLanguagesZhHantTw languages = _StringsStringsLanguagesZhHantTw._(_root);
 	@override late final _StringsStringsLanguagesNativeZhHantTw languagesNative = _StringsStringsLanguagesNativeZhHantTw._(_root);
 	@override late final _StringsStringsOnboardingZhHantTw onboarding = _StringsStringsOnboardingZhHantTw._(_root);
+	@override late final _StringsStringsLegalConsentZhHantTw legalConsent = _StringsStringsLegalConsentZhHantTw._(_root);
 	@override late final _StringsStringsLoginZhHantTw login = _StringsStringsLoginZhHantTw._(_root);
 	@override late final _StringsStringsSettingsZhHantTw settings = _StringsStringsSettingsZhHantTw._(_root);
 	@override late final _StringsStringsLocationPickerZhHantTw locationPicker = _StringsStringsLocationPickerZhHantTw._(_root);
@@ -8686,6 +8751,21 @@ class _StringsStringsOnboardingZhHantTw extends _StringsStringsOnboardingEn {
 	@override String get localLibraryNameHint => '請輸入名稱';
 	@override String get localLibraryDefaultName => '本機庫';
 	@override String get getStarted => '開始使用';
+}
+
+// Path: strings.legalConsent
+class _StringsStringsLegalConsentZhHantTw extends _StringsStringsLegalConsentEn {
+	_StringsStringsLegalConsentZhHantTw._(_StringsZhHantTw root) : this._root = root, super._(root);
+
+	@override final _StringsZhHantTw _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '請先閱讀並同意協議';
+	@override String get description => '使用 MemoFlow 前，請先閱讀並同意《用戶協議》和《隱私協議》。';
+	@override String get linksHint => '你可以先打開以下文件查看完整內容。';
+	@override String get acknowledge => '我已閱讀並同意《用戶協議》和《隱私協議》';
+	@override String get continueAction => '同意並繼續';
+	@override String get exitAction => '退出應用';
 }
 
 // Path: strings.login
@@ -10730,6 +10810,12 @@ extension on Translations {
 			case 'strings.onboarding.localLibraryNameHint': return 'Enter a name';
 			case 'strings.onboarding.localLibraryDefaultName': return 'Local library';
 			case 'strings.onboarding.getStarted': return 'Get started';
+			case 'strings.legalConsent.title': return 'Review agreements';
+			case 'strings.legalConsent.description': return 'Before using MemoFlow, please read and agree to the User Agreement and Privacy Policy.';
+			case 'strings.legalConsent.linksHint': return 'Open the documents below to review the full text.';
+			case 'strings.legalConsent.acknowledge': return 'I have read and agree to the User Agreement and Privacy Policy';
+			case 'strings.legalConsent.continueAction': return 'Agree and continue';
+			case 'strings.legalConsent.exitAction': return 'Exit app';
 			case 'strings.login.title': return 'Connect to Memos';
 			case 'strings.login.mode.password': return 'Username & Password';
 			case 'strings.login.mode.token': return 'Token';
@@ -12370,6 +12456,12 @@ extension on _StringsDe {
 			case 'strings.onboarding.localLibraryNameHint': return 'Name eingeben';
 			case 'strings.onboarding.localLibraryDefaultName': return 'Lokale Bibliothek';
 			case 'strings.onboarding.getStarted': return 'Loslegen';
+			case 'strings.legalConsent.title': return 'Bitte zuerst zustimmen';
+			case 'strings.legalConsent.description': return 'Bevor du MemoFlow nutzt, lies bitte die Nutzungsbedingungen und die Datenschutzerklaerung und stimme ihnen zu.';
+			case 'strings.legalConsent.linksHint': return 'Ueber die folgenden Links kannst du den vollstaendigen Text lesen.';
+			case 'strings.legalConsent.acknowledge': return 'Ich habe die Nutzungsbedingungen und die Datenschutzerklaerung gelesen und stimme ihnen zu';
+			case 'strings.legalConsent.continueAction': return 'Zustimmen und fortfahren';
+			case 'strings.legalConsent.exitAction': return 'App beenden';
 			case 'strings.login.title': return 'Mit Memos verbinden';
 			case 'strings.login.mode.password': return 'Benutzername & Passwort';
 			case 'strings.login.mode.token': return 'Token';
@@ -13920,6 +14012,12 @@ extension on _StringsJa {
 			case 'strings.onboarding.localLibraryNameHint': return '名前を入力';
 			case 'strings.onboarding.localLibraryDefaultName': return 'ローカルライブラリ';
 			case 'strings.onboarding.getStarted': return 'はじめる';
+			case 'strings.legalConsent.title': return '利用前に同意が必要です';
+			case 'strings.legalConsent.description': return 'MemoFlow を利用する前に、利用規約とプライバシーポリシーを読み、同意してください。';
+			case 'strings.legalConsent.linksHint': return '全文は以下のリンクから確認できます。';
+			case 'strings.legalConsent.acknowledge': return '利用規約とプライバシーポリシーを読み、同意しました';
+			case 'strings.legalConsent.continueAction': return '同意して続行';
+			case 'strings.legalConsent.exitAction': return 'アプリを終了';
 			case 'strings.login.title': return 'Memos に接続';
 			case 'strings.login.mode.password': return 'ユーザー名とパスワード';
 			case 'strings.login.mode.token': return 'トークン';
@@ -15470,6 +15568,12 @@ extension on _StringsZhHans {
 			case 'strings.onboarding.localLibraryNameHint': return '请输入名称';
 			case 'strings.onboarding.localLibraryDefaultName': return '本地库';
 			case 'strings.onboarding.getStarted': return '开始使用';
+			case 'strings.legalConsent.title': return '请先阅读并同意协议';
+			case 'strings.legalConsent.description': return '使用 MemoFlow 前，请先阅读并同意《用户协议》和《隐私协议》。';
+			case 'strings.legalConsent.linksHint': return '你可以先打开以下文档查看完整内容。';
+			case 'strings.legalConsent.acknowledge': return '我已阅读并同意《用户协议》和《隐私协议》';
+			case 'strings.legalConsent.continueAction': return '同意并继续';
+			case 'strings.legalConsent.exitAction': return '退出应用';
 			case 'strings.login.title': return '连接 Memos';
 			case 'strings.login.mode.password': return '账号密码';
 			case 'strings.login.mode.token': return 'Token 登录';
@@ -17110,6 +17214,12 @@ extension on _StringsZhHantTw {
 			case 'strings.onboarding.localLibraryNameHint': return '請輸入名稱';
 			case 'strings.onboarding.localLibraryDefaultName': return '本機庫';
 			case 'strings.onboarding.getStarted': return '開始使用';
+			case 'strings.legalConsent.title': return '請先閱讀並同意協議';
+			case 'strings.legalConsent.description': return '使用 MemoFlow 前，請先閱讀並同意《用戶協議》和《隱私協議》。';
+			case 'strings.legalConsent.linksHint': return '你可以先打開以下文件查看完整內容。';
+			case 'strings.legalConsent.acknowledge': return '我已閱讀並同意《用戶協議》和《隱私協議》';
+			case 'strings.legalConsent.continueAction': return '同意並繼續';
+			case 'strings.legalConsent.exitAction': return '退出應用';
 			case 'strings.login.title': return '連線 Memos';
 			case 'strings.login.mode.password': return '帳號密碼';
 			case 'strings.login.mode.token': return 'Token 登入';

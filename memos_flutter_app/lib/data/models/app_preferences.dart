@@ -130,6 +130,8 @@ class AppPreferences {
     memoToolbarPreferences: MemoToolbarPreferences.defaults,
     desktopShortcutBindings: desktopShortcutDefaultBindings,
     lastSeenAppVersion: '',
+    acceptedLegalDocumentsHash: '',
+    acceptedLegalDocumentsAt: '',
     skippedUpdateVersion: '',
     lastSeenAnnouncementVersion: '',
     lastSeenAnnouncementId: 0,
@@ -182,6 +184,8 @@ class AppPreferences {
     required this.memoToolbarPreferences,
     required this.desktopShortcutBindings,
     required this.lastSeenAppVersion,
+    required this.acceptedLegalDocumentsHash,
+    required this.acceptedLegalDocumentsAt,
     required this.skippedUpdateVersion,
     required this.lastSeenAnnouncementVersion,
     required this.lastSeenAnnouncementId,
@@ -226,6 +230,8 @@ class AppPreferences {
   final Map<DesktopShortcutAction, DesktopShortcutBinding>
   desktopShortcutBindings;
   final String lastSeenAppVersion;
+  final String acceptedLegalDocumentsHash;
+  final String acceptedLegalDocumentsAt;
   final String skippedUpdateVersion;
   final String lastSeenAnnouncementVersion;
   final int lastSeenAnnouncementId;
@@ -299,6 +305,8 @@ class AppPreferences {
       desktopShortcutBindings,
     ),
     'lastSeenAppVersion': lastSeenAppVersion,
+    'acceptedLegalDocumentsHash': acceptedLegalDocumentsHash,
+    'acceptedLegalDocumentsAt': acceptedLegalDocumentsAt,
     'skippedUpdateVersion': skippedUpdateVersion,
     'lastSeenAnnouncementVersion': lastSeenAnnouncementVersion,
     'lastSeenAnnouncementId': lastSeenAnnouncementId,
@@ -498,6 +506,18 @@ class AppPreferences {
       return '';
     }
 
+    String parseAcceptedLegalDocumentsHash() {
+      final raw = json['acceptedLegalDocumentsHash'];
+      if (raw is String) return raw;
+      return '';
+    }
+
+    String parseAcceptedLegalDocumentsAt() {
+      final raw = json['acceptedLegalDocumentsAt'];
+      if (raw is String) return raw;
+      return '';
+    }
+
     String parseLastSeenAnnouncementVersion() {
       final raw = json['lastSeenAnnouncementVersion'];
       if (raw is String) return raw;
@@ -656,6 +676,8 @@ class AppPreferences {
       memoToolbarPreferences: parsedMemoToolbarPreferences,
       desktopShortcutBindings: parsedDesktopShortcutBindings,
       lastSeenAppVersion: parseLastSeenAppVersion(),
+      acceptedLegalDocumentsHash: parseAcceptedLegalDocumentsHash(),
+      acceptedLegalDocumentsAt: parseAcceptedLegalDocumentsAt(),
       skippedUpdateVersion: parseSkippedUpdateVersion(),
       lastSeenAnnouncementVersion: parseLastSeenAnnouncementVersion(),
       lastSeenAnnouncementId: parseLastSeenAnnouncementId(),
@@ -701,6 +723,8 @@ class AppPreferences {
     MemoToolbarPreferences? memoToolbarPreferences,
     Map<DesktopShortcutAction, DesktopShortcutBinding>? desktopShortcutBindings,
     String? lastSeenAppVersion,
+    String? acceptedLegalDocumentsHash,
+    String? acceptedLegalDocumentsAt,
     String? skippedUpdateVersion,
     String? lastSeenAnnouncementVersion,
     int? lastSeenAnnouncementId,
@@ -762,6 +786,10 @@ class AppPreferences {
       desktopShortcutBindings:
           desktopShortcutBindings ?? this.desktopShortcutBindings,
       lastSeenAppVersion: lastSeenAppVersion ?? this.lastSeenAppVersion,
+      acceptedLegalDocumentsHash:
+          acceptedLegalDocumentsHash ?? this.acceptedLegalDocumentsHash,
+      acceptedLegalDocumentsAt:
+          acceptedLegalDocumentsAt ?? this.acceptedLegalDocumentsAt,
       skippedUpdateVersion: skippedUpdateVersion ?? this.skippedUpdateVersion,
       lastSeenAnnouncementVersion:
           lastSeenAnnouncementVersion ?? this.lastSeenAnnouncementVersion,

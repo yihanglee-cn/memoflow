@@ -10,6 +10,7 @@ import '../../core/app_localization.dart';
 import '../../core/splash_tokens.g.dart';
 import '../../core/startup_timing.dart';
 import '../../application/startup/startup_coordinator.dart';
+import '../legal/legal_consent_gate.dart';
 import '../share/share_clip_models.dart';
 import '../startup/startup_screen.dart';
 import '../startup/storage_error_screen.dart';
@@ -42,6 +43,7 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
     if (!mounted) return;
     setState(() {});
   }
+
   Timer? _startupMinTimer;
   bool _startupMinElapsed = false;
   bool _startupMinTimerStarted = false;
@@ -81,7 +83,9 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
   void didUpdateWidget(covariant MainHomePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.startupCoordinator == widget.startupCoordinator) return;
-    oldWidget.startupCoordinator?.removeListener(_handleStartupCoordinatorChanged);
+    oldWidget.startupCoordinator?.removeListener(
+      _handleStartupCoordinatorChanged,
+    );
     widget.startupCoordinator?.addListener(_handleStartupCoordinatorChanged);
   }
 
@@ -166,7 +170,9 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
   Future<void> _retryStorageLoad() async {
     final container = ProviderScope.containerOf(context, listen: false);
     await container.read(appSessionProvider.notifier).reloadFromStorage();
-    await container.read(devicePreferencesProvider.notifier).reloadFromStorage();
+    await container
+        .read(devicePreferencesProvider.notifier)
+        .reloadFromStorage();
     await container
         .read(currentWorkspacePreferencesProvider.notifier)
         .reloadFromStorage();
@@ -448,19 +454,28 @@ class _MainHomePageState extends ConsumerState<MainHomePage> {
               ? StartupScreen(showSlogan: showStartupSlogan)
               : content);
 
-    return finalize(
-      AnimatedSwitcher(
-        duration: _startupFadeDuration,
-        switchInCurve: Curves.easeOut,
-        switchOutCurve: Curves.easeIn,
-        child: KeyedSubtree(
-          key: ValueKey(
-            showStartupShare
-                ? 'share_startup'
-                : (showStartup ? 'startup' : 'content'),
-          ),
-          child: child,
+    final animatedChild = AnimatedSwitcher(
+      duration: _startupFadeDuration,
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: KeyedSubtree(
+        key: ValueKey(
+          showStartupShare
+              ? 'share_startup'
+              : (showStartup ? 'startup' : 'content'),
         ),
+        child: child,
+      ),
+    );
+
+    if (showStartup || hasStorageError) {
+      return finalize(animatedChild);
+    }
+
+    return finalize(
+      LegalConsentGate(
+        placeholder: StartupScreen(showSlogan: showStartupSlogan),
+        child: animatedChild,
       ),
     );
   }
@@ -475,8 +490,9 @@ class _ShareStartupPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final target = request?.sharedTitle?.trim();
     final domain = request?.url.host ?? '';
-    final headline =
-        (target != null && target.isNotEmpty) ? target : (domain.isNotEmpty ? domain : 'Shared page');
+    final headline = (target != null && target.isNotEmpty)
+        ? target
+        : (domain.isNotEmpty ? domain : 'Shared page');
     final theme = Theme.of(context);
 
     return ColoredBox(
@@ -511,7 +527,9 @@ class _ShareStartupPlaceholder extends StatelessWidget {
                             width: 44,
                             height: 44,
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.12,
+                              ),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Icon(
@@ -530,9 +548,12 @@ class _ShareStartupPlaceholder extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  domain.isEmpty ? 'Opening shared page' : domain,
+                                  domain.isEmpty
+                                      ? 'Opening shared page'
+                                      : domain,
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+                                    color: theme.textTheme.bodySmall?.color
+                                        ?.withValues(alpha: 0.7),
                                   ),
                                 ),
                               ],

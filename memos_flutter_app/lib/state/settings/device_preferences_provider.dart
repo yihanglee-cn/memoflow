@@ -13,16 +13,19 @@ import '../sync/sync_coordinator_provider.dart';
 import '../system/storage_error_provider.dart';
 import 'preferences_migration_service.dart';
 
-final devicePreferencesRepositoryProvider = Provider<DevicePreferencesRepository>(
-  (ref) {
-    return DevicePreferencesRepository(ref.watch(preferencesMigrationServiceProvider));
-  },
-);
+final devicePreferencesRepositoryProvider =
+    Provider<DevicePreferencesRepository>((ref) {
+      return DevicePreferencesRepository(
+        ref.watch(preferencesMigrationServiceProvider),
+      );
+    });
 
 final devicePreferencesLoadedProvider = StateProvider<bool>((ref) => false);
 
 final devicePreferencesProvider =
-    StateNotifierProvider<DevicePreferencesController, DevicePreferences>((ref) {
+    StateNotifierProvider<DevicePreferencesController, DevicePreferences>((
+      ref,
+    ) {
       final loadedState = ref.read(devicePreferencesLoadedProvider.notifier);
       Future.microtask(() => loadedState.state = false);
       return DevicePreferencesController(
@@ -33,9 +36,12 @@ final devicePreferencesProvider =
     });
 
 class DevicePreferencesController extends StateNotifier<DevicePreferences> {
-  DevicePreferencesController(this._ref, this._repo, {void Function()? onLoaded})
-    : _onLoaded = onLoaded,
-      super(DevicePreferences.defaults) {
+  DevicePreferencesController(
+    this._ref,
+    this._repo, {
+    void Function()? onLoaded,
+  }) : _onLoaded = onLoaded,
+       super(DevicePreferences.defaults) {
     unawaited(_loadFromStorage());
   }
 
@@ -78,12 +84,13 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
       );
       if (!mounted) return;
       if (!identical(state, stateBeforeLoad)) return;
-      _ref.read(devicePreferencesStorageErrorProvider.notifier).state =
-          StorageLoadError(
-            source: 'device_preferences',
-            error: error,
-            stackTrace: stackTrace,
-          );
+      _ref
+          .read(devicePreferencesStorageErrorProvider.notifier)
+          .state = StorageLoadError(
+        source: 'device_preferences',
+        error: error,
+        stackTrace: stackTrace,
+      );
       return;
     } finally {
       if (mounted) {
@@ -177,10 +184,28 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
     );
   }
 
-  void setLastSeenAppVersion(String value) =>
-      _setAndPersist(state.copyWith(lastSeenAppVersion: value), triggerSync: false);
-  void setSkippedUpdateVersion(String value) =>
-      _setAndPersist(state.copyWith(skippedUpdateVersion: value), triggerSync: false);
+  void setLastSeenAppVersion(String value) => _setAndPersist(
+    state.copyWith(lastSeenAppVersion: value),
+    triggerSync: false,
+  );
+  void acceptLegalDocuments({
+    required String hash,
+    required String appVersion,
+  }) {
+    _setAndPersist(
+      state.copyWith(
+        acceptedLegalDocumentsHash: hash,
+        acceptedLegalDocumentsAt: DateTime.now().toUtc().toIso8601String(),
+        lastSeenAppVersion: appVersion,
+      ),
+      triggerSync: false,
+    );
+  }
+
+  void setSkippedUpdateVersion(String value) => _setAndPersist(
+    state.copyWith(skippedUpdateVersion: value),
+    triggerSync: false,
+  );
   void setLastSeenAnnouncement({
     required String version,
     required int announcementId,
