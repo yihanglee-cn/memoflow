@@ -42,6 +42,7 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
     void Function()? onLoaded,
   }) : _onLoaded = onLoaded,
        super(DevicePreferences.defaults) {
+    _queuedState = state;
     unawaited(_loadFromStorage());
   }
 
@@ -49,6 +50,27 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
   final DevicePreferencesRepository _repo;
   final void Function()? _onLoaded;
   Future<void> _writeChain = Future<void>.value();
+  late DevicePreferences _queuedState;
+  bool _deferringWritesForLegalConsent = false;
+  bool _hasDeferredWrite = false;
+  bool _deferredWriteRequiresSync = false;
+
+  Future<T> _enqueueWriteTask<T>(Future<T> Function() task) {
+    final completer = Completer<T>();
+    _writeChain = _writeChain.then((_) async {
+      try {
+        final result = await task();
+        if (!completer.isCompleted) {
+          completer.complete(result);
+        }
+      } catch (error, stackTrace) {
+        if (!completer.isCompleted) {
+          completer.completeError(error, stackTrace);
+        }
+      }
+    });
+    return completer.future;
+  }
 
   Future<void> reloadFromStorage() async {
     await _loadFromStorage();
@@ -76,6 +98,7 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
       }
       _ref.read(devicePreferencesStorageErrorProvider.notifier).state = null;
       state = result.data ?? DevicePreferences.defaults;
+      _queuedState = state;
     } catch (error, stackTrace) {
       LogManager.instance.error(
         'Failed to load device preferences.',
@@ -99,8 +122,26 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
     }
   }
 
-  void _setAndPersist(DevicePreferences next, {bool triggerSync = true}) {
-    state = next;
+  void _requestSyncIfNeeded(bool triggerSync) {
+    if (!triggerSync) {
+      return;
+    }
+    unawaited(
+      _ref
+          .read(syncCoordinatorProvider.notifier)
+          .requestSync(
+            const SyncRequest(
+              kind: SyncRequestKind.webDavSync,
+              reason: SyncRequestReason.settings,
+            ),
+          ),
+    );
+  }
+
+  void _queueBestEffortWrite(
+    DevicePreferences next, {
+    bool triggerSync = true,
+  }) {
     _writeChain = _writeChain.then((_) async {
       try {
         await _repo.write(next);
@@ -112,18 +153,34 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
         );
       }
     });
-    if (triggerSync) {
-      unawaited(
-        _ref
-            .read(syncCoordinatorProvider.notifier)
-            .requestSync(
-              const SyncRequest(
-                kind: SyncRequestKind.webDavSync,
-                reason: SyncRequestReason.settings,
-              ),
-            ),
-      );
+    _requestSyncIfNeeded(triggerSync);
+  }
+
+  void _setAndPersist(DevicePreferences next, {bool triggerSync = true}) {
+    _queuedState = next;
+    if (_deferringWritesForLegalConsent) {
+      _hasDeferredWrite = true;
+      _deferredWriteRequiresSync = _deferredWriteRequiresSync || triggerSync;
+      return;
     }
+    state = next;
+    _queueBestEffortWrite(next, triggerSync: triggerSync);
+  }
+
+  void _flushDeferredWriteIfNeeded() {
+    if (!_hasDeferredWrite) {
+      return;
+    }
+    final next = _queuedState;
+    final triggerSync = _deferredWriteRequiresSync;
+    _hasDeferredWrite = false;
+    _deferredWriteRequiresSync = false;
+    _queueBestEffortWrite(next, triggerSync: triggerSync);
+  }
+
+  void _clearDeferredWriteFlags() {
+    _hasDeferredWrite = false;
+    _deferredWriteRequiresSync = false;
   }
 
   Future<void> waitForPendingWrites() => _writeChain;
@@ -134,76 +191,114 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
   }) async => _setAndPersist(next, triggerSync: triggerSync);
 
   void setLanguage(AppLanguage value) =>
-      _setAndPersist(state.copyWith(language: value));
+      _setAndPersist(_queuedState.copyWith(language: value));
   void setHasSelectedLanguage(bool value) =>
-      _setAndPersist(state.copyWith(hasSelectedLanguage: value));
+      _setAndPersist(_queuedState.copyWith(hasSelectedLanguage: value));
   void setOnboardingMode(AppOnboardingMode? value) =>
-      _setAndPersist(state.copyWith(onboardingMode: value));
-  void setHomeInitialLoadingOverlayShown(bool value) =>
-      _setAndPersist(state.copyWith(homeInitialLoadingOverlayShown: value));
+      _setAndPersist(_queuedState.copyWith(onboardingMode: value));
+  void setHomeInitialLoadingOverlayShown(bool value) => _setAndPersist(
+    _queuedState.copyWith(homeInitialLoadingOverlayShown: value),
+  );
   void setFontSize(AppFontSize value) =>
-      _setAndPersist(state.copyWith(fontSize: value));
+      _setAndPersist(_queuedState.copyWith(fontSize: value));
   void setLineHeight(AppLineHeight value) =>
-      _setAndPersist(state.copyWith(lineHeight: value));
-  void setFontFamily({String? family, String? filePath}) =>
-      _setAndPersist(state.copyWith(fontFamily: family, fontFile: filePath));
+      _setAndPersist(_queuedState.copyWith(lineHeight: value));
+  void setFontFamily({String? family, String? filePath}) => _setAndPersist(
+    _queuedState.copyWith(fontFamily: family, fontFile: filePath),
+  );
   void setConfirmExitOnBack(bool value) =>
-      _setAndPersist(state.copyWith(confirmExitOnBack: value));
+      _setAndPersist(_queuedState.copyWith(confirmExitOnBack: value));
   void setHapticsEnabled(bool value) =>
-      _setAndPersist(state.copyWith(hapticsEnabled: value));
+      _setAndPersist(_queuedState.copyWith(hapticsEnabled: value));
   void setNetworkLoggingEnabled(bool value) =>
-      _setAndPersist(state.copyWith(networkLoggingEnabled: value));
+      _setAndPersist(_queuedState.copyWith(networkLoggingEnabled: value));
   void setThemeMode(AppThemeMode value) =>
-      _setAndPersist(state.copyWith(themeMode: value));
+      _setAndPersist(_queuedState.copyWith(themeMode: value));
   void setThemeColor(AppThemeColor value) =>
-      _setAndPersist(state.copyWith(themeColor: value));
+      _setAndPersist(_queuedState.copyWith(themeColor: value));
   void setCustomTheme(CustomThemeSettings value) =>
-      _setAndPersist(state.copyWith(customTheme: value));
+      _setAndPersist(_queuedState.copyWith(customTheme: value));
   void setLaunchAction(LaunchAction value) =>
-      _setAndPersist(state.copyWith(launchAction: value));
+      _setAndPersist(_queuedState.copyWith(launchAction: value));
   void setQuickInputAutoFocus(bool value) =>
-      _setAndPersist(state.copyWith(quickInputAutoFocus: value));
+      _setAndPersist(_queuedState.copyWith(quickInputAutoFocus: value));
   void setThirdPartyShareEnabled(bool value) =>
-      _setAndPersist(state.copyWith(thirdPartyShareEnabled: value));
+      _setAndPersist(_queuedState.copyWith(thirdPartyShareEnabled: value));
   void setWindowsCloseToTray(bool value) =>
-      _setAndPersist(state.copyWith(windowsCloseToTray: value));
+      _setAndPersist(_queuedState.copyWith(windowsCloseToTray: value));
   void setDesktopShortcutBinding({
     required DesktopShortcutAction action,
     required DesktopShortcutBinding binding,
   }) {
     final next = Map<DesktopShortcutAction, DesktopShortcutBinding>.from(
-      state.desktopShortcutBindings,
+      _queuedState.desktopShortcutBindings,
     );
     next[action] = binding;
-    _setAndPersist(state.copyWith(desktopShortcutBindings: next));
+    _setAndPersist(_queuedState.copyWith(desktopShortcutBindings: next));
   }
 
   void resetDesktopShortcutBindings() {
     _setAndPersist(
-      state.copyWith(desktopShortcutBindings: desktopShortcutDefaultBindings),
+      _queuedState.copyWith(
+        desktopShortcutBindings: desktopShortcutDefaultBindings,
+      ),
     );
   }
 
   void setLastSeenAppVersion(String value) => _setAndPersist(
-    state.copyWith(lastSeenAppVersion: value),
+    _queuedState.copyWith(lastSeenAppVersion: value),
     triggerSync: false,
   );
-  void acceptLegalDocuments({
+  Future<void> acceptLegalDocuments({
     required String hash,
     required String appVersion,
-  }) {
-    _setAndPersist(
-      state.copyWith(
-        acceptedLegalDocumentsHash: hash,
-        acceptedLegalDocumentsAt: DateTime.now().toUtc().toIso8601String(),
-        lastSeenAppVersion: appVersion,
-      ),
-      triggerSync: false,
+  }) async {
+    final trimmedHash = hash.trim();
+    final previousState = state;
+    final next = _queuedState.copyWith(
+      acceptedLegalDocumentsHash: trimmedHash,
+      acceptedLegalDocumentsAt: DateTime.now().toUtc().toIso8601String(),
+      lastSeenAppVersion: appVersion,
     );
+    _queuedState = next;
+    _deferringWritesForLegalConsent = true;
+    try {
+      await _enqueueWriteTask(() async {
+        await _repo.write(next);
+        final saved = await _repo.read();
+        if (saved.acceptedLegalDocumentsHash.trim() != trimmedHash) {
+          throw StateError('Failed to persist legal consent.');
+        }
+      });
+    } catch (_) {
+      _deferringWritesForLegalConsent = false;
+      _clearDeferredWriteFlags();
+      _queuedState = previousState;
+      if (mounted) {
+        state = previousState;
+      }
+      try {
+        await _repo.write(previousState);
+      } catch (error, stackTrace) {
+        LogManager.instance.warn(
+          'Failed to restore device preferences after legal consent failure.',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      rethrow;
+    }
+    _deferringWritesForLegalConsent = false;
+    if (!mounted) {
+      _clearDeferredWriteFlags();
+      return;
+    }
+    state = _queuedState;
+    _flushDeferredWriteIfNeeded();
   }
 
   void setSkippedUpdateVersion(String value) => _setAndPersist(
-    state.copyWith(skippedUpdateVersion: value),
+    _queuedState.copyWith(skippedUpdateVersion: value),
     triggerSync: false,
   );
   void setLastSeenAnnouncement({
@@ -211,7 +306,7 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
     required int announcementId,
   }) {
     _setAndPersist(
-      state.copyWith(
+      _queuedState.copyWith(
         lastSeenAnnouncementVersion: version,
         lastSeenAnnouncementId: announcementId,
       ),
@@ -221,7 +316,7 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
 
   void setLastSeenNoticeHash(String value) {
     _setAndPersist(
-      state.copyWith(lastSeenNoticeHash: value),
+      _queuedState.copyWith(lastSeenNoticeHash: value),
       triggerSync: false,
     );
   }

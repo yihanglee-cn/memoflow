@@ -143,25 +143,35 @@ class _LegalConsentScreenState extends ConsumerState<LegalConsentScreen> {
     await SystemNavigator.pop();
   }
 
-  void _agreeAndContinue() {
+  Future<void> _agreeAndContinue() async {
     if (_submitting || !_agreed) {
       return;
     }
     setState(() {
       _submitting = true;
     });
-    ref
-        .read(devicePreferencesProvider.notifier)
-        .acceptLegalDocuments(
-          hash: MemoFlowLegalConsentPolicy.currentDocumentsHash,
-          appVersion: widget.currentAppVersion,
+    try {
+      await ref
+          .read(devicePreferencesProvider.notifier)
+          .acceptLegalDocuments(
+            hash: MemoFlowLegalConsentPolicy.currentDocumentsHash,
+            appVersion: widget.currentAppVersion,
+          );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.t.strings.legacy.msg_save_failed_2(e: error)),
+          ),
         );
-    if (!mounted) {
-      return;
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+        });
+      }
     }
-    setState(() {
-      _submitting = false;
-    });
   }
 
   @override
@@ -355,7 +365,7 @@ class _LegalConsentScreenState extends ConsumerState<LegalConsentScreen> {
                         child: FilledButton(
                           onPressed: (_submitting || !_agreed)
                               ? null
-                              : _agreeAndContinue,
+                              : () => unawaited(_agreeAndContinue()),
                           style: FilledButton.styleFrom(
                             backgroundColor: MemoFlowPalette.primary,
                             padding: const EdgeInsets.symmetric(vertical: 14),
