@@ -2378,9 +2378,9 @@ class _RandomWalkCard extends StatelessWidget {
       final line = trimmed.replaceFirst(linePattern, '');
       final m = valuePattern.firstMatch(line);
       if (m == null) continue;
-      final hh = int.tryParse(m.group(2) ?? '') ?? 0;
-      final mm = int.tryParse(m.group(3) ?? '') ?? 0;
-      final ss = int.tryParse(m.group(4) ?? '') ?? 0;
+      final hh = int.tryParse(m.group(1) ?? '') ?? 0;
+      final mm = int.tryParse(m.group(2) ?? '') ?? 0;
+      final ss = int.tryParse(m.group(3) ?? '') ?? 0;
       if (hh == 0 && mm == 0 && ss == 0) return null;
       return Duration(hours: hh, minutes: mm, seconds: ss);
     }
