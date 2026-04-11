@@ -336,6 +336,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           state: 'NORMAL',
           showDrawer: true,
           enableCompose: true,
+          enableDesktopResizableHomeInlineCompose: true,
         ),
         if (_overlayVisible)
           Positioned.fill(

@@ -148,6 +148,8 @@ Widget _buildBodyScreen({Widget? drawerPanel}) {
     resolvedTagChip: null,
     advancedFilterSliver: null,
     inlineComposeChild: null,
+    inlineComposePadding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+    expandDesktopBodyWidth: false,
     tagFilterBarChild: null,
     searchLandingChild: null,
     bootstrapOverlayChild: null,

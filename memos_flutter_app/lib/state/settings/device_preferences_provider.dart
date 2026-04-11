@@ -237,6 +237,12 @@ class DevicePreferencesController extends StateNotifier<DevicePreferences> {
     _setAndPersist(_queuedState.copyWith(desktopShortcutBindings: next));
   }
 
+  void setHomeInlineComposePanelLayout(
+    HomeInlineComposePanelLayoutPreference? value,
+  ) {
+    _setAndPersist(_queuedState.copyWith(homeInlineComposePanelLayout: value));
+  }
+
   void resetDesktopShortcutBindings() {
     _setAndPersist(
       _queuedState.copyWith(

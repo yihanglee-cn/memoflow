@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -11,6 +12,7 @@ import 'package:intl/intl.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../application/desktop/desktop_tray_controller.dart';
+import '../../application/desktop/desktop_resizable_panel_shell.dart';
 import '../../application/sync/sync_feedback_presenter.dart';
 import '../../application/sync/sync_request.dart';
 import '../../application/sync/sync_types.dart';
@@ -25,6 +27,7 @@ import '../../core/sync_error_presenter.dart';
 import '../../core/top_toast.dart';
 import '../../data/models/app_preferences.dart';
 import '../../data/models/compose_draft.dart';
+import '../../data/models/device_preferences.dart';
 import '../../data/models/local_memo.dart';
 import '../../data/models/shortcut.dart';
 import '../../data/repositories/scene_micro_guide_repository.dart';
@@ -112,6 +115,7 @@ class MemosListScreen extends ConsumerStatefulWidget {
     this.presentation = HomeScreenPresentation.standalone,
     this.embeddedNavigationHost,
     this.hidePrimaryComposeFab = false,
+    this.enableDesktopResizableHomeInlineCompose = false,
   });
 
   final String title;
@@ -132,6 +136,7 @@ class MemosListScreen extends ConsumerStatefulWidget {
   final HomeScreenPresentation presentation;
   final HomeEmbeddedNavigationHost? embeddedNavigationHost;
   final bool hidePrimaryComposeFab;
+  final bool enableDesktopResizableHomeInlineCompose;
 
   @override
   ConsumerState<MemosListScreen> createState() => _MemosListScreenState();
@@ -141,6 +146,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     with WindowListener {
   static const int _initialPageSize = 200;
   static const int _pageStep = 200;
+  static const double _homeInlineComposeHitZoneExtent = 8;
+  static const double _homeInlineComposeViewportMargin = 20;
+  static const double _homeInlineComposeMinWidth = 420;
+  static const double _homeInlineComposeDefaultWidth = 620;
+  static const double _homeInlineComposeMinEditorHeight = 96;
+  static const double _homeInlineComposeMaxEditorHeight = 420;
 
   final DateFormat _dayDateFmt = DateFormat('yyyy-MM-dd');
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -178,6 +189,14 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   NoteDraftController? _noteDraftController;
   NoteDraftRepository? _noteDraftRepository;
   String _inlineComposeDefaultVisibility = 'PRIVATE';
+  double? _homeInlinePanelWidth;
+  double? _homeInlinePanelEditorHeight;
+  double _homeInlinePanelXRatio = 0;
+  double _homeInlinePanelYRatio = 0;
+  double _homeInlinePanelChromeHeight = 0;
+  double _homeInlineAvailableHeight = 0;
+  bool _homeInlinePanelMetricsReady = false;
+  bool _homeInlinePanelRestored = false;
 
   TextEditingController get _searchController =>
       _headerController.searchController;
@@ -223,6 +242,230 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   bool get _isAllMemos {
     final tag = _activeTagFilter;
     return widget.state == 'NORMAL' && (tag == null || tag.isEmpty);
+  }
+
+  bool get _enableResizableHomeInlineCompose =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows &&
+      widget.enableDesktopResizableHomeInlineCompose;
+
+  double _effectiveHomeInlineAvailableHeight(BuildContext context) {
+    if (_homeInlineAvailableHeight > 0) {
+      return _homeInlineAvailableHeight;
+    }
+    return math.max(320, MediaQuery.sizeOf(context).height - 240);
+  }
+
+  double _resolveHomeInlineMaxWidth(double availableWidth) {
+    if (availableWidth <= 0) return 0;
+    return math.max(0, availableWidth - _homeInlineComposeViewportMargin * 2);
+  }
+
+  double _resolveHomeInlineMaxEditorHeight(double availableHeight) {
+    if (availableHeight <= 0) return 0;
+    return math.min(_homeInlineComposeMaxEditorHeight, availableHeight * 0.5);
+  }
+
+  double _clampRatio(double value) => value.clamp(0, 1).toDouble();
+
+  double _offsetFromRatio(double ratio, double freeSpace) {
+    if (freeSpace <= 0) return 0;
+    return _clampRatio(ratio) * freeSpace;
+  }
+
+  double _ratioFromOffset(double offset, double freeSpace) {
+    if (freeSpace <= 0) return 0;
+    return _clampRatio(offset / freeSpace);
+  }
+
+  double _resolveHomeInlineHorizontalFreeWidth(
+    double availableWidth,
+    double panelWidth,
+  ) {
+    return math
+        .max(
+          0,
+          availableWidth - panelWidth - _homeInlineComposeViewportMargin * 2,
+        )
+        .toDouble();
+  }
+
+  void _syncHomeInlineAvailableHeight() {
+    final size = _floatingCollapseViewportKey.currentContext?.size;
+    final next = size?.height ?? 0;
+    if (!mounted || next <= 0) return;
+    if ((_homeInlineAvailableHeight - next).abs() < 0.5) return;
+    setState(() => _homeInlineAvailableHeight = next);
+  }
+
+  void _handleHomeInlineLayoutMetrics(InlineComposeLayoutMetrics metrics) {
+    final chromeHeight = math
+        .max(0, metrics.totalHeight - metrics.editorViewportHeight)
+        .toDouble();
+    final nextEditorHeight =
+        _homeInlinePanelEditorHeight ?? metrics.editorViewportHeight;
+    if ((_homeInlinePanelChromeHeight - chromeHeight).abs() < 0.5 &&
+        ((_homeInlinePanelEditorHeight ?? -1) - nextEditorHeight).abs() < 0.5 &&
+        _homeInlinePanelMetricsReady) {
+      return;
+    }
+    setState(() {
+      _homeInlinePanelChromeHeight = chromeHeight;
+      _homeInlinePanelEditorHeight = nextEditorHeight;
+      _homeInlinePanelMetricsReady = true;
+    });
+  }
+
+  void _maybeRestoreHomeInlinePanelLayout({
+    required double availableWidth,
+    required double availableHeight,
+  }) {
+    if (_homeInlinePanelRestored ||
+        !_homeInlinePanelMetricsReady ||
+        availableWidth <= 0 ||
+        availableHeight <= 0) {
+      return;
+    }
+    final saved = ref.read(
+      devicePreferencesProvider.select(
+        (value) => value.homeInlineComposePanelLayout,
+      ),
+    );
+    final maxWidth = _resolveHomeInlineMaxWidth(availableWidth);
+    final maxEditorHeight = _resolveHomeInlineMaxEditorHeight(availableHeight);
+    final minWidth = math.min(_homeInlineComposeMinWidth, maxWidth);
+    final minEditorHeight = math.min(
+      _homeInlineComposeMinEditorHeight,
+      maxEditorHeight,
+    );
+    final restoredWidth = (saved?.width ?? _homeInlineComposeDefaultWidth)
+        .clamp(minWidth, maxWidth)
+        .toDouble();
+    final restoredEditorHeight =
+        (saved?.editorHeight ??
+                _homeInlinePanelEditorHeight ??
+                _homeInlineComposeMinEditorHeight)
+            .clamp(minEditorHeight, maxEditorHeight)
+            .toDouble();
+    final panelHeight = _homeInlinePanelChromeHeight + restoredEditorHeight;
+    final freeWidth = _resolveHomeInlineHorizontalFreeWidth(
+      availableWidth,
+      restoredWidth,
+    );
+    final freeHeight = math.max(0, availableHeight - panelHeight);
+    setState(() {
+      _homeInlinePanelWidth = restoredWidth;
+      _homeInlinePanelEditorHeight = restoredEditorHeight;
+      _homeInlinePanelXRatio = _clampRatio(saved?.xRatio ?? 0);
+      _homeInlinePanelYRatio = _clampRatio(saved?.yRatio ?? 0);
+      if (freeWidth <= 0) {
+        _homeInlinePanelXRatio = 0;
+      }
+      if (freeHeight <= 0) {
+        _homeInlinePanelYRatio = 0;
+      }
+      _homeInlinePanelRestored = true;
+    });
+  }
+
+  DesktopResizablePanelRect? _buildHomeInlinePanelRect({
+    required double availableWidth,
+    required double availableHeight,
+  }) {
+    final width = _homeInlinePanelWidth;
+    final editorHeight = _homeInlinePanelEditorHeight;
+    if (width == null ||
+        editorHeight == null ||
+        !_homeInlinePanelMetricsReady) {
+      return null;
+    }
+    final minWidth = math.min(
+      _homeInlineComposeMinWidth,
+      _resolveHomeInlineMaxWidth(availableWidth),
+    );
+    final minEditorHeight = math.min(
+      _homeInlineComposeMinEditorHeight,
+      _resolveHomeInlineMaxEditorHeight(availableHeight),
+    );
+    final clampedWidth = width
+        .clamp(minWidth, _resolveHomeInlineMaxWidth(availableWidth))
+        .toDouble();
+    final clampedEditorHeight = editorHeight
+        .clamp(
+          minEditorHeight,
+          _resolveHomeInlineMaxEditorHeight(availableHeight),
+        )
+        .toDouble();
+    final panelHeight = _homeInlinePanelChromeHeight + clampedEditorHeight;
+    final freeWidth = _resolveHomeInlineHorizontalFreeWidth(
+      availableWidth,
+      clampedWidth,
+    );
+    final freeHeight = math.max(0, availableHeight - panelHeight).toDouble();
+    final logicalLeft = _offsetFromRatio(_homeInlinePanelXRatio, freeWidth);
+    final logicalTop = _offsetFromRatio(_homeInlinePanelYRatio, freeHeight);
+    return DesktopResizablePanelRect(
+      left:
+          _homeInlineComposeHitZoneExtent +
+          _homeInlineComposeViewportMargin +
+          logicalLeft,
+      top: _homeInlineComposeHitZoneExtent + logicalTop,
+      width: clampedWidth,
+      height: panelHeight,
+    );
+  }
+
+  void _applyHomeInlinePanelRect(
+    DesktopResizablePanelRect rect, {
+    required double availableWidth,
+    required double availableHeight,
+    bool persist = false,
+  }) {
+    final maxWidth = _resolveHomeInlineMaxWidth(availableWidth);
+    final maxEditorHeight = _resolveHomeInlineMaxEditorHeight(availableHeight);
+    final minWidth = math.min(_homeInlineComposeMinWidth, maxWidth);
+    final minEditorHeight = math.min(
+      _homeInlineComposeMinEditorHeight,
+      maxEditorHeight,
+    );
+    final nextWidth = rect.width.clamp(minWidth, maxWidth).toDouble();
+    final nextEditorHeight = (rect.height - _homeInlinePanelChromeHeight)
+        .clamp(minEditorHeight, maxEditorHeight)
+        .toDouble();
+    final panelHeight = _homeInlinePanelChromeHeight + nextEditorHeight;
+    final freeWidth = _resolveHomeInlineHorizontalFreeWidth(
+      availableWidth,
+      nextWidth,
+    );
+    final freeHeight = math.max(0, availableHeight - panelHeight).toDouble();
+    final nextLeft =
+        (rect.left -
+                _homeInlineComposeHitZoneExtent -
+                _homeInlineComposeViewportMargin)
+            .clamp(0, freeWidth)
+            .toDouble();
+    final nextTop = (rect.top - _homeInlineComposeHitZoneExtent)
+        .clamp(0, freeHeight)
+        .toDouble();
+    final nextXRatio = _ratioFromOffset(nextLeft, freeWidth);
+    final nextYRatio = _ratioFromOffset(nextTop, freeHeight);
+    setState(() {
+      _homeInlinePanelWidth = nextWidth;
+      _homeInlinePanelEditorHeight = nextEditorHeight;
+      _homeInlinePanelXRatio = nextXRatio;
+      _homeInlinePanelYRatio = nextYRatio;
+    });
+    if (!persist) return;
+    ref
+        .read(devicePreferencesProvider.notifier)
+        .setHomeInlineComposePanelLayout(
+          HomeInlineComposePanelLayoutPreference(
+            width: nextWidth,
+            editorHeight: nextEditorHeight,
+            xRatio: nextXRatio,
+            yRatio: nextYRatio,
+          ),
+        );
   }
 
   @override
@@ -466,6 +709,7 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _handleViewportScrollChanged();
       _openDrawerIfNeeded();
+      _syncHomeInlineAvailableHeight();
       if (!mounted) return;
       final message = widget.toastMessage;
       if (message == null || message.trim().isEmpty) return;
@@ -1142,11 +1386,13 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
   @override
   void onWindowMaximize() {
     _routeDelegate.onWindowMaximize();
+    _syncHomeInlineAvailableHeight();
   }
 
   @override
   void onWindowUnmaximize() {
     _routeDelegate.onWindowUnmaximize();
+    _syncHomeInlineAvailableHeight();
   }
 
   String _formatDuration(Duration? value) {
@@ -1922,6 +2168,13 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
       tagColorLookup: tagColorLookup,
       templateSettings: templateSettings,
     );
+    if (_enableResizableHomeInlineCompose &&
+        viewState.layout.useInlineCompose) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncHomeInlineAvailableHeight();
+      });
+    }
     final activeListGuideId = viewState.guide.activeListGuideId;
     if (_presentedListGuideId == null && activeListGuideId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2051,12 +2304,12 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
     final quickActions = [
       for (final action in resolvedQuickActions)
         if (action != HomeQuickAction.none)
-        buildHomeQuickActionChipData(
-          context: context,
-          action: action,
-          isDark: isDark,
-          onPressed: () => _openHomeQuickAction(action),
-        ),
+          buildHomeQuickActionChipData(
+            context: context,
+            action: action,
+            isDark: isDark,
+            onPressed: () => _openHomeQuickAction(action),
+          ),
     ];
 
     final titleChild = MemosListHeaderTitle(
@@ -2124,75 +2377,172 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
             tagColors: tagColorLookup,
           )
         : null;
+    final devicePreferencesLoaded = ref.watch(devicePreferencesLoadedProvider);
+    final shouldEnableResizableHomeInlineCompose =
+        _enableResizableHomeInlineCompose && viewState.layout.useInlineCompose;
+    Widget buildInlineComposeCard({
+      double? desktopEditorViewportHeight,
+      ValueChanged<InlineComposeLayoutMetrics>? onLayoutMetricsChanged,
+    }) {
+      return MemosListInlineComposeCard(
+        composer: _inlineComposer,
+        focusNode: _inlineComposeFocusNode,
+        pendingDraftCount: ref.watch(composeDraftCountProvider),
+        busy: _inlineComposeBusy,
+        locating: _inlineComposeCoordinator.locating,
+        location: _inlineComposeCoordinator.location,
+        visibility: inlineVisibility,
+        visibilityTouched: _inlineComposeCoordinator.visibilityTouched,
+        visibilityLabel: inlineVisibilityPresentation.label,
+        visibilityIcon: inlineVisibilityPresentation.icon,
+        visibilityColor: inlineVisibilityPresentation.color,
+        isDark: isDark,
+        tagStats: tagStats,
+        availableTemplates: viewState.availableTemplates,
+        tagColorLookup: tagColorLookup,
+        toolbarPreferences: toolbarPreferences,
+        editorFieldKey: _inlineEditorFieldKey,
+        tagMenuKey: _inlineTagMenuKey,
+        templateMenuKey: _inlineTemplateMenuKey,
+        todoMenuKey: _inlineTodoMenuKey,
+        visibilityMenuKey: _inlineVisibilityMenuKey,
+        onSubmit: () => unawaited(_submitInlineCompose()),
+        onRemoveAttachment: _inlineComposeCoordinator.removePendingAttachment,
+        onOpenAttachment: (attachment) => unawaited(
+          _inlineComposeCoordinator.openAttachmentViewer(context, attachment),
+        ),
+        onRemoveLinkedMemo: _inlineComposeCoordinator.removeLinkedMemo,
+        onRequestLocation: () =>
+            unawaited(_inlineComposeCoordinator.requestLocation(context)),
+        onClearLocation: _inlineComposeCoordinator.clearLocation,
+        onOpenTemplateMenu: () => unawaited(
+          _inlineComposeCoordinator.openTemplateMenuFromKey(
+            context,
+            _inlineTemplateMenuKey,
+            viewState.availableTemplates,
+          ),
+        ),
+        onPickGallery: () => unawaited(
+          _inlineComposeCoordinator.pickGalleryAttachments(context),
+        ),
+        onPickFile: () =>
+            unawaited(_inlineComposeCoordinator.pickAttachments(context)),
+        onOpenLinkMemo: () =>
+            unawaited(_inlineComposeCoordinator.openLinkMemoSheet(context)),
+        onCaptureCamera: () =>
+            unawaited(_inlineComposeCoordinator.capturePhoto(context)),
+        onOpenDraftBox: () => unawaited(_openInlineComposeDraftBox()),
+        onOpenTodoMenu: () => unawaited(
+          _inlineComposeCoordinator.openTodoShortcutMenuFromKey(
+            context,
+            _inlineTodoMenuKey,
+          ),
+        ),
+        onOpenVisibilityMenu: () => unawaited(
+          _inlineComposeCoordinator.openVisibilityMenuFromKey(
+            context,
+            _inlineVisibilityMenuKey,
+          ),
+        ),
+        onCutParagraphs: () =>
+            unawaited(_inlineComposeUiController.cutCurrentParagraphs()),
+        desktopEditorViewportHeight: desktopEditorViewportHeight,
+        onLayoutMetricsChanged: onLayoutMetricsChanged,
+      );
+    }
+
     final inlineComposeChild = viewState.layout.useInlineCompose
-        ? MemosListInlineComposeCard(
-            composer: _inlineComposer,
-            focusNode: _inlineComposeFocusNode,
-            pendingDraftCount: ref.watch(composeDraftCountProvider),
-            busy: _inlineComposeBusy,
-            locating: _inlineComposeCoordinator.locating,
-            location: _inlineComposeCoordinator.location,
-            visibility: inlineVisibility,
-            visibilityTouched: _inlineComposeCoordinator.visibilityTouched,
-            visibilityLabel: inlineVisibilityPresentation.label,
-            visibilityIcon: inlineVisibilityPresentation.icon,
-            visibilityColor: inlineVisibilityPresentation.color,
-            isDark: isDark,
-            tagStats: tagStats,
-            availableTemplates: viewState.availableTemplates,
-            tagColorLookup: tagColorLookup,
-            toolbarPreferences: toolbarPreferences,
-            editorFieldKey: _inlineEditorFieldKey,
-            tagMenuKey: _inlineTagMenuKey,
-            templateMenuKey: _inlineTemplateMenuKey,
-            todoMenuKey: _inlineTodoMenuKey,
-            visibilityMenuKey: _inlineVisibilityMenuKey,
-            onSubmit: () => unawaited(_submitInlineCompose()),
-            onRemoveAttachment:
-                _inlineComposeCoordinator.removePendingAttachment,
-            onOpenAttachment: (attachment) => unawaited(
-              _inlineComposeCoordinator.openAttachmentViewer(
-                context,
-                attachment,
-              ),
-            ),
-            onRemoveLinkedMemo: _inlineComposeCoordinator.removeLinkedMemo,
-            onRequestLocation: () =>
-                unawaited(_inlineComposeCoordinator.requestLocation(context)),
-            onClearLocation: _inlineComposeCoordinator.clearLocation,
-            onOpenTemplateMenu: () => unawaited(
-              _inlineComposeCoordinator.openTemplateMenuFromKey(
-                context,
-                _inlineTemplateMenuKey,
-                viewState.availableTemplates,
-              ),
-            ),
-            onPickGallery: () => unawaited(
-              _inlineComposeCoordinator.pickGalleryAttachments(context),
-            ),
-            onPickFile: () =>
-                unawaited(_inlineComposeCoordinator.pickAttachments(context)),
-            onOpenLinkMemo: () =>
-                unawaited(_inlineComposeCoordinator.openLinkMemoSheet(context)),
-            onCaptureCamera: () =>
-                unawaited(_inlineComposeCoordinator.capturePhoto(context)),
-            onOpenDraftBox: () => unawaited(_openInlineComposeDraftBox()),
-            onOpenTodoMenu: () => unawaited(
-              _inlineComposeCoordinator.openTodoShortcutMenuFromKey(
-                context,
-                _inlineTodoMenuKey,
-              ),
-            ),
-            onOpenVisibilityMenu: () => unawaited(
-              _inlineComposeCoordinator.openVisibilityMenuFromKey(
-                context,
-                _inlineVisibilityMenuKey,
-              ),
-            ),
-            onCutParagraphs: () =>
-                unawaited(_inlineComposeUiController.cutCurrentParagraphs()),
-          )
+        ? (shouldEnableResizableHomeInlineCompose
+              ? LayoutBuilder(
+                  builder: (context, constraints) {
+                    final availableWidth = math.max(
+                      0.0,
+                      constraints.maxWidth -
+                          _homeInlineComposeHitZoneExtent * 2,
+                    );
+                    final measuredAvailableHeight = _homeInlineAvailableHeight;
+                    final availableHeight = measuredAvailableHeight > 0
+                        ? measuredAvailableHeight
+                        : _effectiveHomeInlineAvailableHeight(context);
+                    if (!_homeInlinePanelRestored &&
+                        devicePreferencesLoaded &&
+                        _homeInlinePanelMetricsReady &&
+                        availableWidth > 0 &&
+                        measuredAvailableHeight > 0) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        _maybeRestoreHomeInlinePanelLayout(
+                          availableWidth: availableWidth,
+                          availableHeight: measuredAvailableHeight,
+                        );
+                      });
+                    }
+                    final rect = _buildHomeInlinePanelRect(
+                      availableWidth: availableWidth,
+                      availableHeight: availableHeight,
+                    );
+                    if (rect == null) {
+                      return buildInlineComposeCard(
+                        onLayoutMetricsChanged: _handleHomeInlineLayoutMetrics,
+                      );
+                    }
+                    final shellHeight =
+                        rect.bottom + _homeInlineComposeHitZoneExtent;
+                    final minWidth = math.min(
+                      _homeInlineComposeMinWidth,
+                      _resolveHomeInlineMaxWidth(availableWidth),
+                    );
+                    final minHeight =
+                        _homeInlinePanelChromeHeight +
+                        math.min(
+                          _homeInlineComposeMinEditorHeight,
+                          _resolveHomeInlineMaxEditorHeight(availableHeight),
+                        );
+                    final maxHeight =
+                        _homeInlinePanelChromeHeight +
+                        _resolveHomeInlineMaxEditorHeight(availableHeight);
+                    return SizedBox(
+                      height: shellHeight,
+                      child: DesktopResizablePanelShell(
+                        viewportSize: Size(
+                          availableWidth + _homeInlineComposeHitZoneExtent * 2,
+                          shellHeight,
+                        ),
+                        rect: rect,
+                        minWidth: minWidth,
+                        maxWidth: _resolveHomeInlineMaxWidth(availableWidth),
+                        minHeight: minHeight,
+                        maxHeight: maxHeight,
+                        hitZoneExtent: _homeInlineComposeHitZoneExtent,
+                        boundaryInsets: const EdgeInsets.symmetric(
+                          horizontal: _homeInlineComposeViewportMargin,
+                        ),
+                        onChanged: (next) => _applyHomeInlinePanelRect(
+                          next,
+                          availableWidth: availableWidth,
+                          availableHeight: availableHeight,
+                        ),
+                        onChangeEnd: (next) => _applyHomeInlinePanelRect(
+                          next,
+                          availableWidth: availableWidth,
+                          availableHeight: availableHeight,
+                          persist: true,
+                        ),
+                        child: buildInlineComposeCard(
+                          desktopEditorViewportHeight:
+                              _homeInlinePanelEditorHeight,
+                          onLayoutMetricsChanged:
+                              _handleHomeInlineLayoutMetrics,
+                        ),
+                      ),
+                    );
+                  },
+                )
+              : buildInlineComposeCard())
         : null;
+    final inlineComposePadding = shouldEnableResizableHomeInlineCompose
+        ? const EdgeInsets.only(top: 2)
+        : const EdgeInsets.fromLTRB(16, 10, 16, 8);
     final searchLandingChild = MemosListSearchLanding(
       history: searchHistory,
       onClearHistory: () => ref.read(searchHistoryProvider.notifier).clear(),
@@ -2292,6 +2642,8 @@ class _MemosListScreenState extends ConsumerState<MemosListScreen>
         resolvedTagChip: resolvedTagChip,
         advancedFilterSliver: advancedFilterSliver,
         inlineComposeChild: inlineComposeChild,
+        inlineComposePadding: inlineComposePadding,
+        expandDesktopBodyWidth: shouldEnableResizableHomeInlineCompose,
         tagFilterBarChild: tagFilterBarChild,
         searchLandingChild: searchLandingChild,
         bootstrapOverlayChild: _localLibraryCoordinator.bootstrapImportActive

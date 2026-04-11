@@ -91,6 +91,8 @@ class MemosListScreenBody extends StatelessWidget {
     required this.resolvedTagChip,
     required this.advancedFilterSliver,
     required this.inlineComposeChild,
+    required this.inlineComposePadding,
+    required this.expandDesktopBodyWidth,
     required this.tagFilterBarChild,
     required this.searchLandingChild,
     required this.bootstrapOverlayChild,
@@ -125,6 +127,8 @@ class MemosListScreenBody extends StatelessWidget {
   final Widget? resolvedTagChip;
   final Widget? advancedFilterSliver;
   final Widget? inlineComposeChild;
+  final EdgeInsets inlineComposePadding;
+  final bool expandDesktopBodyWidth;
   final Widget? tagFilterBarChild;
   final Widget? searchLandingChild;
   final Widget? bootstrapOverlayChild;
@@ -339,7 +343,7 @@ class MemosListScreenBody extends StatelessWidget {
                   if (inlineComposeChild != null)
                     SliverToBoxAdapter(
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+                        padding: inlineComposePadding,
                         child: inlineComposeChild!,
                       ),
                     ),
@@ -464,15 +468,19 @@ class MemosListScreenBody extends StatelessWidget {
           ? Colors.white.withValues(alpha: 0.08)
           : Colors.black.withValues(alpha: 0.08);
       final desktopContent = Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
+        padding: expandDesktopBodyWidth
+            ? EdgeInsets.zero
+            : const EdgeInsets.symmetric(horizontal: 24),
         child: Align(
           alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: kMemoFlowDesktopContentMaxWidth,
-            ),
-            child: memoListBody,
-          ),
+          child: expandDesktopBodyWidth
+              ? memoListBody
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: kMemoFlowDesktopContentMaxWidth,
+                  ),
+                  child: memoListBody,
+                ),
         ),
       );
       return Row(

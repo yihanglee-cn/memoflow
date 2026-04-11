@@ -130,6 +130,7 @@ Widget buildHomeRootScreen({
         state: 'NORMAL',
         showDrawer: true,
         enableCompose: true,
+        enableDesktopResizableHomeInlineCompose: true,
         presentation: presentation,
         embeddedNavigationHost: navigationHost,
         hidePrimaryComposeFab:

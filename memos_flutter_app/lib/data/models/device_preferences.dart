@@ -4,6 +4,54 @@ import '../../core/desktop/shortcuts.dart';
 import '../../core/theme_colors.dart';
 import 'app_preferences.dart';
 
+class HomeInlineComposePanelLayoutPreference {
+  const HomeInlineComposePanelLayoutPreference({
+    required this.width,
+    required this.editorHeight,
+    required this.xRatio,
+    required this.yRatio,
+  });
+
+  final double width;
+  final double editorHeight;
+  final double xRatio;
+  final double yRatio;
+
+  Map<String, dynamic> toJson() => {
+    'width': width,
+    'editorHeight': editorHeight,
+    'xRatio': xRatio,
+    'yRatio': yRatio,
+  };
+
+  static HomeInlineComposePanelLayoutPreference? tryFromJson(
+    Map<String, dynamic> json,
+  ) {
+    double? parseDouble(Object? raw) {
+      if (raw is num) return raw.toDouble();
+      return null;
+    }
+
+    final width = parseDouble(json['width']);
+    final editorHeight = parseDouble(json['editorHeight']);
+    final xRatio = parseDouble(json['xRatio']);
+    final yRatio = parseDouble(json['yRatio']);
+    if (width == null ||
+        editorHeight == null ||
+        xRatio == null ||
+        yRatio == null) {
+      return null;
+    }
+
+    return HomeInlineComposePanelLayoutPreference(
+      width: width,
+      editorHeight: editorHeight,
+      xRatio: xRatio.clamp(0, 1).toDouble(),
+      yRatio: yRatio.clamp(0, 1).toDouble(),
+    );
+  }
+}
+
 class DevicePreferences {
   static const Object _unset = Object();
 
@@ -34,6 +82,7 @@ class DevicePreferences {
     lastSeenAnnouncementVersion: '',
     lastSeenAnnouncementId: 0,
     lastSeenNoticeHash: '',
+    homeInlineComposePanelLayout: null,
   );
 
   static DevicePreferences defaultsForLanguage(AppLanguage language) {
@@ -71,6 +120,7 @@ class DevicePreferences {
     required this.lastSeenAnnouncementVersion,
     required this.lastSeenAnnouncementId,
     required this.lastSeenNoticeHash,
+    required this.homeInlineComposePanelLayout,
   });
 
   final AppLanguage language;
@@ -100,6 +150,7 @@ class DevicePreferences {
   final String lastSeenAnnouncementVersion;
   final int lastSeenAnnouncementId;
   final String lastSeenNoticeHash;
+  final HomeInlineComposePanelLayoutPreference? homeInlineComposePanelLayout;
 
   Map<String, dynamic> toJson() => {
     'language': language.name,
@@ -131,6 +182,7 @@ class DevicePreferences {
     'lastSeenAnnouncementVersion': lastSeenAnnouncementVersion,
     'lastSeenAnnouncementId': lastSeenAnnouncementId,
     'lastSeenNoticeHash': lastSeenNoticeHash,
+    'homeInlineComposePanelLayout': homeInlineComposePanelLayout?.toJson(),
   };
 
   factory DevicePreferences.fromJson(Map<String, dynamic> json) {
@@ -162,7 +214,17 @@ class DevicePreferences {
       'lastSeenAnnouncementId': json['lastSeenAnnouncementId'],
       'lastSeenNoticeHash': json['lastSeenNoticeHash'],
     });
-    return DevicePreferences.fromLegacy(legacy);
+    final layoutRaw = json['homeInlineComposePanelLayout'];
+    return DevicePreferences.fromLegacy(
+      legacy,
+    ).copyWith(
+      homeInlineComposePanelLayout:
+          layoutRaw is Map
+              ? HomeInlineComposePanelLayoutPreference.tryFromJson(
+                  layoutRaw.cast<String, dynamic>(),
+                )
+              : null,
+    );
   }
 
   factory DevicePreferences.fromLegacy(AppPreferences legacy) {
@@ -193,6 +255,7 @@ class DevicePreferences {
       lastSeenAnnouncementVersion: legacy.lastSeenAnnouncementVersion,
       lastSeenAnnouncementId: legacy.lastSeenAnnouncementId,
       lastSeenNoticeHash: legacy.lastSeenNoticeHash,
+      homeInlineComposePanelLayout: null,
     );
   }
 
@@ -254,6 +317,7 @@ class DevicePreferences {
     String? lastSeenAnnouncementVersion,
     int? lastSeenAnnouncementId,
     String? lastSeenNoticeHash,
+    Object? homeInlineComposePanelLayout = _unset,
   }) {
     return DevicePreferences(
       language: language ?? this.language,
@@ -296,6 +360,11 @@ class DevicePreferences {
       lastSeenAnnouncementId:
           lastSeenAnnouncementId ?? this.lastSeenAnnouncementId,
       lastSeenNoticeHash: lastSeenNoticeHash ?? this.lastSeenNoticeHash,
+      homeInlineComposePanelLayout:
+          identical(homeInlineComposePanelLayout, _unset)
+              ? this.homeInlineComposePanelLayout
+              : homeInlineComposePanelLayout
+                    as HomeInlineComposePanelLayoutPreference?,
     );
   }
 

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../../core/image_thumbnail_cache.dart';
+import '../../../core/measure_size.dart';
 import '../../../core/markdown_editing.dart';
 import '../../../core/memoflow_palette.dart';
 import '../../../data/models/memo_location.dart';
@@ -16,6 +17,16 @@ import '../compose_input_hint.dart';
 import '../memo_video_grid.dart';
 import '../tag_autocomplete.dart';
 import '../../../i18n/strings.g.dart';
+
+class InlineComposeLayoutMetrics {
+  const InlineComposeLayoutMetrics({
+    required this.totalHeight,
+    required this.editorViewportHeight,
+  });
+
+  final double totalHeight;
+  final double editorViewportHeight;
+}
 
 class MemosListInlineComposeCard extends StatelessWidget {
   const MemosListInlineComposeCard({
@@ -56,6 +67,8 @@ class MemosListInlineComposeCard extends StatelessWidget {
     required this.onOpenTodoMenu,
     required this.onOpenVisibilityMenu,
     required this.onCutParagraphs,
+    this.desktopEditorViewportHeight,
+    this.onLayoutMetricsChanged,
   });
 
   final MemoComposerController composer;
@@ -94,6 +107,8 @@ class MemosListInlineComposeCard extends StatelessWidget {
   final VoidCallback onOpenTodoMenu;
   final VoidCallback onOpenVisibilityMenu;
   final VoidCallback onCutParagraphs;
+  final double? desktopEditorViewportHeight;
+  final ValueChanged<InlineComposeLayoutMetrics>? onLayoutMetricsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -115,303 +130,387 @@ class MemosListInlineComposeCard extends StatelessWidget {
         : MemoFlowPalette.textLight;
     final inlineComposeMinLines = Platform.isWindows ? 3 : 1;
     final inlineComposeMaxLines = Platform.isWindows ? 8 : 5;
+    final usesControlledDesktopHeight =
+        desktopEditorViewportHeight != null && desktopEditorViewportHeight! > 0;
 
-    return AnimatedBuilder(
-      animation: Listenable.merge([composer, focusNode]),
-      builder: (context, _) {
-        final linkedMemos = composer.linkedMemos;
-        final pendingAttachments = composer.pendingAttachments;
-        return Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
-          decoration: BoxDecoration(
-            color: cardColor,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: borderColor.withValues(alpha: 0.75)),
-            boxShadow: isDark
-                ? null
-                : [
-                    BoxShadow(
-                      blurRadius: 12,
-                      offset: const Offset(0, 6),
-                      color: Colors.black.withValues(alpha: 0.05),
+    return _InlineComposeMetricsReporter(
+      onLayoutMetricsChanged: onLayoutMetricsChanged,
+      childBuilder: ({required reportTotalSize, required reportEditorSize}) {
+        return AnimatedBuilder(
+          animation: Listenable.merge([composer, focusNode]),
+          builder: (context, _) {
+            final linkedMemos = composer.linkedMemos;
+            final pendingAttachments = composer.pendingAttachments;
+            return MeasureSize(
+              onChange: reportTotalSize,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 10),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: borderColor.withValues(alpha: 0.75)),
+                  boxShadow: isDark
+                      ? null
+                      : [
+                          BoxShadow(
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                            color: Colors.black.withValues(alpha: 0.05),
+                          ),
+                        ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _InlineAttachmentPreview(
+                      attachments: pendingAttachments,
+                      busy: busy,
+                      isDark: isDark,
+                      onRemoveAttachment: onRemoveAttachment,
+                      onOpenAttachment: onOpenAttachment,
                     ),
-                  ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _InlineAttachmentPreview(
-                attachments: pendingAttachments,
-                busy: busy,
-                isDark: isDark,
-                onRemoveAttachment: onRemoveAttachment,
-                onOpenAttachment: onOpenAttachment,
-              ),
-              if (linkedMemos.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: linkedMemos
-                        .map(
-                          (memo) => InputChip(
-                            key: ValueKey<String>(
-                              'inline-linked-memo-${memo.name}',
+                    if (linkedMemos.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          children: linkedMemos
+                              .map(
+                                (memo) => InputChip(
+                                  key: ValueKey<String>(
+                                    'inline-linked-memo-${memo.name}',
+                                  ),
+                                  avatar: Icon(
+                                    Icons.alternate_email_rounded,
+                                    size: 16,
+                                    color: chipText.withValues(alpha: 0.75),
+                                  ),
+                                  label: Text(
+                                    memo.label,
+                                    style: TextStyle(fontSize: 12, color: chipText),
+                                  ),
+                                  backgroundColor: chipBg,
+                                  deleteIconColor: chipText.withValues(alpha: 0.55),
+                                  onDeleted:
+                                      busy ? null : () => onRemoveLinkedMemo(memo.name),
+                                ),
+                              )
+                              .toList(growable: false),
+                        ),
+                      ),
+                    if (locating)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
+                            const SizedBox(width: 8),
+                            Text(
+                              context.t.strings.legacy.msg_locating,
+                              style: TextStyle(fontSize: 12, color: chipText),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (location != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: InputChip(
+                            key: const ValueKey<String>('inline-location-chip'),
                             avatar: Icon(
-                              Icons.alternate_email_rounded,
+                              Icons.place_outlined,
                               size: 16,
                               color: chipText.withValues(alpha: 0.75),
                             ),
                             label: Text(
-                              memo.label,
+                              location!.displayText(fractionDigits: 6),
                               style: TextStyle(fontSize: 12, color: chipText),
                             ),
                             backgroundColor: chipBg,
                             deleteIconColor: chipText.withValues(alpha: 0.55),
-                            onDeleted: busy
-                                ? null
-                                : () => onRemoveLinkedMemo(memo.name),
+                            onPressed: busy ? null : onRequestLocation,
+                            onDeleted: busy ? null : onClearLocation,
                           ),
-                        )
-                        .toList(growable: false),
-                  ),
-                ),
-              if (locating)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        context.t.strings.legacy.msg_locating,
-                        style: TextStyle(fontSize: 12, color: chipText),
-                      ),
-                    ],
-                  ),
-                ),
-              if (location != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: InputChip(
-                      key: const ValueKey<String>('inline-location-chip'),
-                      avatar: Icon(
-                        Icons.place_outlined,
-                        size: 16,
-                        color: chipText.withValues(alpha: 0.75),
-                      ),
-                      label: Text(
-                        location!.displayText(fractionDigits: 6),
-                        style: TextStyle(fontSize: 12, color: chipText),
-                      ),
-                      backgroundColor: chipBg,
-                      deleteIconColor: chipText.withValues(alpha: 0.55),
-                      onPressed: busy ? null : onRequestLocation,
-                      onDeleted: busy ? null : onClearLocation,
-                    ),
-                  ),
-                ),
-              ValueListenableBuilder<TextEditingValue>(
-                valueListenable: composer.textController,
-                builder: (context, value, _) {
-                  final inlineEditorTextStyle = TextStyle(
-                    fontSize: 15,
-                    height: 1.35,
-                    color: textColor,
-                  );
-                  final shouldShowDraftHint = shouldShowComposeDraftHint(
-                    enableDraftHint: true,
-                    pendingDraftCount: pendingDraftCount,
-                    hasCurrentComposeContent:
-                        value.text.trim().isNotEmpty ||
-                        composer.pendingAttachments.isNotEmpty ||
-                        composer.linkedMemos.isNotEmpty ||
-                        location != null,
-                  );
-                  final hintText = shouldShowDraftHint
-                      ? context.t.strings.legacy.msg_draft_box_pending_hint(
-                          count: pendingDraftCount,
-                        )
-                      : context.t.strings.legacy.msg_write_thoughts;
-                  final inlineActiveTagQuery = focusNode.hasFocus
-                      ? detectActiveTagQuery(value)
-                      : null;
-                  final inlineTagSuggestions = inlineActiveTagQuery == null
-                      ? const <TagStat>[]
-                      : buildTagSuggestions(
-                          tagStats,
-                          query: inlineActiveTagQuery.query,
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: composer.textController,
+                      builder: (context, value, _) {
+                        final inlineEditorTextStyle = TextStyle(
+                          fontSize: 15,
+                          height: 1.35,
+                          color: textColor,
                         );
-                  final highlightedInlineTagSuggestionIndex =
-                      inlineTagSuggestions.isEmpty
-                      ? 0
-                      : composer.tagAutocompleteIndex
-                            .clamp(0, inlineTagSuggestions.length - 1)
-                            .toInt();
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      KeyedSubtree(
-                        key: editorFieldKey,
-                        child: Focus(
-                          canRequestFocus: false,
-                          onKeyEvent: (node, event) =>
-                              composer.handleTagAutocompleteKeyEvent(
-                                event,
-                                tagStats: tagStats,
-                                hasFocus: focusNode.hasFocus,
-                                requestFocus: focusNode.requestFocus,
-                              ),
-                          child: TextField(
-                            key: const ValueKey<String>(
-                              'memos-inline-compose-text-field',
-                            ),
-                            controller: composer.textController,
-                            focusNode: focusNode,
-                            enabled: !busy,
-                            inputFormatters: const [
-                              SmartEnterTextInputFormatter(),
-                            ],
-                            minLines: inlineComposeMinLines,
-                            maxLines: inlineComposeMaxLines,
-                            keyboardType: TextInputType.multiline,
-                            style: inlineEditorTextStyle,
-                            decoration: InputDecoration(
-                              isDense: true,
-                              border: InputBorder.none,
-                              hintText: hintText,
-                              hintStyle: TextStyle(color: hintColor),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (focusNode.hasFocus &&
-                          inlineActiveTagQuery != null &&
-                          inlineTagSuggestions.isNotEmpty)
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: TagAutocompleteOverlay(
-                              editorKey: editorFieldKey,
-                              value: value,
-                              textStyle: inlineEditorTextStyle,
-                              tags: inlineTagSuggestions,
-                              tagColors: tagColorLookup,
-                              highlightedIndex:
-                                  highlightedInlineTagSuggestionIndex,
-                              onHighlight: composer.setTagAutocompleteIndex,
-                              onSelect: (tag) => composer.applyTagSuggestion(
-                                inlineActiveTagQuery,
-                                tag,
-                                requestFocus: focusNode.requestFocus,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: _InlineComposeToolbar(
-                      composer: composer,
-                      busy: busy,
-                      isDark: isDark,
-                      preferences: toolbarPreferences,
-                      availableTemplates: availableTemplates,
-                      visibility: visibility,
-                      visibilityTouched: visibilityTouched,
-                      visibilityLabel: visibilityLabel,
-                      visibilityIcon: visibilityIcon,
-                      visibilityColor: visibilityColor,
-                      tagMenuKey: tagMenuKey,
-                      templateMenuKey: templateMenuKey,
-                      todoMenuKey: todoMenuKey,
-                      visibilityMenuKey: visibilityMenuKey,
-                      focusNode: focusNode,
-                      locating: locating,
-                      onOpenTemplateMenu: onOpenTemplateMenu,
-                      onPickFile: onPickFile,
-                      onPickGallery: onPickGallery,
-                      onOpenTodoMenu: onOpenTodoMenu,
-                      onOpenLinkMemo: onOpenLinkMemo,
-                      onCaptureCamera: onCaptureCamera,
-                      onOpenDraftBox: onOpenDraftBox,
-                      onRequestLocation: onRequestLocation,
-                      onOpenVisibilityMenu: onOpenVisibilityMenu,
-                      onCutParagraphs: onCutParagraphs,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ValueListenableBuilder<TextEditingValue>(
-                    valueListenable: composer.textController,
-                    builder: (context, value, _) {
-                      final showSend =
-                          value.text.trim().isNotEmpty ||
-                          composer.pendingAttachments.isNotEmpty;
-                      return Material(
-                        color: MemoFlowPalette.primary,
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          key: const ValueKey<String>(
-                            'memos-inline-compose-send-button',
-                          ),
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: busy ? null : onSubmit,
-                          child: SizedBox(
-                            width: 38,
-                            height: 30,
-                            child: Center(
-                              child: busy
-                                  ? const SizedBox.square(
-                                      dimension: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : AnimatedSwitcher(
-                                      duration: const Duration(
-                                        milliseconds: 160,
-                                      ),
-                                      transitionBuilder: (child, animation) {
-                                        return ScaleTransition(
-                                          scale: animation,
-                                          child: child,
-                                        );
-                                      },
-                                      child: Icon(
-                                        showSend
-                                            ? Icons.send_rounded
-                                            : Icons.graphic_eq,
-                                        key: ValueKey<bool>(showSend),
-                                        size: showSend ? 18 : 20,
-                                        color: Colors.white,
-                                      ),
+                        final shouldShowDraftHint = shouldShowComposeDraftHint(
+                          enableDraftHint: true,
+                          pendingDraftCount: pendingDraftCount,
+                          hasCurrentComposeContent:
+                              value.text.trim().isNotEmpty ||
+                              composer.pendingAttachments.isNotEmpty ||
+                              composer.linkedMemos.isNotEmpty ||
+                              location != null,
+                        );
+                        final hintText = shouldShowDraftHint
+                            ? context.t.strings.legacy.msg_draft_box_pending_hint(
+                                count: pendingDraftCount,
+                              )
+                            : context.t.strings.legacy.msg_write_thoughts;
+                        final inlineActiveTagQuery = focusNode.hasFocus
+                            ? detectActiveTagQuery(value)
+                            : null;
+                        final inlineTagSuggestions = inlineActiveTagQuery == null
+                            ? const <TagStat>[]
+                            : buildTagSuggestions(
+                                tagStats,
+                                query: inlineActiveTagQuery.query,
+                              );
+                        final highlightedInlineTagSuggestionIndex =
+                            inlineTagSuggestions.isEmpty
+                                ? 0
+                                : composer.tagAutocompleteIndex
+                                      .clamp(0, inlineTagSuggestions.length - 1)
+                                      .toInt();
+                        Widget editorRegion = Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            KeyedSubtree(
+                              key: editorFieldKey,
+                              child: Focus(
+                                canRequestFocus: false,
+                                onKeyEvent: (node, event) =>
+                                    composer.handleTagAutocompleteKeyEvent(
+                                      event,
+                                      tagStats: tagStats,
+                                      hasFocus: focusNode.hasFocus,
+                                      requestFocus: focusNode.requestFocus,
                                     ),
+                                child: TextField(
+                                  key: const ValueKey<String>(
+                                    'memos-inline-compose-text-field',
+                                  ),
+                                  controller: composer.textController,
+                                  focusNode: focusNode,
+                                  enabled: !busy,
+                                  inputFormatters: const [
+                                    SmartEnterTextInputFormatter(),
+                                  ],
+                                  minLines: usesControlledDesktopHeight
+                                      ? null
+                                      : inlineComposeMinLines,
+                                  maxLines: usesControlledDesktopHeight
+                                      ? null
+                                      : inlineComposeMaxLines,
+                                  expands: usesControlledDesktopHeight,
+                                  keyboardType: TextInputType.multiline,
+                                  style: inlineEditorTextStyle,
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    border: InputBorder.none,
+                                    hintText: hintText,
+                                    hintStyle: TextStyle(color: hintColor),
+                                  ),
+                                ),
+                              ),
                             ),
+                            if (focusNode.hasFocus &&
+                                inlineActiveTagQuery != null &&
+                                inlineTagSuggestions.isNotEmpty)
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: TagAutocompleteOverlay(
+                                    editorKey: editorFieldKey,
+                                    value: value,
+                                    textStyle: inlineEditorTextStyle,
+                                    tags: inlineTagSuggestions,
+                                    tagColors: tagColorLookup,
+                                    highlightedIndex:
+                                        highlightedInlineTagSuggestionIndex,
+                                    onHighlight: composer.setTagAutocompleteIndex,
+                                    onSelect: (tag) => composer.applyTagSuggestion(
+                                      inlineActiveTagQuery,
+                                      tag,
+                                      requestFocus: focusNode.requestFocus,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                        if (usesControlledDesktopHeight) {
+                          editorRegion = SizedBox(
+                            height: desktopEditorViewportHeight,
+                            child: editorRegion,
+                          );
+                        }
+                        return MeasureSize(
+                          onChange: reportEditorSize,
+                          child: editorRegion,
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _InlineComposeToolbar(
+                            composer: composer,
+                            busy: busy,
+                            isDark: isDark,
+                            preferences: toolbarPreferences,
+                            availableTemplates: availableTemplates,
+                            visibility: visibility,
+                            visibilityTouched: visibilityTouched,
+                            visibilityLabel: visibilityLabel,
+                            visibilityIcon: visibilityIcon,
+                            visibilityColor: visibilityColor,
+                            tagMenuKey: tagMenuKey,
+                            templateMenuKey: templateMenuKey,
+                            todoMenuKey: todoMenuKey,
+                            visibilityMenuKey: visibilityMenuKey,
+                            focusNode: focusNode,
+                            locating: locating,
+                            onOpenTemplateMenu: onOpenTemplateMenu,
+                            onPickFile: onPickFile,
+                            onPickGallery: onPickGallery,
+                            onOpenTodoMenu: onOpenTodoMenu,
+                            onOpenLinkMemo: onOpenLinkMemo,
+                            onCaptureCamera: onCaptureCamera,
+                            onOpenDraftBox: onOpenDraftBox,
+                            onRequestLocation: onRequestLocation,
+                            onOpenVisibilityMenu: onOpenVisibilityMenu,
+                            onCutParagraphs: onCutParagraphs,
                           ),
                         ),
-                      );
-                    },
-                  ),
-                ],
+                        const SizedBox(width: 8),
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: composer.textController,
+                          builder: (context, value, _) {
+                            final showSend =
+                                value.text.trim().isNotEmpty ||
+                                composer.pendingAttachments.isNotEmpty;
+                            return Material(
+                              color: MemoFlowPalette.primary,
+                              borderRadius: BorderRadius.circular(10),
+                              child: InkWell(
+                                key: const ValueKey<String>(
+                                  'memos-inline-compose-send-button',
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: busy ? null : onSubmit,
+                                child: SizedBox(
+                                  width: 38,
+                                  height: 30,
+                                  child: Center(
+                                    child: busy
+                                        ? const SizedBox.square(
+                                            dimension: 14,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : AnimatedSwitcher(
+                                            duration: const Duration(
+                                              milliseconds: 160,
+                                            ),
+                                            transitionBuilder: (child, animation) {
+                                              return ScaleTransition(
+                                                scale: animation,
+                                                child: child,
+                                              );
+                                            },
+                                            child: Icon(
+                                              showSend
+                                                  ? Icons.send_rounded
+                                                  : Icons.graphic_eq,
+                                              key: ValueKey<bool>(showSend),
+                                              size: showSend ? 18 : 20,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            );
+          },
         );
       },
+    );
+  }
+}
+
+typedef _InlineComposeMetricsReporterBuilder = Widget Function({
+  required ValueChanged<Size> reportTotalSize,
+  required ValueChanged<Size> reportEditorSize,
+});
+
+class _InlineComposeMetricsReporter extends StatefulWidget {
+  const _InlineComposeMetricsReporter({
+    required this.childBuilder,
+    required this.onLayoutMetricsChanged,
+  });
+
+  final _InlineComposeMetricsReporterBuilder childBuilder;
+  final ValueChanged<InlineComposeLayoutMetrics>? onLayoutMetricsChanged;
+
+  @override
+  State<_InlineComposeMetricsReporter> createState() =>
+      _InlineComposeMetricsReporterState();
+}
+
+class _InlineComposeMetricsReporterState
+    extends State<_InlineComposeMetricsReporter> {
+  double? _totalHeight;
+  double? _editorViewportHeight;
+
+  void _handleTotalSizeChanged(Size size) {
+    if (_totalHeight == size.height) return;
+    _totalHeight = size.height;
+    _emitLayoutMetricsIfReady();
+  }
+
+  void _handleEditorSizeChanged(Size size) {
+    if (_editorViewportHeight == size.height) return;
+    _editorViewportHeight = size.height;
+    _emitLayoutMetricsIfReady();
+  }
+
+  void _emitLayoutMetricsIfReady() {
+    final callback = widget.onLayoutMetricsChanged;
+    final totalHeight = _totalHeight;
+    final editorViewportHeight = _editorViewportHeight;
+    if (callback == null || totalHeight == null || editorViewportHeight == null) {
+      return;
+    }
+    callback(
+      InlineComposeLayoutMetrics(
+        totalHeight: totalHeight,
+        editorViewportHeight: editorViewportHeight,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.childBuilder(
+      reportTotalSize: _handleTotalSizeChanged,
+      reportEditorSize: _handleEditorSizeChanged,
     );
   }
 }
