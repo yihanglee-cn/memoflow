@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -21,6 +22,7 @@ import '../../data/models/local_memo.dart';
 import '../../state/memos/memo_sync_constraints.dart';
 import '../memos/memo_detail_screen.dart';
 import '../memos/memos_list_screen.dart';
+import '../settings/local_network_migration_screen.dart';
 import '../../i18n/strings.g.dart';
 
 final _bridgeBulkPushRunningProvider = StateProvider<bool>((ref) => false);
@@ -349,6 +351,22 @@ class SyncQueueScreen extends ConsumerWidget {
                     lastSuccessLabel: lastSuccessLabel,
                     syncing: syncing,
                   ),
+                  if (defaultTargetPlatform == TargetPlatform.windows) ...[
+                    const SizedBox(height: 12),
+                    _LocalNetworkMigrationCard(
+                      card: card,
+                      border: border,
+                      textMain: textMain,
+                      textMuted: textMuted,
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const LocalNetworkMigrationScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Text(
                     context.t.strings.legacy.msg_active_tasks,
@@ -1061,6 +1079,99 @@ class _StatusChip extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalNetworkMigrationCard extends StatelessWidget {
+  const _LocalNetworkMigrationCard({
+    required this.card,
+    required this.border,
+    required this.textMain,
+    required this.textMuted,
+    required this.onTap,
+  });
+
+  final Color card;
+  final Color border;
+  final Color textMain;
+  final Color textMuted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: card,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: border),
+            boxShadow: isDark
+                ? null
+                : [
+                    BoxShadow(
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                      color: Colors.black.withValues(alpha: 0.04),
+                    ),
+                  ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: MemoFlowPalette.primary.withValues(
+                    alpha: isDark ? 0.2 : 0.1,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.devices_outlined,
+                  color: MemoFlowPalette.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      context.t.strings.legacy.msg_local_network_migration,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: textMain,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      context.t.strings.legacy.msg_local_network_migration_desc,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: textMuted),
+            ],
+          ),
         ),
       ),
     );
